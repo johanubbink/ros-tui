@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ros_tui</name>
+  <version>0.0.1</version>
+  <description>Terminal UI for exploring and exercising ROS 2 actions, services and topics</description>
+  <maintainer email="johan.ubbink@gmail.com">Johan Ubbink</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
+  <exec_depend>rosidl_parser</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-textual</exec_depend>
+  <exec_depend>python3-rich</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-pytest-asyncio</test_depend>
+  <test_depend>domain_coordinator</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
+  <test_depend>std_msgs</test_depend>
+  <test_depend>std_srvs</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <test_depend>example_interfaces</test_depend>
+  <test_depend>test_msgs</test_depend>
+  <test_depend>turtlesim</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

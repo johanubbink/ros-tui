@@ -1,0 +1,42 @@
+# Byte-compiled / optimized Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging / build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# colcon / ament workspace artifacts (if the repo is built in-tree)
+install/
+log/
+
+# Test & coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.cache/
+
+# Linters / type checkers
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
