@@ -39,6 +39,7 @@ env/
 .idea/
 *.swp
 *~
+CLAUDE.md
 
 # OS
 .DS_Store

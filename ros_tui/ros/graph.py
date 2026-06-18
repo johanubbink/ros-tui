@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Immutable snapshots of the ROS graph (actions, services, topics)."""
+"""Immutable snapshots of the ROS graph (actions, services, topics, nodes)."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -33,9 +33,10 @@ class GraphSnapshot:
     actions: tuple[InterfaceEntry, ...]
     services: tuple[InterfaceEntry, ...]
     topics: tuple[InterfaceEntry, ...]
+    nodes: tuple[InterfaceEntry, ...]
 
 
-EMPTY_GRAPH = GraphSnapshot(version=0, actions=(), services=(), topics=())
+EMPTY_GRAPH = GraphSnapshot(version=0, actions=(), services=(), topics=(), nodes=())
 
 
 def is_hidden_name(name: str) -> bool:
@@ -53,9 +54,19 @@ def build_snapshot(node: Any, version: int) -> GraphSnapshot:
             if not is_hidden_name(name)
         )
 
+    def node_entries() -> tuple[InterfaceEntry, ...]:
+        result = []
+        for name, namespace in sorted(node.get_node_names_and_namespaces()):
+            if name.startswith('_'):
+                continue
+            full = f'{namespace.rstrip("/")}/{name}'
+            result.append(InterfaceEntry(full, (namespace,)))
+        return tuple(result)
+
     return GraphSnapshot(
         version=version,
         actions=entries(get_action_names_and_types(node)),
         services=entries(node.get_service_names_and_types()),
         topics=entries(node.get_topic_names_and_types()),
+        nodes=node_entries(),
     )

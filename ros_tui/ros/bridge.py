@@ -57,6 +57,68 @@ GraphListener = Callable[[GraphSnapshot], None]
 ActionEventCallback = Callable[[ActionEvent], None]
 
 
+def _extract_parameters(names: list, values: list) -> list:
+    """Convert rcl_interfaces ParameterValue list into [(name, type_int, value)] tuples."""
+    from rcl_interfaces.msg import ParameterType  # noqa: PLC0415
+    result = []
+    _type_map = {
+        ParameterType.PARAMETER_BOOL: ('bool', 'bool_value'),
+        ParameterType.PARAMETER_INTEGER: ('int', 'integer_value'),
+        ParameterType.PARAMETER_DOUBLE: ('double', 'double_value'),
+        ParameterType.PARAMETER_STRING: ('string', 'string_value'),
+        ParameterType.PARAMETER_BYTE_ARRAY: ('byte[]', 'byte_array_value'),
+        ParameterType.PARAMETER_BOOL_ARRAY: ('bool[]', 'bool_array_value'),
+        ParameterType.PARAMETER_INTEGER_ARRAY: ('int[]', 'integer_array_value'),
+        ParameterType.PARAMETER_DOUBLE_ARRAY: ('double[]', 'double_array_value'),
+        ParameterType.PARAMETER_STRING_ARRAY: ('string[]', 'string_array_value'),
+    }
+    for name, pv in zip(names, values):
+        type_label, attr = _type_map.get(pv.type, ('?', None))
+        value = getattr(pv, attr) if attr else None
+        if hasattr(value, 'tolist'):
+            value = value.tolist()
+        result.append((name, type_label, value))
+    return result
+
+
+def _python_to_parameter_value(py_value: Any) -> Any:
+    from rcl_interfaces.msg import ParameterType, ParameterValue  # noqa: PLC0415
+    pv = ParameterValue()
+    if isinstance(py_value, bool):
+        pv.type = ParameterType.PARAMETER_BOOL
+        pv.bool_value = py_value
+    elif isinstance(py_value, int):
+        pv.type = ParameterType.PARAMETER_INTEGER
+        pv.integer_value = py_value
+    elif isinstance(py_value, float):
+        pv.type = ParameterType.PARAMETER_DOUBLE
+        pv.double_value = py_value
+    elif isinstance(py_value, str):
+        pv.type = ParameterType.PARAMETER_STRING
+        pv.string_value = py_value
+    elif isinstance(py_value, list) and py_value:
+        first = py_value[0]
+        if isinstance(first, bool):
+            pv.type = ParameterType.PARAMETER_BOOL_ARRAY
+            pv.bool_array_value = py_value
+        elif isinstance(first, int):
+            pv.type = ParameterType.PARAMETER_INTEGER_ARRAY
+            pv.integer_array_value = py_value
+        elif isinstance(first, float):
+            pv.type = ParameterType.PARAMETER_DOUBLE_ARRAY
+            pv.double_array_value = py_value
+        elif isinstance(first, str):
+            pv.type = ParameterType.PARAMETER_STRING_ARRAY
+            pv.string_array_value = py_value
+        else:
+            raise ValueError(f'unsupported list element type: {type(first).__name__}')
+    elif isinstance(py_value, list):
+        raise ValueError('cannot infer type of empty list')
+    else:
+        raise ValueError(f'unsupported parameter type: {type(py_value).__name__}')
+    return pv
+
+
 def adapted_qos(endpoint_infos: list[Any]) -> QoSProfile:
     """
     QoS that can hear every publisher.
@@ -460,6 +522,145 @@ class RosBridge:
 
         return self.submit(command)
 
+    # ---------------------------------------------------------------- parameters
+
+    def list_node_parameters(self, node_name: str, on_done: Callable) -> None:
+        """Fetch all parameter names+values for ``node_name``; result via ``on_done(params, err)``."""
+
+        def command() -> None:
+            try:
+                self._start_list_node_params(node_name, on_done)
+            except Exception as error:
+                on_done(None, str(error))
+
+        self.submit(command)
+
+    def _start_list_node_params(self, node_name: str, on_done: Callable) -> None:
+        from rcl_interfaces.srv import ListParameters  # noqa: PLC0415
+        list_srv = f'{node_name}/list_parameters'
+        client = self._get_client(list_srv, 'rcl_interfaces/srv/ListParameters')
+        request = ListParameters.Request()
+        request.depth = ListParameters.Request.DEPTH_RECURSIVE
+
+        def dispatch() -> None:
+            rclpy_future = client.call_async(request)
+
+            def on_list_done(done_future: Any) -> None:
+                def handle() -> None:
+                    try:
+                        response = done_future.result()
+                        names = list(response.result.names)
+                        self._start_get_node_params(node_name, names, on_done)
+                    except Exception as error:
+                        on_done(None, str(error))
+                self.submit(handle)
+
+            rclpy_future.add_done_callback(on_list_done)
+
+        if client.service_is_ready():
+            dispatch()
+        else:
+            self._entities.pending_ready.append(
+                _PendingReady(
+                    entity=client,
+                    is_ready=client.service_is_ready,
+                    dispatch=dispatch,
+                    fail=lambda e: on_done(None, str(e)),
+                    deadline=time.monotonic() + READY_TIMEOUT_S,
+                    label=list_srv,
+                )
+            )
+
+    def _start_get_node_params(self, node_name: str, names: list, on_done: Callable) -> None:
+        if not names:
+            on_done([], None)
+            return
+        get_srv = f'{node_name}/get_parameters'
+        client = self._get_client(get_srv, 'rcl_interfaces/srv/GetParameters')
+
+        from rcl_interfaces.srv import GetParameters  # noqa: PLC0415
+        request = GetParameters.Request()
+        request.names = names
+
+        def dispatch() -> None:
+            rclpy_future = client.call_async(request)
+
+            def on_get_done(done_future: Any) -> None:
+                def handle() -> None:
+                    try:
+                        response = done_future.result()
+                        params = _extract_parameters(names, response.values)
+                        on_done(params, None)
+                    except Exception as error:
+                        on_done(None, str(error))
+                self.submit(handle)
+
+            rclpy_future.add_done_callback(on_get_done)
+
+        if client.service_is_ready():
+            dispatch()
+        else:
+            self._entities.pending_ready.append(
+                _PendingReady(
+                    entity=client,
+                    is_ready=client.service_is_ready,
+                    dispatch=dispatch,
+                    fail=lambda e: on_done(None, str(e)),
+                    deadline=time.monotonic() + READY_TIMEOUT_S,
+                    label=get_srv,
+                )
+            )
+
+    def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done: Callable) -> None:
+        """Set a single parameter on ``node_name``; result via ``on_done(error_str_or_none)``."""
+
+        def command() -> None:
+            try:
+                import yaml  # noqa: PLC0415
+                from rcl_interfaces.msg import Parameter, ParameterValue  # noqa: PLC0415
+                from rcl_interfaces.srv import SetParameters  # noqa: PLC0415
+                py_value = yaml.safe_load(value_yaml)
+                param_value = _python_to_parameter_value(py_value)
+                param = Parameter(name=name, value=param_value)
+                set_srv = f'{node_name}/set_parameters'
+                client = self._get_client(set_srv, 'rcl_interfaces/srv/SetParameters')
+                request = SetParameters.Request(parameters=[param])
+
+                def dispatch() -> None:
+                    rclpy_future = client.call_async(request)
+
+                    def on_set_done(done_future: Any) -> None:
+                        def handle() -> None:
+                            try:
+                                response = done_future.result()
+                                if response.results and not response.results[0].successful:
+                                    on_done(response.results[0].reason or 'rejected by node')
+                                else:
+                                    on_done(None)
+                            except Exception as error:
+                                on_done(str(error))
+                        self.submit(handle)
+
+                    rclpy_future.add_done_callback(on_set_done)
+
+                if client.service_is_ready():
+                    dispatch()
+                else:
+                    self._entities.pending_ready.append(
+                        _PendingReady(
+                            entity=client,
+                            is_ready=client.service_is_ready,
+                            dispatch=dispatch,
+                            fail=lambda e: on_done(str(e)),
+                            deadline=time.monotonic() + READY_TIMEOUT_S,
+                            label=set_srv,
+                        )
+                    )
+            except Exception as error:
+                on_done(str(error))
+
+        self.submit(command)
+
     # ---------------------------------------------------------------- ROS thread internals
 
     def _ros_main(self) -> None:
@@ -531,6 +732,7 @@ class RosBridge:
             snapshot.actions == previous.actions
             and snapshot.services == previous.services
             and snapshot.topics == previous.topics
+            and snapshot.nodes == previous.nodes
         )
         if unchanged:
             return
