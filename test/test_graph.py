@@ -30,10 +30,10 @@ def test_hidden_names():
 
 def test_snapshot_equality_drives_diffing():
     entry = InterfaceEntry('/chatter', ('std_msgs/msg/String',))
-    first = GraphSnapshot(1, (), (), (entry,))
-    second = GraphSnapshot(2, (), (), (InterfaceEntry('/chatter', ('std_msgs/msg/String',)),))
+    first = GraphSnapshot(1, (), (), (entry,), ())
+    second = GraphSnapshot(2, (), (), (InterfaceEntry('/chatter', ('std_msgs/msg/String',)),), ())
     assert first.topics == second.topics  # Same content compares equal across versions.
-    third = GraphSnapshot(3, (), (), ())
+    third = GraphSnapshot(3, (), (), (), ())
     assert first.topics != third.topics
 
 

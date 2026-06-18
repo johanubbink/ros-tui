@@ -39,6 +39,7 @@ SNAPSHOT = GraphSnapshot(
     actions=(FIBONACCI_ENTRY,),
     services=(ADD_TWO_INTS_ENTRY, InterfaceEntry('/set_bool', ('std_srvs/srv/SetBool',))),
     topics=(CHATTER_ENTRY, POSE_ENTRY),
+    nodes=(),
 )
 
 
