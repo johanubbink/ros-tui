@@ -12,6 +12,51 @@ Each tab: filterable entity list on the left · type + YAML editor + controls on
 right · output log at the bottom. The graph refreshes automatically (1 s poll, only
 re-renders on change).
 
+## Try it in Docker
+
+Don't have a ROS 2 system handy? The bundled Docker playground spins up a small set of
+example servers and lets you drive the TUI against them — no local ROS install required,
+just Docker Engine + the Compose plugin (Linux).
+
+```shell
+./create_dot_env             # one-time: writes .env with your UID/GID (and ROS_DISTRO)
+docker compose up --build    # builds the workspace, then launches the demo servers
+```
+
+Leave that running and, in a **second terminal**, open a shell in the same container and
+start the TUI (it needs an interactive terminal, which a `docker compose exec` shell
+provides):
+
+```shell
+docker compose exec ros_tui bash
+# inside the container:
+ros2 run ros_tui ros_tui
+```
+
+All three tabs populate from the demo node ([`launch/demo.launch.py`](launch/demo.launch.py)
+→ [`ros_tui/demo/demo_servers.py`](ros_tui/demo/demo_servers.py)):
+
+| Tab      | Entity              | Try                                                        |
+|----------|---------------------|-----------------------------------------------------------|
+| Actions  | `/fibonacci`        | Send `order: 8`; watch feedback stream, then `Cancel`.    |
+| Services | `/add_two_ints`     | Call with `a: 19` / `b: 23` → `sum: 42`.                  |
+| Topics   | `/chatter` (~1 Hz)  | `Echo` a calm `std_msgs/String` stream.                   |
+| Topics   | `/counter` (~50 Hz) | `Echo` to watch the Hz / drop counters move.              |
+| Topics   | `/inbox`            | `Publish` `data: hello` — it's logged by the demo node.   |
+
+Notes:
+
+- **Live edits.** The repo is bind-mounted and built with `colcon build --symlink-install`,
+  so editing Python under `ros_tui/` is picked up on the next process start — no rebuild.
+  Re-run `docker compose up --build` only after changing `package.xml`, `setup.py`, or the
+  Dockerfile.
+- **Run the tests in here too:** `docker compose exec ros_tui bash -lc 'colcon test --packages-select ros_tui && colcon test-result --verbose'`
+  (the image ships the test deps).
+- **Why `create_dot_env`?** It maps the container user to your host UID/GID so build
+  artifacts stay yours. Compose falls back to `1000:1000` if you skip it.
+- **Tear down:** `docker compose down`. The image is lean (`ros:jazzy-ros-base`, headless —
+  no X11); switch distro or to a desktop image via the `ROS_DISTRO` / base-image build arg.
+
 ## Tabs
 
 - **Actions** — select an action, edit the Goal (seeded with defaults), `Send goal`.
@@ -56,7 +101,7 @@ recent VS Code); on plain xterm-likes click the tab titles instead.
 ```shell
 colcon test --packages-select ros_tui
 # or, directly:
-python3 -m pytest src/dev_tools/ros_tui/test -q
+python3 -m pytest test -q
 ```
 
 Pure unit tests (YAML round-trips over 28 interface types, edge cases like `byte`
