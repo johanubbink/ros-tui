@@ -28,7 +28,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
-    install_requires=['setuptools', 'textual', 'rich'],
+    install_requires=['setuptools', 'textual[syntax]', 'rich'],
     zip_safe=True,
     maintainer='Johan Ubbink',
     maintainer_email='johan.ubbink@gmail.com',

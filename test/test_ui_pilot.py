@@ -21,10 +21,12 @@ from concurrent.futures import Future
 import pytest
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from ros_tui.constants import LIST_MIN_WIDTH, RIGHT_PANE_MIN_WIDTH
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
+from ros_tui.ui.resize_grip import ResizeGrip
 from textual.widgets import Button, Input, OptionList, RichLog, Static, TextArea
 
 pytestmark = pytest.mark.ui
@@ -272,6 +274,39 @@ async def test_rate_validation_and_start_stop():
         await click_button(pilot, '#rate-button')
         assert fake.periodic_stopped == ['/chatter']
         assert str(tab.query_one('#rate-button', Button).label) == 'Start rate'
+
+
+class _DragEvent:
+    """Minimal stand-in for a Textual MouseEvent — the grip only reads screen_x."""
+
+    def __init__(self, screen_x):
+        self.screen_x = screen_x
+
+    def stop(self):
+        pass
+
+
+async def test_resize_grip_clamps_list_width():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = app.query_one('#actions-tab')
+        grip = tab.query_one(ResizeGrip)
+        target = tab.query_one(FilterableList)
+        await pilot.pause()
+
+        # Drag far left: the list column cannot collapse below LIST_MIN_WIDTH.
+        grip.on_mouse_down(_DragEvent(60))
+        grip.on_mouse_move(_DragEvent(60 - 999))
+        grip.on_mouse_up(_DragEvent(0))
+        await pilot.pause()
+        assert int(target.styles.width.value) == LIST_MIN_WIDTH
+
+        # Drag far right: the list stops so the grip and right pane keep their reserved cells.
+        grip.on_mouse_down(_DragEvent(10))
+        grip.on_mouse_move(_DragEvent(10 + 999))
+        grip.on_mouse_up(_DragEvent(0))
+        await pilot.pause()
+        assert int(target.styles.width.value) == app.size.width - 1 - RIGHT_PANE_MIN_WIDTH
 
 
 async def test_echo_toggle_subscribes_and_unsubscribes():

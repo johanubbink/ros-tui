@@ -33,7 +33,7 @@ jobs:
     - name: Set up virtualenv with ROS site-packages
       run: |
         python3 -m venv --system-site-packages /ci-venv
-        /ci-venv/bin/pip install textual
+        /ci-venv/bin/pip install 'textual[syntax]'
 
     - name: Install package
       run: |

@@ -18,9 +18,10 @@
 import time
 
 from textual import on
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from ros_tui.ros.message_yaml import to_truncated_yaml
+from ros_tui.ui import styles
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import ServiceCompleted
 
@@ -28,6 +29,8 @@ from ros_tui.ui.messages import ServiceCompleted
 class ServicesTab(InterfaceTab):
     kind = 'srv'
     list_placeholder = 'filter services…'
+    list_title = 'Services'
+    status_id = 'service-status'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)
@@ -35,6 +38,12 @@ class ServicesTab(InterfaceTab):
 
     def compose_controls(self):
         yield Button('Call', id='call-button', variant='primary')
+
+    def compose_status(self):
+        yield Static(id='service-status', classes='status-strip')
+
+    def on_mount(self) -> None:
+        self._set_status('no call yet', 'idle')
 
     @on(Button.Pressed, '#call-button')
     def _on_call_pressed(self, event: Button.Pressed) -> None:
@@ -50,7 +59,8 @@ class ServicesTab(InterfaceTab):
         self._call_in_flight = True
         request, time_setters = built
         name, type_name = self._current.name, self._current.types[0]
-        self.write_log(f'→ {name}', style='bold cyan')
+        self.write_log(styles.info(f'{styles.GLYPH_REQUEST} {name}'))
+        self._set_status(f'CALLING  {name}', 'busy')
         self.query_one('#call-button', Button).disabled = True
         started = time.monotonic()
         future = self._bridge.call_service(name, type_name, request, time_setters)
@@ -71,10 +81,14 @@ class ServicesTab(InterfaceTab):
         self._call_in_flight = False
         self.query_one('#call-button', Button).disabled = False
         if message.error is not None:
-            self.write_log(f'✗ {message.service_name}: {message.error}', style='bold red')
+            self.write_log(
+                styles.fail(f'{styles.GLYPH_FAIL} {message.service_name}: {message.error}')
+            )
+            self._set_status(f'{message.service_name} failed', 'fail')
             return
         self.write_log(
-            f'← {message.service_name} response in {message.elapsed_ms:.1f} ms',
-            style='bold green',
+            styles.ok(f'{styles.GLYPH_RESPONSE} {message.service_name} '
+                      f'response in {message.elapsed_ms:.1f} ms')
         )
+        self._set_status(f'responded in {message.elapsed_ms:.0f} ms', 'ok')
         self.write_log(to_truncated_yaml(message.response))

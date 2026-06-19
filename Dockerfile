@@ -24,9 +24,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 # textual (and a recent rich) are not reliably packaged for apt at the versions the
 # app needs; CI installs them via pip too (see .github/workflows/python-package.yml).
+# The [syntax] extra pulls the tree-sitter grammars that drive the YAML editor's
+# syntax highlighting.
 # --ignore-installed: install textual's dep tree into /usr/local (which shadows the
 # apt copies) rather than trying to uninstall Debian-managed packages like Pygments.
-RUN pip install --no-cache-dir --break-system-packages --ignore-installed textual rich
+RUN pip install --no-cache-dir --break-system-packages --ignore-installed 'textual[syntax]' rich
 
 # ---- Non-root user, mapped to the host UID/GID ------------------------------
 # Files written to the bind-mounted source then belong to the host user.

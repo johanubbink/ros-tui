@@ -43,6 +43,13 @@ OUTPUT_LOG_MAX_LINES = 1000
 FILTER_DEBOUNCE_S = 0.15
 EDITOR_PARSE_DEBOUNCE_S = 0.3
 
+# UI layout: dragging the seam (ros_tui/ui/resize_grip.py) clamps the entity-list column
+# to [LIST_MIN_WIDTH, screen - 1 - RIGHT_PANE_MIN_WIDTH] cells so neither pane can collapse.
+# The initial width (32%) and LIST_MIN_WIDTH are mirrored in RosTuiApp.CSS — TCSS cannot
+# read these Python values.
+LIST_MIN_WIDTH = 18
+RIGHT_PANE_MIN_WIDTH = 24
+
 # Topic publishing.
 PUBLISH_RATE_MIN_HZ = 0.1
 PUBLISH_RATE_MAX_HZ = 100.0

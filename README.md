@@ -116,6 +116,14 @@ prefilled with the message defaults. Extras:
 - Message classes are imported lazily on first selection, so startup stays fast on
   systems with thousands of interfaces.
 
+## Appearance
+
+A dark, ROS-blue theme tuned for long terminal sessions: one accent blue marks focus,
+selection, and the primary action; green/amber/rose (each with a glyph) mark operation
+outcomes. **Drag the divider** between the list and the editor to resize the list column.
+The look is documented — and easy to retune in one place — in
+[`docs/STYLE_GUIDE.md`](docs/STYLE_GUIDE.md).
+
 ## Keybindings
 
 `ctrl+1/2/3` tabs · `ctrl+f` filter · `ctrl+s` send/call/publish · `ctrl+k` cancel/stop ·

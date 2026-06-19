@@ -18,7 +18,6 @@
 from typing import Any, Iterable
 
 import yaml
-from rich.text import Text
 from textual import on
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
@@ -34,10 +33,14 @@ from ros_tui.ros.message_yaml import (
     import_type,
     request_class,
 )
+from ros_tui.ui import styles
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import PrototypeReady
+from ros_tui.ui.resize_grip import ResizeGrip
 
 _KIND_SUFFIX = {'msg': '', 'srv': ' — Request', 'action': ' — Goal'}
+# The noun in the editor pane's border title — what the YAML you're editing represents.
+_KIND_TITLE = {'msg': 'Message', 'srv': 'Request', 'action': 'Goal'}
 
 
 class InterfaceTab(Horizontal):
@@ -45,6 +48,8 @@ class InterfaceTab(Horizontal):
 
     kind = 'msg'
     list_placeholder = 'filter…'
+    list_title = 'Interfaces'  # the left pane's border title — overridden per tab
+    status_id: str | None = None  # id of this tab's status strip, if it has one
 
     def __init__(self, bridge: Any, **kwargs):
         super().__init__(**kwargs)
@@ -58,23 +63,28 @@ class InterfaceTab(Horizontal):
     # ------------------------------------------------------------------ layout
 
     def compose(self):
-        yield FilterableList(placeholder=self.list_placeholder, classes='entity-list')
+        entity_list = FilterableList(placeholder=self.list_placeholder, classes='entity-list')
+        entity_list.border_title = self.list_title
+        yield entity_list
+        yield ResizeGrip(entity_list)  # drag to widen/narrow the list column
         with Vertical(classes='right-pane'):
             yield Static('— select an entry on the left —', id='detail-line')
-            yield TextArea(
-                id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
-            )
+            editor = TextArea.code_editor('', id='editor', language='yaml', theme='css')
+            editor.border_title = _KIND_TITLE[self.kind]
+            yield editor
             yield Static('', id='editor-error')
             with Horizontal(classes='controls'):
                 yield from self.compose_controls()
             yield from self.compose_status()
-            yield RichLog(
+            output_log = RichLog(
                 id='output-log',
                 max_lines=OUTPUT_LOG_MAX_LINES,
                 wrap=True,
                 markup=False,
                 highlight=False,
             )
+            output_log.border_title = 'Output'
+            yield output_log
 
     def compose_controls(self) -> Iterable[Widget]:
         return ()
@@ -92,6 +102,11 @@ class InterfaceTab(Horizontal):
 
     def on_selection_changed(self) -> None:
         """Refresh subclass control state after a new entry loads (override hook)."""
+
+    def _set_status(self, label: str, role: str) -> None:
+        """Paint this tab's status strip with a glyph-led state line (see ros_tui.ui.styles)."""
+        if self.status_id is not None:
+            self.query_one(f'#{self.status_id}', Static).update(styles.state(label, role))
 
     # ------------------------------------------------------------------ entries & selection
 
@@ -111,7 +126,7 @@ class InterfaceTab(Horizontal):
         self._store_current_edit()
         self._current = message.entry
         self.query_one('#detail-line', Static).update(
-            Text(f'loading {message.entry.types[0]} …', style='dim')
+            styles.muted(f'loading {message.entry.types[0]} …')
         )
         self._load_prototype(message.entry)
 
@@ -135,7 +150,7 @@ class InterfaceTab(Horizontal):
         detail = self.query_one('#detail-line', Static)
         editor = self.query_one('#editor', TextArea)
         if message.error:
-            detail.update(Text(message.error, style='bold red'))
+            detail.update(styles.fail(message.error))
             editor.load_text('')
             return
         self._seed_cache[message.entry_name] = message.seed_text
@@ -143,7 +158,7 @@ class InterfaceTab(Horizontal):
         if len(self._current.types) > 1:
             types_note = f'  (+{len(self._current.types) - 1} more types)'
         detail.update(
-            Text(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}', style='bold')
+            styles.title(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}')
         )
         editor.load_text(self._edit_cache.get(message.entry_name, message.seed_text))
         self._set_editor_error('')
@@ -220,14 +235,20 @@ class InterfaceTab(Horizontal):
     def _set_editor_error(self, text: str) -> None:
         self._editor_error_text = text
         error_line = self.query_one('#editor-error', Static)
-        error_line.update(Text(text, style='bold red') if text else '')
+        error_line.update(styles.fail(text) if text else '')
         error_line.display = bool(text)
 
     # ------------------------------------------------------------------ output log
 
-    def write_log(self, text: str, style: str = '') -> None:
-        log = self.query_one('#output-log', RichLog)
-        log.write(Text(text, style=style) if style else text)
+    def write_log(self, renderable) -> None:
+        """Append one line to the output log.
+
+        Pass a plain ``str`` for unstyled text (e.g. a YAML body) or a builder from
+        ``ros_tui.ui.styles`` (``styles.ok(...)``, ``styles.fail(...)``, …) for semantic
+        colour. Colour never appears as a raw style string here — that is the rule the
+        style guide enforces.
+        """
+        self.query_one('#output-log', RichLog).write(renderable)
 
     def clear_log(self) -> None:
         self.query_one('#output-log', RichLog).clear()

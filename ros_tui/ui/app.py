@@ -25,6 +25,7 @@ from ros_tui.ui.actions_tab import ActionsTab
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import GraphUpdated
 from ros_tui.ui.services_tab import ServicesTab
+from ros_tui.ui.theme import ROS_DARK
 from ros_tui.ui.topics_tab import TopicsTab
 
 HELP_TEXT = """\
@@ -55,13 +56,19 @@ class HelpScreen(ModalScreen):
     ]
 
     DEFAULT_CSS = """
-    HelpScreen { align: center middle; }
-    HelpScreen Static { width: 80; max-width: 95%; border: round $primary; padding: 1 2; }
+    HelpScreen { align: center middle; background: $background 60%; }
+    HelpScreen #help-dialog {
+        width: 80; max-width: 95%; height: auto;
+        background: $surface; border: round $primary; padding: 1 2;
+        border-title-color: $primary; border-title-align: left;
+    }
     """
 
     def compose(self):
+        dialog = Static(HELP_TEXT, id='help-dialog')
+        dialog.border_title = 'Help'
         with Middle(), Center():
-            yield Static(HELP_TEXT)
+            yield dialog
 
     def action_dismiss_help(self) -> None:
         self.dismiss()
@@ -71,19 +78,57 @@ class RosTuiApp(App):
     TITLE = 'ros_tui'
     SUB_TITLE = 'ROS 2 interface workbench'
 
+    # All colour comes from the ros-dark theme variables (ros_tui/ui/theme.py); never
+    # hardcode hex here. Spacing is on a {0,1,2}-cell scale. Borders have one resting
+    # treatment ($surface-lighten-2) and one focus treatment ($primary) — the blue seam.
+    # See docs/STYLE_GUIDE.md.
     CSS = """
-    .entity-list { width: 32%; min-width: 28; border: round $primary; }
-    .entity-list #filter-input { border: none; height: 1; padding: 0 1; }
-    .entity-list #entity-list { height: 1fr; border: none; }
-    .right-pane { width: 1fr; padding: 0 1; }
-    #detail-line { height: 1; }
+    /* ── left column: the entity list ─────────────────────────────────────── */
+    .entity-list { width: 32%; min-width: 18; border: round $surface-lighten-2; }
+    .entity-list:focus-within { border: round $primary; }
+    .entity-list #filter-input { border: none; height: 1; padding: 0 1; background: $surface; }
+    .entity-list #entity-list { height: 1fr; border: none; background: $surface; padding: 0 1; }
+
+    /* ── right column: detail · editor · error · controls · status · log ──── */
+    .right-pane { width: 1fr; padding: 0 0 0 1; }
+    #detail-line { height: 1; padding: 0 1; }
     #editor { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
-    #editor-error { display: none; height: auto; max-height: 3; }
-    .controls { height: 3; }
-    .controls Button { margin-right: 1; min-width: 8; }
-    #rate-input { width: 9; }
-    #goal-status, #topics-status { height: 1; }
-    #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
+    #editor:focus { border: round $primary; }
+    #editor-error {
+        display: none; height: auto; max-height: 3; padding: 0 1;
+        background: $error-muted; color: $text-error;
+    }
+
+    /* ── controls: a flat, outlined button system (no bevel; matches the round panes) ── */
+    .controls { height: 3; padding: 0 1; }
+    .controls Button {
+        margin: 0 1 0 0; min-width: 10; height: 3;
+        background: $surface; color: $text;
+        border: round $surface-lighten-2; text-style: none;
+    }
+    .controls Button:hover { border: round $primary; color: $text-primary; }
+    .controls Button:focus { border: round $primary; background: $primary 15%; text-style: none; }
+    .controls Button:disabled { border: round $surface-lighten-1; color: $text-muted; }
+    .controls Button.-active { background: $primary; color: $background; border: round $primary; }
+    /* primary action (Send / Call / Publish): a blue-outlined call to action that fills on touch */
+    .controls Button.-primary { color: $text-primary; border: round $primary; }
+    .controls Button.-primary:hover { background: $primary; color: $background; }
+    /* a running rate/echo/resume toggle reads as amber while it is live */
+    .controls Button.running { color: $text-warning; border: round $warning; }
+    .controls Button.running:hover { background: $warning; color: $background; }
+    #rate-input { width: 10; height: 3; margin: 0 1 0 0; border: round $surface-lighten-2; }
+    #rate-input:focus { border: round $primary; }
+
+    /* ── status line: a calm, glyph-led 'what just happened' line (no heavy band) ── */
+    .status-strip { height: 1; padding: 0 1; color: $text-muted; }
+
+    #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; padding: 0 1; }
+
+    /* ── quiet, left-aligned border-title labels on each pane ─────────────── */
+    .entity-list, #editor, #output-log {
+        border-title-color: $text-muted; border-title-align: left;
+        border-subtitle-color: $text-muted;
+    }
     """
 
     BINDINGS = [
@@ -114,6 +159,8 @@ class RosTuiApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(ROS_DARK)
+        self.theme = 'ros-dark'
         self._bridge.set_graph_listener(lambda snapshot: self.post_message(GraphUpdated(snapshot)))
         self._apply_graph(self._bridge.latest_graph)
 

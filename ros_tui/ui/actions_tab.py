@@ -18,7 +18,6 @@
 import time
 from collections import deque
 
-from rich.text import Text
 from textual import on
 from textual.widgets import Button, Static
 
@@ -29,21 +28,25 @@ from ros_tui.constants import (
 )
 from ros_tui.ros.events import ActionEventKind, goal_status_name
 from ros_tui.ros.message_yaml import to_truncated_yaml
+from ros_tui.ui import styles
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import ActionEventMessage
 
-_STATUS_STYLES = {
-    'SUCCEEDED': 'bold green',
-    'ABORTED': 'bold red',
-    'REJECTED': 'bold red',
-    'ERROR': 'bold red',
-    'CANCELED': 'bold yellow',
+# Terminal goal status -> semantic role. In-flight states default to 'busy'/'info'.
+_OUTCOME = {
+    'SUCCEEDED': 'ok',
+    'ABORTED': 'fail',
+    'REJECTED': 'fail',
+    'ERROR': 'fail',
+    'CANCELED': 'warn',
 }
 
 
 class ActionsTab(InterfaceTab):
     kind = 'action'
     list_placeholder = 'filter actions…'
+    list_title = 'Actions'
+    status_id = 'goal-status'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)
@@ -56,9 +59,10 @@ class ActionsTab(InterfaceTab):
         yield Button('Cancel', id='cancel-button', disabled=True)
 
     def compose_status(self):
-        yield Static('no goal sent yet', id='goal-status')
+        yield Static(id='goal-status', classes='status-strip')
 
     def on_mount(self) -> None:
+        self._set_status('no goal sent yet', 'idle')
         self.set_interval(ECHO_RENDER_PERIOD_S, self._drain_feedback)
 
     @on(Button.Pressed, '#send-button')
@@ -73,7 +77,10 @@ class ActionsTab(InterfaceTab):
 
     def primary_action(self) -> None:
         if self._goal_action_name is not None:
-            self.write_log(f'✗ a goal on {self._goal_action_name} is still in flight', 'bold red')
+            self.write_log(
+                styles.fail(f'{styles.GLYPH_FAIL} a goal on {self._goal_action_name} '
+                            'is still in flight')
+            )
             return
         built = self.build_from_editor()
         if built is None:
@@ -83,10 +90,10 @@ class ActionsTab(InterfaceTab):
         self._goal_action_name = name
         self._goal_started = time.monotonic()
         self._feedback.clear()
-        self._set_status(f'SENDING  {name}', 'bold yellow')
+        self._set_status(f'SENDING  {name}', 'busy')
         self.query_one('#send-button', Button).disabled = True
         self.query_one('#cancel-button', Button).disabled = False
-        self.write_log(f'→ goal sent to {name}', style='bold cyan')
+        self.write_log(styles.info(f'{styles.GLYPH_REQUEST} goal sent to {name}'))
         self._bridge.send_goal(
             name,
             type_name,
@@ -98,7 +105,7 @@ class ActionsTab(InterfaceTab):
     def secondary_action(self) -> None:
         if self._goal_action_name is None:
             return
-        self._set_status(f'CANCELING  {self._goal_action_name}', 'bold yellow')
+        self._set_status(f'CANCELING  {self._goal_action_name}', 'warn')
         self._bridge.cancel_goal(self._goal_action_name)
 
     def on_action_event_message(self, message: ActionEventMessage) -> None:
@@ -108,36 +115,37 @@ class ActionsTab(InterfaceTab):
             return  # Stale event from a goal we already finished reporting.
         kind = event.kind
         if kind == ActionEventKind.ACCEPTED:
-            self._set_status(f'EXECUTING  {event.action_name}', 'bold cyan')
+            self._set_status(f'EXECUTING  {event.action_name}', 'busy')
         elif kind == ActionEventKind.FEEDBACK:
             self._feedback.append(event.payload)
         elif kind == ActionEventKind.REJECTED:
-            self.write_log('✗ goal rejected by the server', style='bold red')
+            self.write_log(styles.fail(f'{styles.GLYPH_FAIL} goal rejected by the server'))
             self._finish_goal('REJECTED')
         elif kind == ActionEventKind.ERROR:
-            self.write_log(f'✗ {event.payload}', style='bold red')
+            self.write_log(styles.fail(f'{styles.GLYPH_FAIL} {event.payload}'))
             self._finish_goal('ERROR')
         elif kind == ActionEventKind.CANCEL_ACCEPTED:
-            self.write_log('cancel request accepted', style='yellow')
+            self.write_log(styles.warn('cancel request accepted'))
         elif kind == ActionEventKind.CANCEL_REJECTED:
-            self.write_log('cancel request rejected', style='bold red')
+            self.write_log(styles.fail('cancel request rejected'))
         elif kind == ActionEventKind.RESULT:
             self._drain_feedback()
             status = goal_status_name(event.status)
             elapsed = time.monotonic() - self._goal_started
-            style = _STATUS_STYLES.get(status, 'bold')
-            self.write_log(f'— result: {status} in {elapsed:.2f} s —', style=style)
+            self.write_log(
+                styles.styled(f'— result: {status} in {elapsed:.2f} s —',
+                              _OUTCOME.get(status, 'info'))
+            )
             self.write_log(to_truncated_yaml(event.payload))
             self._finish_goal(status)
 
     def _finish_goal(self, status: str) -> None:
-        self._set_status(f'{status}  {self._goal_action_name}', _STATUS_STYLES.get(status, 'bold'))
+        # A finished goal is never "in flight"; an unmapped terminal status is a warning,
+        # not the blue ▸ busy glyph.
+        self._set_status(f'{status}  {self._goal_action_name}', _OUTCOME.get(status, 'warn'))
         self._goal_action_name = None
         self.query_one('#send-button', Button).disabled = False
         self.query_one('#cancel-button', Button).disabled = True
-
-    def _set_status(self, text: str, style: str) -> None:
-        self.query_one('#goal-status', Static).update(Text(text, style=style))
 
     def _drain_feedback(self) -> None:
         if not self._feedback:
@@ -146,8 +154,8 @@ class ActionsTab(InterfaceTab):
         self._feedback.clear()
         if len(pending) > FEEDBACK_MAX_RENDER_PER_TICK:
             hidden = len(pending) - FEEDBACK_MAX_RENDER_PER_TICK
-            self.write_log(f'(+{hidden} feedback messages coalesced)', style='dim')
+            self.write_log(styles.muted(f'(+{hidden} feedback messages coalesced)'))
             pending = pending[-FEEDBACK_MAX_RENDER_PER_TICK:]
-        for feedback in pending:
-            self.write_log('feedback:', style='cyan')
-            self.write_log(to_truncated_yaml(feedback))
+        for payload in pending:
+            self.write_log(styles.feedback('feedback:'))
+            self.write_log(to_truncated_yaml(payload))

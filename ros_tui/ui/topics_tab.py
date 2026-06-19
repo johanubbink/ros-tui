@@ -15,7 +15,6 @@
 
 """Topics tab: publish once or at a fixed rate, and echo a topic with stats."""
 
-from rich.text import Text
 from textual import on
 from textual.widgets import Button, Input, Static
 
@@ -27,6 +26,7 @@ from ros_tui.constants import (
 )
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.message_yaml import to_truncated_yaml
+from ros_tui.ui import styles
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import PublishCompleted
 
@@ -34,6 +34,8 @@ from ros_tui.ui.messages import PublishCompleted
 class TopicsTab(InterfaceTab):
     kind = 'msg'
     list_placeholder = 'filter topics…'
+    list_title = 'Topics'
+    status_id = 'topics-status'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)
@@ -50,10 +52,11 @@ class TopicsTab(InterfaceTab):
         yield Button('Pause', id='pause-button', disabled=True)
 
     def compose_status(self):
-        yield Static('', id='topics-status')
+        yield Static('', id='topics-status', classes='status-strip')
 
     def on_mount(self) -> None:
         self.set_interval(ECHO_RENDER_PERIOD_S, self._drain_echo)
+        self._update_status()
 
     def on_selection_changed(self) -> None:
         self._update_controls()
@@ -120,7 +123,9 @@ class TopicsTab(InterfaceTab):
             )
         )
         self._rate_topics[name] = rate_hz
-        self.write_log(f'publishing {name} @ {rate_hz:g} Hz (edits apply after restart)', 'cyan')
+        self.write_log(
+            styles.info(f'publishing {name} @ {rate_hz:g} Hz (edits apply after restart)')
+        )
         self._update_controls()
 
     def _stop_rate(self, name: str) -> None:
@@ -131,22 +136,27 @@ class TopicsTab(InterfaceTab):
             )
         )
         self._rate_topics.pop(name, None)
-        self.write_log(f'stopped publishing {name}', 'cyan')
+        self.write_log(styles.info(f'stopped publishing {name}'))
         self._update_controls()
 
     def on_publish_completed(self, message: PublishCompleted) -> None:
         message.stop()
         if message.error is not None:
-            self.write_log(f'✗ {message.label} {message.topic_name}: {message.error}', 'bold red')
+            self.write_log(
+                styles.fail(f'{styles.GLYPH_FAIL} {message.label} {message.topic_name}: '
+                            f'{message.error}')
+            )
             if message.label.startswith('start') or message.label == 'stop rate':
                 self._rate_topics.pop(message.topic_name, None)
             if message.label == 'echo' and self._echo_topic == message.topic_name:
                 self._echo_topic = None
                 self._echo_buffer = None
-                self.query_one('#pause-button', Button).disabled = True
+                pause = self.query_one('#pause-button', Button)
+                pause.disabled = True
+                pause.remove_class('running')
             self._update_controls()
         elif message.label == 'publish':
-            self.write_log(f'✓ published once on {message.topic_name}', 'green')
+            self.write_log(styles.ok(f'{styles.GLYPH_OK} published once on {message.topic_name}'))
 
     @staticmethod
     def _future_error(done_future) -> str | None:
@@ -173,7 +183,9 @@ class TopicsTab(InterfaceTab):
     def _on_pause_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._echo_paused = not self._echo_paused
-        self.query_one('#pause-button', Button).label = 'Resume' if self._echo_paused else 'Pause'
+        pause = self.query_one('#pause-button', Button)
+        pause.label = 'Resume' if self._echo_paused else 'Pause'
+        pause.set_class(self._echo_paused, 'running')
 
     def _start_echo(self, name: str, type_name: str) -> None:
         if self._echo_topic is not None:
@@ -185,9 +197,11 @@ class TopicsTab(InterfaceTab):
         future.add_done_callback(
             lambda done: self.post_message(PublishCompleted(name, 'echo', self._future_error(done)))
         )
-        self.write_log(f'echo started on {name}', 'cyan')
-        self.query_one('#pause-button', Button).disabled = False
-        self.query_one('#pause-button', Button).label = 'Pause'
+        self.write_log(styles.info(f'echo started on {name}'))
+        pause = self.query_one('#pause-button', Button)
+        pause.disabled = False
+        pause.label = 'Pause'
+        pause.remove_class('running')
         self._update_controls()
 
     def _stop_echo(self) -> None:
@@ -200,10 +214,12 @@ class TopicsTab(InterfaceTab):
                 PublishCompleted(name, 'stop echo', self._future_error(done))
             )
         )
-        self.write_log(f'echo stopped on {name}', 'cyan')
+        self.write_log(styles.info(f'echo stopped on {name}'))
         self._echo_topic = None
         self._echo_buffer = None
-        self.query_one('#pause-button', Button).disabled = True
+        pause = self.query_one('#pause-button', Button)
+        pause.disabled = True
+        pause.remove_class('running')
         self._update_controls()
 
     def _drain_echo(self) -> None:
@@ -216,20 +232,24 @@ class TopicsTab(InterfaceTab):
             return
         if len(messages) > ECHO_MAX_RENDER_PER_TICK:
             hidden = len(messages) - ECHO_MAX_RENDER_PER_TICK
-            self.write_log(f'(+{hidden} messages not shown)', style='dim')
+            self.write_log(styles.muted(f'(+{hidden} messages not shown)'))
             messages = messages[-ECHO_MAX_RENDER_PER_TICK:]
         for received_message in messages:
-            self.write_log(f'─── {self._echo_topic}', style='dim')
+            self.write_log(styles.muted(f'{styles.GLYPH_ECHO} {self._echo_topic}'))
             self.write_log(to_truncated_yaml(received_message))
 
     # ------------------------------------------------------------------ status & controls
 
     def _update_controls(self) -> None:
         selected = self._current.name if self._current else None
+        rate_running = selected in self._rate_topics
         rate_button = self.query_one('#rate-button', Button)
-        rate_button.label = 'Stop rate' if selected in self._rate_topics else 'Start rate'
+        rate_button.label = 'Stop rate' if rate_running else 'Start rate'
+        rate_button.set_class(rate_running, 'running')
+        echo_running = self._echo_topic is not None and selected == self._echo_topic
         echo_button = self.query_one('#echo-button', Button)
-        echo_button.label = 'Stop echo' if selected == self._echo_topic else 'Echo'
+        echo_button.label = 'Stop echo' if echo_running else 'Echo'
+        echo_button.set_class(echo_running, 'running')
         self._update_status()
 
     def _update_status(self, echo_text: str = '') -> None:
@@ -243,4 +263,6 @@ class TopicsTab(InterfaceTab):
             parts.append(echo_text)
         elif self._echo_topic is not None:
             parts.append(f'echo {self._echo_topic}')
-        self.query_one('#topics-status', Static).update(Text(' · '.join(parts), style='dim'))
+        text = ' · '.join(parts)
+        status = self.query_one('#topics-status', Static)
+        status.update(styles.muted(text) if text else styles.state('idle', 'idle'))
