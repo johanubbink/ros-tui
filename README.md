@@ -136,7 +136,7 @@ Pure unit tests (YAML round-trips over 28 interface types, edge cases like `byte
 corruption, NaN, range checks), bridge integration tests against in-process fixture
 servers on an isolated `ROS_DOMAIN_ID`, headless UI tests (textual Pilot + a FakeBridge),
 and a full-stack e2e smoke (real bridge + real servers driven through the real app).
-A manual smoke checklist against the 1252 simulation lives in
+A manual smoke checklist against the Docker demo playground lives in
 `test/test_e2e_smoke.py`'s module docstring.
 
 ## Architecture notes

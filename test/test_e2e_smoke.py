@@ -16,20 +16,26 @@
 """
 Full-stack smoke: real RosBridge + real fixture servers + the real app under Pilot.
 
-Manual checklist against the 1252 simulation (run in two shells inside the dev container):
+The automated tests below drive the real app against the in-process fixture servers
+(``test/conftest.py``), which mirror the demo node in ``ros_tui/demo/demo_servers.py``.
 
-    ros2 launch robot_bringup 1252.launch.py simulation_mode:=True
+Manual checklist against the Docker demo playground (run in two shells inside the dev
+container — see the README "Try it in Docker"):
+
+    ros2 launch ros_tui demo.launch.py turtlesim:=true   # demo servers + turtlesim
     ros2 run ros_tui ros_tui
 
-  - App starts < 2 s and all three tabs populate with the sim's full graph.
-  - Filter stays responsive while typing with 100+ topics.
-  - Echo a high-rate sensor topic: stats line shows Hz, drops counted, UI stays smooth;
-    best-effort publishers are received (QoS adaptation).
-  - Send a goal on a real action (e.g. a DrivePath/RunMission goal), watch feedback,
-    cancel it; status line ends CANCELED.
-  - Call a real service (e.g. ResetOdometry) and check the response renders.
-  - Select a deeply nested common_msgs type: editor seeds defaults and round-trips.
-  - Start a 10 Hz publisher, quit with ctrl+q, verify it stops (ros2 topic hz in shell 2).
+  - App starts < 2 s and all three tabs populate with the demo graph.
+  - Filter stays responsive while typing.
+  - Echo a high-rate topic (/counter @ ~50 Hz): stats line shows Hz, drops counted,
+    UI stays smooth; best-effort publishers are received (QoS adaptation).
+  - Send a goal on an action (/fibonacci order: 20, or /turtle1/rotate_absolute
+    theta: 1.57), watch feedback, cancel it; status line ends CANCELED.
+  - Call a service (/add_two_ints, or /spawn) and check the response renders.
+  - Select a nested message type (/turtle1/cmd_vel — geometry_msgs/Twist): editor
+    seeds defaults and round-trips.
+  - Start a 10 Hz publisher on /turtle1/cmd_vel, quit with ctrl+q, verify it stops
+    (ros2 topic hz /turtle1/cmd_vel in shell 2) — and the turtle stops moving.
 """
 
 import time
