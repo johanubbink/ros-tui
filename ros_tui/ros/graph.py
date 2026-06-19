@@ -37,25 +37,44 @@ class GraphSnapshot:
 
 EMPTY_GRAPH = GraphSnapshot(version=0, actions=(), services=(), topics=())
 
+# Services rclpy auto-creates on every node for parameter handling and type
+# introspection. The Params tab already exposes these, so the Services tab
+# hides them to cut noise. Matched by type (package/srv/TypeName) so node
+# naming is irrelevant.
+BUILTIN_SERVICE_TYPES = frozenset({
+    'rcl_interfaces/srv/DescribeParameters',
+    'rcl_interfaces/srv/GetParameters',
+    'rcl_interfaces/srv/GetParameterTypes',
+    'rcl_interfaces/srv/ListParameters',
+    'rcl_interfaces/srv/SetParameters',
+    'rcl_interfaces/srv/SetParametersAtomically',
+    'type_description_interfaces/srv/GetTypeDescription',
+})
+
 
 def is_hidden_name(name: str) -> bool:
     """ROS hides names with any '_'-prefixed token, e.g. /_x or /foo/_action/feedback."""
     return any(token.startswith('_') for token in name.split('/') if token)
 
 
+def is_builtin_service(types) -> bool:
+    """True when every advertised type is an auto-created node service."""
+    return bool(types) and all(t in BUILTIN_SERVICE_TYPES for t in types)
+
+
 def build_snapshot(node: Any, version: int) -> GraphSnapshot:
     """Query the graph through ``node``. Must be called on the thread spinning the node."""
 
-    def entries(name_type_pairs) -> tuple[InterfaceEntry, ...]:
+    def entries(name_type_pairs, *, skip=None) -> tuple[InterfaceEntry, ...]:
         return tuple(
             InterfaceEntry(name, tuple(types))
             for name, types in sorted(name_type_pairs)
-            if not is_hidden_name(name)
+            if not is_hidden_name(name) and not (skip and skip(types))
         )
 
     return GraphSnapshot(
         version=version,
         actions=entries(get_action_names_and_types(node)),
-        services=entries(node.get_service_names_and_types()),
+        services=entries(node.get_service_names_and_types(), skip=is_builtin_service),
         topics=entries(node.get_topic_names_and_types()),
     )

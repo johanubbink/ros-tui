@@ -15,7 +15,13 @@
 
 """Pure unit tests for graph snapshot data structures and hidden-name filtering."""
 
-from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, InterfaceEntry, is_hidden_name
+from ros_tui.ros.graph import (
+    EMPTY_GRAPH,
+    GraphSnapshot,
+    InterfaceEntry,
+    is_builtin_service,
+    is_hidden_name,
+)
 
 
 def test_hidden_names():
@@ -26,6 +32,15 @@ def test_hidden_names():
     assert not is_hidden_name('/rosout')
     assert not is_hidden_name('/a/b')
     assert not is_hidden_name('/under_score_inside')
+
+
+def test_builtin_services_are_filtered():
+    assert is_builtin_service(('rcl_interfaces/srv/GetParameters',))
+    assert is_builtin_service(('rcl_interfaces/srv/SetParametersAtomically',))
+    assert is_builtin_service(('type_description_interfaces/srv/GetTypeDescription',))
+    assert not is_builtin_service(('std_srvs/srv/Trigger',))
+    assert not is_builtin_service(('turtlesim/srv/Spawn',))
+    assert not is_builtin_service(())
 
 
 def test_snapshot_equality_drives_diffing():
