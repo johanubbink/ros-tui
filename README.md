@@ -12,6 +12,79 @@ Each tab: filterable entity list on the left · type + YAML editor + controls on
 right · output log at the bottom. The graph refreshes automatically (1 s poll, only
 re-renders on change).
 
+## Try it in Docker
+
+Don't have a ROS 2 system handy? The bundled Docker playground spins up a small set of
+example servers and lets you drive the TUI against them — no local ROS install required,
+just Docker Engine + the Compose plugin (Linux).
+
+```shell
+./create_dot_env             # one-time: writes .env with your UID/GID (and ROS_DISTRO)
+docker compose up --build    # builds the workspace, then launches the demo servers
+```
+
+Leave that running and, in a **second terminal**, open a shell in the same container and
+start the TUI (it needs an interactive terminal, which a `docker compose exec` shell
+provides):
+
+```shell
+docker compose exec ros_tui bash
+# inside the container:
+ros2 run ros_tui ros_tui
+```
+
+All three tabs populate from the demo node ([`launch/demo.launch.py`](launch/demo.launch.py)
+→ [`ros_tui/demo/demo_servers.py`](ros_tui/demo/demo_servers.py)):
+
+| Tab      | Entity              | Try                                                        |
+|----------|---------------------|-----------------------------------------------------------|
+| Actions  | `/fibonacci`        | Send `order: 8`; watch feedback stream, then `Cancel`.    |
+| Services | `/add_two_ints`     | Call with `a: 19` / `b: 23` → `sum: 42`.                  |
+| Topics   | `/chatter` (~1 Hz)  | `Echo` a calm `std_msgs/String` stream.                   |
+| Topics   | `/counter` (~50 Hz) | `Echo` to watch the Hz / drop counters move.              |
+| Topics   | `/inbox`            | `Publish` `data: hello` — it's logged by the demo node.   |
+
+### With turtlesim (GUI)
+
+For a richer, well-known target you can also launch **turtlesim** and watch the turtle move
+in its window as you drive it from the TUI. This forwards a GUI window from the container, so
+it needs an **X11 display** (Linux):
+
+```shell
+xhost +local:                                  # once per login: let the container reach your X server
+docker compose -f docker-compose.yml -f docker-compose.gui.yml up --build
+# second terminal, as before:
+docker compose exec ros_tui bash
+ros2 run ros_tui ros_tui
+# when done, revoke access again:
+xhost -local:
+```
+
+This adds the demo servers **and** turtlesim, so the TUI also lists:
+
+| Tab      | Entity                       | Try                                                          |
+|----------|------------------------------|--------------------------------------------------------------|
+| Actions  | `/turtle1/rotate_absolute`   | Send `theta: 1.57`; watch the turtle rotate in the window.   |
+| Services | `/spawn`                     | `x: 5.0` / `y: 5.0` / `name: t2` → a second turtle appears.  |
+| Services | `/clear`                     | Wipes the trail.                                             |
+| Topics   | `/turtle1/cmd_vel`           | `Start rate` a `Twist` with `linear: {x: 1.0}` → it drives.  |
+| Topics   | `/turtle1/pose`              | `Echo` to watch x/y/theta update live.                       |
+
+The plain `docker compose up` stays fully headless and needs none of this.
+
+Notes:
+
+- **Live edits.** The repo is bind-mounted and built with `colcon build --symlink-install`,
+  so editing Python under `ros_tui/` is picked up on the next process start — no rebuild.
+  Re-run `docker compose up --build` only after changing `package.xml`, `setup.py`, or the
+  Dockerfile.
+- **Run the tests in here too:** `docker compose exec ros_tui bash -lc 'colcon test --packages-select ros_tui && colcon test-result --verbose'`
+  (the image ships the test deps).
+- **Why `create_dot_env`?** It maps the container user to your host UID/GID so build
+  artifacts stay yours. Compose falls back to `1000:1000` if you skip it.
+- **Tear down:** `docker compose down`. The image is lean (`ros:jazzy-ros-base`, headless —
+  no X11); switch distro or to a desktop image via the `ROS_DISTRO` / base-image build arg.
+
 ## Tabs
 
 - **Actions** — select an action, edit the Goal (seeded with defaults), `Send goal`.
@@ -56,14 +129,14 @@ recent VS Code); on plain xterm-likes click the tab titles instead.
 ```shell
 colcon test --packages-select ros_tui
 # or, directly:
-python3 -m pytest src/dev_tools/ros_tui/test -q
+python3 -m pytest test -q
 ```
 
 Pure unit tests (YAML round-trips over 28 interface types, edge cases like `byte`
 corruption, NaN, range checks), bridge integration tests against in-process fixture
 servers on an isolated `ROS_DOMAIN_ID`, headless UI tests (textual Pilot + a FakeBridge),
 and a full-stack e2e smoke (real bridge + real servers driven through the real app).
-A manual smoke checklist against the 1252 simulation lives in
+A manual smoke checklist against the Docker demo playground lives in
 `test/test_e2e_smoke.py`'s module docstring.
 
 ## Architecture notes

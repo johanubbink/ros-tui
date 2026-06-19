@@ -1,0 +1,29 @@
+# Docker playground for ros_tui. See README.md "Try it in Docker".
+#
+#   ./create_dot_env            # one-time: capture your UID/GID into .env
+#   docker compose up --build   # build the workspace + launch the demo servers
+#   docker compose exec ros_tui bash   # in a 2nd terminal, then: ros2 run ros_tui ros_tui
+services:
+  ros_tui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-jazzy}
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+    # Bind-mount the package source into the workspace; build/install/log stay
+    # inside the container, so the host repo stays clean.
+    volumes:
+      - ./:/ros_tui_ws/src/ros_tui
+    working_dir: /ros_tui_ws
+    # Keep stdin/tty so the demo logs render and the container stays up.
+    stdin_open: true
+    tty: true
+    environment:
+      ROS_DISTRO: ${ROS_DISTRO:-jazzy}
+      ROS_DOMAIN_ID: "0"
+    entrypoint: ["/ros_tui_ws/src/ros_tui/docker/entrypoint.sh"]
+    # Default: build, then launch the example servers. The TUI itself is run
+    # interactively in a second terminal via `docker compose exec`.
+    command: ["ros2", "launch", "ros_tui", "demo.launch.py"]

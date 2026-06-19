@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = 'ros_tui'
@@ -24,6 +26,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools', 'textual', 'rich'],
     zip_safe=True,
@@ -35,6 +38,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ros_tui = ros_tui.main:main',
+            'demo_servers = ros_tui.demo.demo_servers:main',
         ],
     },
 )
