@@ -15,6 +15,13 @@
   <exec_depend>python3-textual</exec_depend>
   <exec_depend>python3-rich</exec_depend>
 
+  <!-- Runtime deps for the demo launch file (launch/demo.launch.py) and demo node -->
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>example_interfaces</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-pytest-asyncio</test_depend>
   <test_depend>domain_coordinator</test_depend>
