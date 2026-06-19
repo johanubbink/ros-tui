@@ -14,7 +14,8 @@
 
 """Launch a set of example servers for exploring ros_tui.
 
-    ros2 launch ros_tui demo.launch.py
+    ros2 launch ros_tui demo.launch.py                  # headless demo servers
+    ros2 launch ros_tui demo.launch.py turtlesim:=true  # also start turtlesim (needs a display)
 
 Then, in another terminal:
 
@@ -24,16 +25,31 @@ Extra example nodes can be appended to the returned list.
 """
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'turtlesim',
+            default_value='false',
+            description='Also launch turtlesim_node (opens a GUI window — requires an X display).',
+        ),
         Node(
             package='ros_tui',
             executable='demo_servers',
             name='ros_tui_demo_servers',
             output='screen',
             emulate_tty=True,
+        ),
+        Node(
+            package='turtlesim',
+            executable='turtlesim_node',
+            name='turtlesim',
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('turtlesim')),
         ),
     ])

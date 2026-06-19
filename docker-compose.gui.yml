@@ -1,0 +1,21 @@
+# X11 overlay for the ros_tui playground: forwards turtlesim's GUI window to your
+# host display and launches turtlesim alongside the headless demo servers.
+#
+#   xhost +local:                                                   # once per login
+#   docker compose -f docker-compose.yml -f docker-compose.gui.yml up --build
+#   # ... and `xhost -local:` to revoke access when done.
+#
+# Linux + an X11 display only. The plain `docker compose up` stays fully headless.
+services:
+  ros_tui:
+    environment:
+      # Interpolated from your shell at `up` time (e.g. :1); not stored in .env.
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      # turtlesim is 2D and needs no GPU; force Mesa software rendering so it works
+      # without /dev/dri passthrough and stays quiet (no dri3/iris probe errors).
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    # Added to (not replacing) the base source bind-mount.
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    command: ["ros2", "launch", "ros_tui", "demo.launch.py", "turtlesim:=true"]

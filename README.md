@@ -44,6 +44,34 @@ All three tabs populate from the demo node ([`launch/demo.launch.py`](launch/dem
 | Topics   | `/counter` (~50 Hz) | `Echo` to watch the Hz / drop counters move.              |
 | Topics   | `/inbox`            | `Publish` `data: hello` — it's logged by the demo node.   |
 
+### With turtlesim (GUI)
+
+For a richer, well-known target you can also launch **turtlesim** and watch the turtle move
+in its window as you drive it from the TUI. This forwards a GUI window from the container, so
+it needs an **X11 display** (Linux):
+
+```shell
+xhost +local:                                  # once per login: let the container reach your X server
+docker compose -f docker-compose.yml -f docker-compose.gui.yml up --build
+# second terminal, as before:
+docker compose exec ros_tui bash
+ros2 run ros_tui ros_tui
+# when done, revoke access again:
+xhost -local:
+```
+
+This adds the demo servers **and** turtlesim, so the TUI also lists:
+
+| Tab      | Entity                       | Try                                                          |
+|----------|------------------------------|--------------------------------------------------------------|
+| Actions  | `/turtle1/rotate_absolute`   | Send `theta: 1.57`; watch the turtle rotate in the window.   |
+| Services | `/spawn`                     | `x: 5.0` / `y: 5.0` / `name: t2` → a second turtle appears.  |
+| Services | `/clear`                     | Wipes the trail.                                             |
+| Topics   | `/turtle1/cmd_vel`           | `Start rate` a `Twist` with `linear: {x: 1.0}` → it drives.  |
+| Topics   | `/turtle1/pose`              | `Echo` to watch x/y/theta update live.                       |
+
+The plain `docker compose up` stays fully headless and needs none of this.
+
 Notes:
 
 - **Live edits.** The repo is bind-mounted and built with `colcon build --symlink-install`,
