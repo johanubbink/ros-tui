@@ -1,7 +1,4 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
-name: Python package
+name: ROS 2 Jazzy CI
 
 on:
   push:
@@ -10,31 +7,45 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
-
+  test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+    container:
+      image: osrf/ros:jazzy-desktop
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
+
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        apt-get update -qq
+        apt-get install -y --no-install-recommends \
+          ros-jazzy-example-interfaces \
+          ros-jazzy-test-msgs \
+          ros-jazzy-turtlesim \
+          ros-jazzy-domain-coordinator \
+          python3-rich \
+          python3-pytest \
+          python3-pytest-asyncio \
+          python3-pip \
+          python3-flake8 \
+          python3-venv
+
+    - name: Set up virtualenv with ROS site-packages
+      run: |
+        python3 -m venv --system-site-packages /ci-venv
+        /ci-venv/bin/pip install textual
+
+    - name: Install package
+      run: |
+        . /opt/ros/jazzy/setup.sh
+        /ci-venv/bin/pip install --no-deps -e .
+
     - name: Lint with flake8
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        python3 -m flake8 ros_tui test --count --select=E9,F63,F7,F82 --show-source --statistics
+        python3 -m flake8 ros_tui test --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
     - name: Test with pytest
       run: |
-        pytest
+        . /opt/ros/jazzy/setup.sh
+        /ci-venv/bin/python -m pytest
