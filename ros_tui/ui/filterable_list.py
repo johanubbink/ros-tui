@@ -81,7 +81,16 @@ class FilterableList(Vertical):
         else:
             matching = list(self._entries)
         option_list.clear_options()
-        option_list.add_options([Option(entry.name, id=entry.name) for entry in matching])
+        # Names are the Option id, which must be unique; dedup defensively so a
+        # repeated name (e.g. duplicate node names) can never raise DuplicateID.
+        seen = set()
+        options = []
+        for entry in matching:
+            if entry.name in seen:
+                continue
+            seen.add(entry.name)
+            options.append(Option(entry.name, id=entry.name))
+        option_list.add_options(options)
         if previous_id is not None:
             for index, entry in enumerate(matching):
                 if entry.name == previous_id:

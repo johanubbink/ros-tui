@@ -74,11 +74,18 @@ def build_snapshot(node: Any, version: int) -> GraphSnapshot:
         )
 
     def node_entries() -> tuple[InterfaceEntry, ...]:
+        # ROS allows duplicate node names, and get_node_names_and_namespaces() can
+        # report the same node twice during discovery; dedup so each full name is
+        # listed once (downstream Option/row keys assume names are unique).
         result = []
+        seen = set()
         for name, namespace in sorted(node.get_node_names_and_namespaces()):
             if name.startswith('_'):
                 continue
             full = f'{namespace.rstrip("/")}/{name}'
+            if full in seen:
+                continue
+            seen.add(full)
             result.append(InterfaceEntry(full, (namespace,)))
         return tuple(result)
 
