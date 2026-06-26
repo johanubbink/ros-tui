@@ -67,3 +67,23 @@ class PublishCompleted(Message):
         self.topic_name = topic_name
         self.label = label
         self.error = error
+
+
+class NodeParametersReady(Message):
+    """Parameter list+values fetched (or failed) from a node."""
+
+    def __init__(self, node_name: str, params: list | None, error: str | None):
+        super().__init__()
+        self.node_name = node_name
+        self.params = params
+        self.error = error
+
+
+class ParameterSetCompleted(Message):
+    """Outcome of a set_node_parameter call."""
+
+    def __init__(self, node_name: str, param_name: str, error: str | None):
+        super().__init__()
+        self.node_name = node_name
+        self.param_name = param_name
+        self.error = error

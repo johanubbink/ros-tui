@@ -24,13 +24,14 @@ from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 from ros_tui.ui.actions_tab import ActionsTab
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import GraphUpdated
+from ros_tui.ui.params_tab import ParamsTab
 from ros_tui.ui.services_tab import ServicesTab
 from ros_tui.ui.topics_tab import TopicsTab
 
 HELP_TEXT = """\
 ros_tui — ROS 2 interface workbench
 
-  ctrl+1 / ctrl+2 / ctrl+3   switch to Actions / Services / Topics
+  ctrl+1 / ctrl+2 / ctrl+3 / ctrl+4   switch to Actions / Services / Topics / Params
   ctrl+f                     focus the filter box of the current tab
   ctrl+s                     primary action: Send goal / Call / Publish once
   ctrl+k                     Cancel goal / Stop periodic publish
@@ -84,12 +85,18 @@ class RosTuiApp(App):
     #rate-input { width: 9; }
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
+    #params-node-label { height: 1; }
+    #params-table { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
+    #value-input { height: 3; }
+    #params-error { display: none; height: auto; max-height: 3; color: $error; }
+    #params-log { height: 1fr; min-height: 4; border: round $surface-lighten-2; }
     """
 
     BINDINGS = [
         Binding('ctrl+1', "switch_tab('actions')", 'Actions', show=False),
         Binding('ctrl+2', "switch_tab('services')", 'Services', show=False),
         Binding('ctrl+3', "switch_tab('topics')", 'Topics', show=False),
+        Binding('ctrl+4', "switch_tab('params')", 'Params', show=False),
         Binding('ctrl+f', 'focus_filter', 'Filter', priority=True),
         Binding('ctrl+s', 'primary_action', 'Send/Call/Pub', priority=True),
         Binding('ctrl+k', 'secondary_action', 'Cancel/Stop', priority=True),
@@ -111,6 +118,8 @@ class RosTuiApp(App):
                 yield ServicesTab(self._bridge, id='services-tab')
             with TabPane('Topics', id='topics'):
                 yield TopicsTab(self._bridge, id='topics-tab')
+            with TabPane('Params', id='params'):
+                yield ParamsTab(self._bridge, id='params-tab')
         yield Footer()
 
     def on_mount(self) -> None:
@@ -128,12 +137,19 @@ class RosTuiApp(App):
         self.query_one('#actions-tab', ActionsTab).set_entries(snapshot.actions)
         self.query_one('#services-tab', ServicesTab).set_entries(snapshot.services)
         self.query_one('#topics-tab', TopicsTab).set_entries(snapshot.topics)
+        self.query_one('#params-tab', ParamsTab).set_entries(snapshot.nodes)
 
-    def _active_tab(self) -> InterfaceTab | None:
+    def _active_tab(self):
         tabbed = self.query_one(TabbedContent)
         if not tabbed.active:
             return None
-        return tabbed.get_pane(tabbed.active).query(InterfaceTab).first()
+        pane = tabbed.get_pane(tabbed.active)
+        # Try InterfaceTab subclasses first, then ParamsTab.
+        matches = list(pane.query(InterfaceTab))
+        if matches:
+            return matches[0]
+        matches = list(pane.query(ParamsTab))
+        return matches[0] if matches else None
 
     def action_switch_tab(self, pane_id: str) -> None:
         self.query_one(TabbedContent).active = pane_id
@@ -155,7 +171,7 @@ class RosTuiApp(App):
 
     def action_reset_editor(self) -> None:
         tab = self._active_tab()
-        if tab is not None:
+        if tab is not None and hasattr(tab, 'reset_editor'):
             tab.reset_editor()
 
     def action_clear_log(self) -> None:
