@@ -158,6 +158,10 @@ class RosTuiApp(App):
             index = pane_ids.index(tabbed.active)
         except ValueError:
             index = -1
+        # Drop focus first: while a widget inside the active pane holds focus,
+        # TabbedContent silently reverts an `active` change, so the switch only
+        # worked when the tab bar itself was focused (e.g. just after clicking).
+        self.set_focus(None)
         tabbed.active = pane_ids[(index + 1) % len(pane_ids)]
 
     def action_focus_filter(self) -> None:
