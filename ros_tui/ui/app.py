@@ -58,7 +58,7 @@ class HelpScreen(ModalScreen):
 
     DEFAULT_CSS = """
     HelpScreen { align: center middle; }
-    HelpScreen Static { width: 120; max-width: 95%; border: round $primary; padding: 1 2; }
+    HelpScreen Static { width: 100; max-width: 95%; border: round $primary; padding: 1 2; }
     """
 
     def compose(self):
