@@ -43,7 +43,14 @@ import time
 import pytest
 from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, FIBONACCI_ACTION, INBOX_TOPIC
 from ros_tui.ui.app import RosTuiApp
-from test_ui_pilot import click_button, log_text, select_entry, static_text, wait_until
+from test_ui_pilot import (
+    click_button,
+    log_text,
+    select_entry,
+    show_tab,
+    static_text,
+    wait_until,
+)
 from textual.widgets import Button, Static, TextArea
 
 pytestmark = pytest.mark.e2e
@@ -64,6 +71,7 @@ async def wait_for_entry(pilot, bridge, group, name, timeout=10.0):
 async def test_action_round_trip_through_ui(bridge, fixture_servers):
     app = RosTuiApp(bridge)
     async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'actions')
         entry = await wait_for_entry(pilot, bridge, 'actions', FIBONACCI_ACTION)
         tab = app.query_one('#actions-tab')
         await select_entry(pilot, tab, entry)
@@ -80,7 +88,7 @@ async def test_action_round_trip_through_ui(bridge, fixture_servers):
 async def test_service_round_trip_through_ui(bridge, fixture_servers):
     app = RosTuiApp(bridge)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+2')
+        await show_tab(pilot, 'services')
         entry = await wait_for_entry(pilot, bridge, 'services', ADD_TWO_INTS_SERVICE)
         tab = app.query_one('#services-tab')
         await select_entry(pilot, tab, entry)
@@ -97,7 +105,7 @@ async def test_service_round_trip_through_ui(bridge, fixture_servers):
 async def test_topic_echo_and_publish_through_ui(bridge, fixture_servers):
     app = RosTuiApp(bridge)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+3')
+        await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
 
         chatter = await wait_for_entry(pilot, bridge, 'topics', CHATTER_TOPIC)
