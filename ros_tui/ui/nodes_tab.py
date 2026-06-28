@@ -58,6 +58,7 @@ class NodesTab(EntityTab):
         self._params: list | None = None  # [(name, type_label, value), ...] once loaded.
         self._seeded_value = ''  # The value the tab last auto-seeded into the edit box.
         self._load_failed = False  # True once an info/param load for this node has errored.
+        self._rendered: dict[str, str] = {}  # param name -> rendered value (built once per load).
 
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
@@ -106,6 +107,7 @@ class NodesTab(EntityTab):
         self.query_one('#node-params', DataTable).clear()
         self.query_one('#node-param-value', Input).value = ''  # Fresh node, fresh edit box.
         self._seeded_value = ''
+        self._rendered = {}
         self.query_one('#node-param-refresh', Button).disabled = True
         self.query_one('#node-param-set', Button).disabled = True
         self._clear_error()
@@ -205,25 +207,24 @@ class NodesTab(EntityTab):
     def _populate_table(self, params: list) -> None:
         table = self.query_one('#node-params', DataTable)
         table.clear()
+        self._rendered = {name: _render_value(value) for name, _type_label, value in params}
         for name, type_label, value in params:
-            table.add_row(name, type_label, _render_value(value), key=name)
+            table.add_row(name, type_label, self._rendered[name], key=name)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         event.stop()
         if event.row_key is None:
             return
-        row_key = event.row_key.value
-        for name, _type_label, value in self._params or []:
-            if name == row_key:
-                input_box = self.query_one('#node-param-value', Input)
-                rendered = _render_value(value)
-                # Reseed only when the box is pristine; every cursor move fires this handler,
-                # so blindly overwriting would discard a value the user typed but hasn't Set.
-                if input_box.value in ('', self._seeded_value):
-                    input_box.value = rendered
-                    self._seeded_value = rendered
-                self.query_one('#node-param-set', Button).disabled = self._current_node is None
-                break
+        rendered = self._rendered.get(event.row_key.value)
+        if rendered is None:
+            return
+        input_box = self.query_one('#node-param-value', Input)
+        # Reseed only when the box is pristine; every cursor move fires this handler,
+        # so blindly overwriting would discard a value the user typed but hasn't Set.
+        if input_box.value in ('', self._seeded_value):
+            input_box.value = rendered
+            self._seeded_value = rendered
+        self.query_one('#node-param-set', Button).disabled = self._current_node is None
 
     # ---------------------------------------------------------------- set
 
