@@ -25,7 +25,7 @@ from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
-from textual.widgets import Button, Input, OptionList, RichLog, Static, TextArea
+from textual.widgets import Button, Input, OptionList, RichLog, Static, TabbedContent, TextArea
 
 pytestmark = pytest.mark.ui
 
@@ -117,6 +117,14 @@ async def click_button(pilot, selector):
     await pilot.pause(0.25)
 
 
+async def show_tab(pilot, tab_id):
+    """Make a tab's pane active so it gets laid out; a hidden pane is sized 0×0,
+    which silently drops RichLog writes. Tabs are switched via ctrl+t cycling, so
+    set the active pane directly rather than pressing a numbered shortcut."""
+    pilot.app.query_one(TabbedContent).active = tab_id
+    await pilot.pause()
+
+
 async def select_entry(pilot, tab, entry):
     tab.post_message(FilterableList.Selected(entry))
     # Wait for PrototypeReady to land (seed cached), not just for editor text: a late
@@ -156,7 +164,7 @@ async def test_tabs_show_entity_lists():
 async def test_filter_narrows_list():
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+3')
+        await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
         tab.query_one('#filter-input', Input).value = 'chat'
         option_list = tab.query_one('#entity-list', OptionList)
@@ -167,7 +175,7 @@ async def test_filter_narrows_list():
 async def test_selecting_topic_seeds_editor_with_defaults():
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+3')
+        await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
         await select_entry(pilot, tab, POSE_ENTRY)
         editor_text = tab.query_one('#editor', TextArea).text
@@ -179,7 +187,7 @@ async def test_invalid_yaml_blocks_call_with_inline_error():
     fake = FakeBridge()
     app = RosTuiApp(fake)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+2')
+        await show_tab(pilot, 'services')
         tab = app.query_one('#services-tab')
         await select_entry(pilot, tab, ADD_TWO_INTS_ENTRY)
         tab.query_one('#editor', TextArea).load_text('a: [unclosed')
@@ -199,7 +207,7 @@ async def test_call_sends_request_and_renders_response():
     fake = FakeBridge()
     app = RosTuiApp(fake)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+2')
+        await show_tab(pilot, 'services')
         tab = app.query_one('#services-tab')
         await select_entry(pilot, tab, ADD_TWO_INTS_ENTRY)
         tab.query_one('#editor', TextArea).load_text('a: 2\nb: 3')
@@ -219,6 +227,7 @@ async def test_action_goal_feedback_result_render():
     fake = FakeBridge()
     app = RosTuiApp(fake)
     async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'actions')
         tab = app.query_one('#actions-tab')
         await select_entry(pilot, tab, FIBONACCI_ENTRY)
         tab.query_one('#editor', TextArea).load_text('order: 3')
@@ -259,7 +268,7 @@ async def test_rate_validation_and_start_stop():
     fake = FakeBridge()
     app = RosTuiApp(fake)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+3')
+        await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
         await select_entry(pilot, tab, CHATTER_ENTRY)
         tab.query_one('#rate-input', Input).value = '99999'
@@ -279,7 +288,7 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
     fake = FakeBridge()
     app = RosTuiApp(fake)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press('ctrl+3')
+        await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
         await select_entry(pilot, tab, CHATTER_ENTRY)
         await click_button(pilot, '#echo-button')

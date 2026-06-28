@@ -118,11 +118,19 @@ prefilled with the message defaults. Extras:
 
 ## Keybindings
 
-`ctrl+1/2/3` tabs · `ctrl+f` filter · `ctrl+s` send/call/publish · `ctrl+k` cancel/stop ·
-`ctrl+r` reset editor · `ctrl+l` clear log · `f1` help · `ctrl+q` quit. Mouse works.
+| Key | Action |
+| --- | --- |
+| `ctrl+t` | Cycle tabs (Topics → Services → Actions → Params) |
+| `ctrl+f` | Focus filter input in the current tab |
+| `ctrl+s` | Primary action (Send goal / Call / Publish once) |
+| `ctrl+k` | Secondary action (Cancel goal / Stop periodic publish) |
+| `ctrl+r` | Reset editor to message defaults |
+| `ctrl+l` | Clear output log of the current tab |
+| `f2` | Open help |
+| `esc` | Close help |
+| `ctrl+q` | Quit |
 
-Note: `ctrl+1/2/3` require a terminal with extended keyboard reporting (e.g. kitty,
-recent VS Code); on plain xterm-likes click the tab titles instead.
+Mouse interaction is supported.
 
 ## Tests
 

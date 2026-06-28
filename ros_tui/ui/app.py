@@ -31,16 +31,17 @@ from ros_tui.ui.topics_tab import TopicsTab
 HELP_TEXT = """\
 ros_tui — ROS 2 interface workbench
 
-  ctrl+1 / ctrl+2 / ctrl+3 / ctrl+4   switch to Actions / Services / Topics / Params
+  ctrl+t                     cycle tabs: Topics → Services → Actions → Params
   ctrl+f                     focus the filter box of the current tab
-  ctrl+s                     primary action: Send goal / Call / Publish once
+  ctrl+p                     primary action: Send goal / Call / Publish once
   ctrl+k                     Cancel goal / Stop periodic publish
   ctrl+r                     reset the editor to the message defaults
   ctrl+l                     clear the output log of the current tab
-  f1                         this help · esc closes it
+  f2                         this help · esc closes it
   ctrl+q                     quit
 
 Editor tips (the YAML dialect of `ros2 action send_goal` / `ros2 topic pub`):
+
   stamp: now                 builtin_interfaces/Time stamped at send time
   header: auto               empty Header with the stamp set at send time
   .nan / .inf / -.inf        float specials
@@ -52,12 +53,12 @@ Editor tips (the YAML dialect of `ros2 action send_goal` / `ros2 topic pub`):
 class HelpScreen(ModalScreen):
     BINDINGS = [
         Binding('escape', 'dismiss_help', 'Close', priority=True),
-        Binding('f1', 'dismiss_help', 'Close', show=False, priority=True),
+        Binding('f2', 'dismiss_help', 'Close', show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
     HelpScreen { align: center middle; }
-    HelpScreen Static { width: 80; max-width: 95%; border: round $primary; padding: 1 2; }
+    HelpScreen Static { width: 100; max-width: 95%; border: round $primary; padding: 1 2; }
     """
 
     def compose(self):
@@ -93,16 +94,13 @@ class RosTuiApp(App):
     """
 
     BINDINGS = [
-        Binding('ctrl+1', "switch_tab('actions')", 'Actions', show=False),
-        Binding('ctrl+2', "switch_tab('services')", 'Services', show=False),
-        Binding('ctrl+3', "switch_tab('topics')", 'Topics', show=False),
-        Binding('ctrl+4', "switch_tab('params')", 'Params', show=False),
+        Binding('ctrl+t', 'cycle_tab', 'Next tab', priority=True),
         Binding('ctrl+f', 'focus_filter', 'Filter', priority=True),
         Binding('ctrl+s', 'primary_action', 'Send/Call/Pub', priority=True),
         Binding('ctrl+k', 'secondary_action', 'Cancel/Stop', priority=True),
         Binding('ctrl+r', 'reset_editor', 'Reset msg', priority=True),
         Binding('ctrl+l', 'clear_log', 'Clear log', priority=True),
-        Binding('f1', 'help', 'Help'),
+        Binding('f2', 'help', 'Help'),
     ]
 
     def __init__(self, bridge):
@@ -111,13 +109,13 @@ class RosTuiApp(App):
 
     def compose(self):
         yield Header()
-        with TabbedContent(initial='actions'):
-            with TabPane('Actions', id='actions'):
-                yield ActionsTab(self._bridge, id='actions-tab')
-            with TabPane('Services', id='services'):
-                yield ServicesTab(self._bridge, id='services-tab')
+        with TabbedContent(initial='topics'):
             with TabPane('Topics', id='topics'):
                 yield TopicsTab(self._bridge, id='topics-tab')
+            with TabPane('Services', id='services'):
+                yield ServicesTab(self._bridge, id='services-tab')
+            with TabPane('Actions', id='actions'):
+                yield ActionsTab(self._bridge, id='actions-tab')
             with TabPane('Params', id='params'):
                 yield ParamsTab(self._bridge, id='params-tab')
         yield Footer()
@@ -134,9 +132,9 @@ class RosTuiApp(App):
         self._apply_graph(message.snapshot)
 
     def _apply_graph(self, snapshot) -> None:
-        self.query_one('#actions-tab', ActionsTab).set_entries(snapshot.actions)
-        self.query_one('#services-tab', ServicesTab).set_entries(snapshot.services)
         self.query_one('#topics-tab', TopicsTab).set_entries(snapshot.topics)
+        self.query_one('#services-tab', ServicesTab).set_entries(snapshot.services)
+        self.query_one('#actions-tab', ActionsTab).set_entries(snapshot.actions)
         self.query_one('#params-tab', ParamsTab).set_entries(snapshot.nodes)
 
     def _active_tab(self):
@@ -151,8 +149,20 @@ class RosTuiApp(App):
         matches = list(pane.query(ParamsTab))
         return matches[0] if matches else None
 
-    def action_switch_tab(self, pane_id: str) -> None:
-        self.query_one(TabbedContent).active = pane_id
+    def action_cycle_tab(self) -> None:
+        tabbed = self.query_one(TabbedContent)
+        pane_ids = [pane.id for pane in tabbed.query(TabPane)]
+        if not pane_ids:
+            return
+        try:
+            index = pane_ids.index(tabbed.active)
+        except ValueError:
+            index = -1
+        # Drop focus first: while a widget inside the active pane holds focus,
+        # TabbedContent silently reverts an `active` change, so the switch only
+        # worked when the tab bar itself was focused (e.g. just after clicking).
+        self.set_focus(None)
+        tabbed.active = pane_ids[(index + 1) % len(pane_ids)]
 
     def action_focus_filter(self) -> None:
         tab = self._active_tab()
