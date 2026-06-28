@@ -617,3 +617,30 @@ async def test_unsubmitted_param_edit_survives_navigation():
         table.move_cursor(row=0)
         await pilot.pause()
         assert input_box.value == '999.0'
+
+
+class _FailingNodeBridge(FakeBridge):
+    """A bridge whose node introspection and parameter list both fail."""
+
+    def get_node_info(self, node_name, on_done):
+        self.node_info_requests.append(node_name)
+        on_done(None, 'node vanished')
+
+    def list_node_parameters(self, node_name, on_done):
+        self.param_list_requests.append(node_name)
+        on_done(None, 'no parameter services')
+
+
+async def test_node_load_failure_clears_loading_header():
+    """When both info and params fail to load, the header must not stay on 'loading…'."""
+    app = RosTuiApp(_FailingNodeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'nodes')
+        tab = app.query_one('#nodes-tab')
+        tab.post_message(FilterableList.Selected(TALKER_NODE))
+
+        def header():
+            return static_text(tab.query_one('#node-header', Static)).lower()
+
+        assert await wait_until(pilot, lambda: 'failed' in header())
+        assert 'loading' not in header()

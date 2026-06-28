@@ -57,6 +57,7 @@ class NodesTab(EntityTab):
         self._info = None  # ros_tui.ros.graph.NodeInfo once loaded.
         self._params: list | None = None  # [(name, type_label, value), ...] once loaded.
         self._seeded_value = ''  # The value the tab last auto-seeded into the edit box.
+        self._load_failed = False  # True once an info/param load for this node has errored.
 
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
@@ -98,6 +99,7 @@ class NodesTab(EntityTab):
         self._current_node = message.entry.name
         self._info = None
         self._params = None
+        self._load_failed = False
         self.query_one('#node-interfaces', Tree).clear()
         self.query_one('#node-params', DataTable).clear()
         self.query_one('#node-param-value', Input).value = ''  # Fresh node, fresh edit box.
@@ -141,7 +143,9 @@ class NodesTab(EntityTab):
         if message.node_name != self._current_node:
             return  # Stale result from a superseded selection.
         if message.error:
+            self._load_failed = True
             self._show_error(message.error)
+            self._refresh_header()
             return
         self._info = message.info
         self._populate_tree(message.info)
@@ -153,7 +157,9 @@ class NodesTab(EntityTab):
             return
         self.query_one('#node-param-refresh', Button).disabled = False
         if message.error:
+            self._load_failed = True
             self._show_error(message.error)
+            self._refresh_header()
             return
         self._params = message.params or []
         self._populate_table(self._params)
@@ -267,7 +273,7 @@ class NodesTab(EntityTab):
         if self._params is not None:
             parts.append(f'{len(self._params)} params')
         if self._info is None and self._params is None:
-            parts.append('loading…')
+            parts.append('failed to load' if self._load_failed else 'loading…')
         header.update('   '.join(parts))
 
     def _show_error(self, text: str) -> None:
