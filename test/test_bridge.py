@@ -339,20 +339,26 @@ def test_list_and_set_node_parameters(bridge, fixture_servers):
         f'test_param never listed as 0: {list_params()}'
     )
 
-    # Set it through the bridge and confirm success (no error string back).
-    set_result = {}
-    set_done = threading.Event()
+    def set_param(value):
+        result = {}
+        done = threading.Event()
 
-    def on_set(error):
-        set_result['error'] = error
-        set_done.set()
+        def on_set(error):
+            result['error'] = error
+            done.set()
 
-    bridge.set_node_parameter(full_name, 'test_param', '42', on_set)
-    assert set_done.wait(timeout=5.0), 'set_node_parameter never completed'
-    assert set_result['error'] is None, set_result['error']
+        bridge.set_node_parameter(full_name, 'test_param', value, on_set)
+        assert done.wait(timeout=5.0), 'set_node_parameter never completed'
+        return result.get('error')
 
-    # The new value round-trips through a fresh list/get.
-    assert wait_for(lambda: test_param_value() == 42, timeout=10.0)
+    # Set it through the bridge and confirm success (no error string back), then restore
+    # the declared value — fixture_servers is module-scoped, so leaking 42 would make
+    # order-dependent runs of sibling tests see the wrong value.
+    try:
+        assert set_param('42') is None
+        assert wait_for(lambda: test_param_value() == 42, timeout=10.0)
+    finally:
+        set_param('0')
 
 
 def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
