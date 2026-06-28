@@ -720,3 +720,23 @@ async def test_navigate_to_non_interface_tab_is_noop():
         app.post_message(NavigateToEntity('nodes', CHATTER_ENTRY))
         await pilot.pause()
         assert app.query_one(TabbedContent).active == 'nodes'
+
+
+async def test_reselecting_current_node_skips_reintrospection():
+    """Re-selecting the displayed node reuses cached info/params; Refresh still re-fetches."""
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        info_before = len(fake.node_info_requests)
+        params_before = len(fake.param_list_requests)
+
+        tab.post_message(FilterableList.Selected(TALKER_NODE))  # same node again
+        await pilot.pause()
+        assert len(fake.node_info_requests) == info_before
+        assert len(fake.param_list_requests) == params_before
+
+        await pilot.press('ctrl+k')  # explicit Refresh
+        await pilot.pause()
+        assert len(fake.node_info_requests) > info_before
+        assert len(fake.param_list_requests) > params_before
