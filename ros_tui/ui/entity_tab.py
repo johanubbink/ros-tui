@@ -42,6 +42,13 @@ class EntityTab(Horizontal):
     def focus_filter(self) -> None:
         self.query_one(FilterableList).focus_filter()
 
+    def select_entity(self, entry: InterfaceEntry) -> None:
+        """Programmatically select ``entry`` (cross-tab jump target).
+
+        Only the interface tabs are jump destinations; tabs that are merely a jump
+        *source* (e.g. the Nodes tab) inherit this no-op.
+        """
+
     # Verb hooks dispatched from the app keybindings; overridden per tab as needed.
     def primary_action(self) -> None:
         """ctrl+s — Send goal / Call / Publish once / Set parameter."""

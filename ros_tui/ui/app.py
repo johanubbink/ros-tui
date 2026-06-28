@@ -23,7 +23,6 @@ from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
 from ros_tui.ui.actions_tab import ActionsTab
 from ros_tui.ui.entity_tab import EntityTab
-from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import GraphUpdated, NavigateToEntity
 from ros_tui.ui.nodes_tab import NodesTab
 from ros_tui.ui.services_tab import ServicesTab
@@ -150,7 +149,12 @@ class RosTuiApp(App):
         # `active` change while a descendant widget holds focus.
         self.set_focus(None)
         tabbed.active = message.tab_id
-        self.query_one(f'#{message.tab_id}-tab', InterfaceTab).select_entity(message.entry)
+        # Resolve the destination through the shared EntityTab contract; a tab_id that does
+        # not map to an EntityTab (a typo, or a non-jumpable tab) is a no-op, not a crash.
+        destinations = list(self.query(f'#{message.tab_id}-tab'))
+        tab = destinations[0] if destinations else None
+        if isinstance(tab, EntityTab):
+            tab.select_entity(message.entry)
 
     def _active_tab(self) -> EntityTab | None:
         tabbed = self.query_one(TabbedContent)

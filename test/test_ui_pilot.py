@@ -26,6 +26,7 @@ from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
+from ros_tui.ui.messages import NavigateToEntity
 from ros_tui.ui.nodes_tab import _render_value
 from textual.widgets import (
     Button,
@@ -706,3 +707,16 @@ async def test_set_results_accumulate_in_log():
             ('/talker', 'use_sim_time', 'true'),
             ('/talker', 'rate', '5.0'),
         ]
+
+
+async def test_navigate_to_non_interface_tab_is_noop():
+    """A NavigateToEntity at a non-InterfaceTab pane switches tabs without crashing.
+
+    The Nodes tab is an EntityTab but not an InterfaceTab; resolving the destination
+    through the EntityTab contract makes select_entity an inherited no-op there.
+    """
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.post_message(NavigateToEntity('nodes', CHATTER_ENTRY))
+        await pilot.pause()
+        assert app.query_one(TabbedContent).active == 'nodes'
