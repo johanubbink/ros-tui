@@ -34,16 +34,17 @@ docker compose exec ros_tui bash
 ros2 run ros_tui ros_tui
 ```
 
-All three tabs populate from the demo node ([`launch/demo.launch.py`](launch/demo.launch.py)
+All four tabs populate from the demo node ([`launch/demo.launch.py`](launch/demo.launch.py)
 → [`ros_tui/demo/demo_servers.py`](ros_tui/demo/demo_servers.py)):
 
-| Tab      | Entity              | Try                                                        |
-|----------|---------------------|-----------------------------------------------------------|
-| Actions  | `/fibonacci`        | Send `order: 8`; watch feedback stream, then `Cancel`.    |
-| Services | `/add_two_ints`     | Call with `a: 19` / `b: 23` → `sum: 42`.                  |
-| Topics   | `/chatter` (~1 Hz)  | `Echo` a calm `std_msgs/String` stream.                   |
-| Topics   | `/counter` (~50 Hz) | `Echo` to watch the Hz / drop counters move.              |
-| Topics   | `/inbox`            | `Publish` `data: hello` — it's logged by the demo node.   |
+| Tab      | Entity                   | Try                                                        |
+|----------|--------------------------|-----------------------------------------------------------|
+| Actions  | `/fibonacci`             | Send `order: 8`; watch feedback stream, then `Cancel`.    |
+| Services | `/add_two_ints`          | Call with `a: 19` / `b: 23` → `sum: 42`.                  |
+| Topics   | `/chatter` (~1 Hz)       | `Echo` a calm `std_msgs/String` stream.                   |
+| Topics   | `/counter` (~50 Hz)      | `Echo` to watch the Hz / drop counters move.              |
+| Topics   | `/inbox`                 | `Publish` `data: hello` — it's logged by the demo node.   |
+| Nodes    | `/ros_tui_demo_servers`  | Browse its interfaces (jump to one); view / `Set` a param. |
 
 ### With turtlesim (GUI)
 

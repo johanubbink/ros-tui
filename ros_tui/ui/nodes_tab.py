@@ -21,9 +21,11 @@ Actions tab with that entity pre-selected.
 """
 
 import yaml
+from textual import on
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Input, Static, Tree
+from textual.widgets import Button, DataTable, Input, RichLog, Static, Tree
 
+from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import (
     NavigateToEntity,
@@ -46,13 +48,17 @@ _BRANCHES = (
 _PLACEHOLDER = 'Select a node to view its interfaces and parameters'
 
 
-class NodesTab(Horizontal):
+class NodesTab(EntityTab):
+    """Nodes tab: a node's interfaces tree + parameter table, sharing the EntityTab contract."""
+
     def __init__(self, bridge, **kwargs):
-        super().__init__(**kwargs)
-        self._bridge = bridge
+        super().__init__(bridge, **kwargs)
         self._current_node: str | None = None
         self._info = None  # ros_tui.ros.graph.NodeInfo once loaded.
         self._params: list | None = None  # [(name, type_label, value), ...] once loaded.
+        self._load_failed = False  # True once an info/param load for this node has errored.
+        self._rendered: dict[str, str] = {}  # param name -> rendered value (built once per load).
+        self._selected_param: str | None = None  # The highlighted parameter row, if any.
 
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
@@ -66,6 +72,7 @@ class NodesTab(Horizontal):
                     yield Button('Refresh', id='node-param-refresh', disabled=True)
                     yield Button('Set', id='node-param-set', variant='primary', disabled=True)
                 yield Static('', id='node-param-status')
+                yield RichLog(id='node-param-log', markup=True)
 
     def on_mount(self) -> None:
         self.query_one('#node-params', DataTable).add_columns('Parameter', 'Type', 'Value')
@@ -74,30 +81,35 @@ class NodesTab(Horizontal):
         tree.border_title = 'Interfaces'
         self.query_one('#node-params-group').border_title = 'Parameters'
 
-    def set_entries(self, nodes) -> None:
-        self.query_one(FilterableList).set_entries(nodes)
-
-    def focus_filter(self) -> None:
-        self.query_one(FilterableList).focus_filter()
-
     def primary_action(self) -> None:
+        """ctrl+s — set the selected parameter to the value in the input box."""
         self._set_parameter()
 
     def secondary_action(self) -> None:
+        """ctrl+k — reload the node's interfaces and parameters."""
         self._reload()
 
     def clear_log(self) -> None:
+        """ctrl+l — clear the parameter result log and the status line."""
+        self.query_one('#node-param-log', RichLog).clear()
         self._clear_error()
 
     # ---------------------------------------------------------------- selection
 
-    def on_filterable_list_selected(self, message: FilterableList.Selected) -> None:
+    @on(FilterableList.Selected)
+    def _on_node_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
+        if message.entry.name == self._current_node:
+            return  # Already showing this node; keep cached info/params (Refresh re-fetches).
         self._current_node = message.entry.name
         self._info = None
         self._params = None
+        self._load_failed = False
         self.query_one('#node-interfaces', Tree).clear()
         self.query_one('#node-params', DataTable).clear()
+        self.query_one('#node-param-value', Input).value = ''  # Fresh node, fresh edit box.
+        self._rendered = {}
+        self._selected_param = None
         self.query_one('#node-param-refresh', Button).disabled = True
         self.query_one('#node-param-set', Button).disabled = True
         self._clear_error()
@@ -133,33 +145,43 @@ class NodesTab(Horizontal):
     # ---------------------------------------------------------------- messages
 
     def on_node_info_ready(self, message: NodeInfoReady) -> None:
+        message.stop()
         if message.node_name != self._current_node:
             return  # Stale result from a superseded selection.
         if message.error:
+            self._load_failed = True
             self._show_error(message.error)
+            self._refresh_header()
             return
         self._info = message.info
         self._populate_tree(message.info)
         self._refresh_header()
 
     def on_node_parameters_ready(self, message: NodeParametersReady) -> None:
+        message.stop()
         if message.node_name != self._current_node:
             return
         self.query_one('#node-param-refresh', Button).disabled = False
         if message.error:
+            self._load_failed = True
             self._show_error(message.error)
+            self._refresh_header()
             return
         self._params = message.params or []
         self._populate_table(self._params)
         self._refresh_header()
 
     def on_parameter_set_completed(self, message: ParameterSetCompleted) -> None:
+        message.stop()
         if message.node_name != self._current_node:
             return
+        # Set results accumulate in the scrollable log so a batch of sets stays visible;
+        # the status line above is reserved for transient validation messages.
+        log = self.query_one('#node-param-log', RichLog)
         if message.error:
-            self._show_error(message.error)
+            log.write(f'[red]✗ set {message.param_name}: {message.error}[/red]')
         else:
-            self._show_success(f'set {message.param_name}')
+            log.write(f'[green]✓ set {message.param_name}[/green]')
             self._load_params()
 
     # ---------------------------------------------------------------- interfaces tree
@@ -187,43 +209,49 @@ class NodesTab(Horizontal):
     def _populate_table(self, params: list) -> None:
         table = self.query_one('#node-params', DataTable)
         table.clear()
+        self._selected_param = None  # Re-set by the row-highlight that the table re-fires.
+        self._rendered = {name: _render_value(value) for name, _type_label, value in params}
         for name, type_label, value in params:
-            table.add_row(name, type_label, _format_value(value), key=name)
+            table.add_row(name, type_label, self._rendered[name], key=name)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        event.stop()
         if event.row_key is None:
             return
-        row_key = event.row_key.value
-        for name, _type_label, value in self._params or []:
-            if name == row_key:
-                self.query_one('#node-param-value', Input).value = _yaml_value(value)
-                self.query_one('#node-param-set', Button).disabled = self._current_node is None
-                break
+        rendered = self._rendered.get(event.row_key.value)
+        if rendered is None:
+            return
+        self._selected_param = event.row_key.value
+        # The value box always tracks the highlighted row. A value typed but not yet Set
+        # is discarded on navigation — favoured over a box that freezes on a stale value
+        # after a Set (every cursor move and the post-Set reload fire this handler).
+        self.query_one('#node-param-value', Input).value = rendered
+        self.query_one('#node-param-set', Button).disabled = self._current_node is None
 
     # ---------------------------------------------------------------- set
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == 'node-param-refresh':
-            self._reload()
-        elif event.button.id == 'node-param-set':
-            self._set_parameter()
+    @on(Button.Pressed, '#node-param-refresh')
+    def _on_refresh_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._reload()
+
+    @on(Button.Pressed, '#node-param-set')
+    def _on_set_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_parameter()
 
     def _set_parameter(self) -> None:
         if self._current_node is None:
             return
-        table = self.query_one('#node-params', DataTable)
-        if table.cursor_row < 0 or not self._params:
-            return
-        try:
-            row_key = table.get_row_at(table.cursor_row)[0]  # first cell = param name
-        except Exception:
+        if not self._selected_param:
+            self._show_error('select a parameter to set')
             return
         value_str = self.query_one('#node-param-value', Input).value.strip()
         if not value_str:
             self._show_error('enter a value to set')
             return
         node_name = self._current_node
-        param_name = str(row_key)
+        param_name = self._selected_param
         self._clear_error()
 
         def on_done(error):
@@ -249,7 +277,7 @@ class NodesTab(Horizontal):
         if self._params is not None:
             parts.append(f'{len(self._params)} params')
         if self._info is None and self._params is None:
-            parts.append('loading…')
+            parts.append('failed to load' if self._load_failed else 'loading…')
         header.update('   '.join(parts))
 
     def _show_error(self, text: str) -> None:
@@ -262,19 +290,18 @@ class NodesTab(Horizontal):
         self.query_one('#node-param-status', Static).update('')
 
 
-def _format_value(value) -> str:
+def _render_value(value) -> str:
+    """Render a parameter value as the YAML it round-trips through the edit box on Set.
+
+    Used for both the table's value column and the input seed, so what is shown parses
+    back (via ``yaml.safe_load`` on Set) to the same value *and type*: strings stay
+    strings (quoted when their text would otherwise parse as a bool/int/float), and
+    exponential doubles like ``1e-05`` stay doubles rather than ``str``.
+    """
     if value is None:
         return ''
-    if isinstance(value, list):
-        return repr(value)
-    return str(value)
-
-
-def _yaml_value(value) -> str:
-    if value is None:
-        return ''
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    if isinstance(value, list):
-        return yaml.dump(value, default_flow_style=True).strip()
-    return str(value)
+    text = yaml.safe_dump(value, default_flow_style=True).strip()
+    # safe_dump appends a '...' document-end marker after a bare scalar root; drop it.
+    if text.endswith('\n...'):
+        text = text[: -len('\n...')].rstrip()
+    return text

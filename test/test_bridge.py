@@ -310,3 +310,114 @@ def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
     # No hidden action-internal endpoints leak into the topic/service lists.
     leaked = names(info.publishers) | names(info.subscribers) | names(info.service_servers)
     assert not any('/_' in name for name in leaked), leaked
+
+
+def test_list_and_set_node_parameters(bridge, fixture_servers):
+    node = fixture_servers.node
+    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
+
+    def list_params():
+        holder = {}
+        done = threading.Event()
+
+        def on_done(params, error):
+            holder['params'], holder['error'] = params, error
+            done.set()
+
+        bridge.list_node_parameters(full_name, on_done)
+        done.wait(timeout=5.0)
+        return holder.get('params'), holder.get('error')
+
+    def test_param_value():
+        params, _error = list_params()
+        if params is None:
+            return None
+        return next((value for name, _type, value in params if name == 'test_param'), None)
+
+    # Poll until the node's parameter services are discovered and report the declared value.
+    assert wait_for(lambda: test_param_value() == 0, timeout=15.0), (
+        f'test_param never listed as 0: {list_params()}'
+    )
+
+    def set_param(value):
+        result = {}
+        done = threading.Event()
+
+        def on_set(error):
+            result['error'] = error
+            done.set()
+
+        bridge.set_node_parameter(full_name, 'test_param', value, on_set)
+        assert done.wait(timeout=5.0), 'set_node_parameter never completed'
+        return result.get('error')
+
+    # Set it through the bridge and confirm success (no error string back), then restore
+    # the declared value — fixture_servers is module-scoped, so leaking 42 would make
+    # order-dependent runs of sibling tests see the wrong value.
+    try:
+        assert set_param('42') is None
+        assert wait_for(lambda: test_param_value() == 42, timeout=10.0)
+    finally:
+        set_param('0')
+
+
+def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
+    node = fixture_servers.node
+    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
+    result = {}
+    done = threading.Event()
+
+    def on_set(error):
+        result['error'] = error
+        done.set()
+
+    bridge.set_node_parameter(full_name, 'no_such_param', '1', on_set)
+    assert done.wait(timeout=10.0), 'set_node_parameter never completed'
+    assert result['error'] is not None  # undeclared parameter is rejected by the node.
+
+
+class _FakeFuture:
+    """A call_async future whose done callback fires only when the test triggers it."""
+
+    def __init__(self):
+        self._callback = None
+
+    def add_done_callback(self, callback):
+        self._callback = callback
+
+    def fire(self):
+        self._callback(self)
+
+
+class _FakeClient:
+    srv_name = '/fake/set_parameters'
+
+    def __init__(self, future):
+        self._future = future
+
+    def call_async(self, _request):
+        return self._future
+
+
+def test_call_then_marks_client_in_use_until_response(bridge):
+    """An in-flight parameter call keeps its client out of LRU eviction (regression).
+
+    ``_call_then`` must register the client in ``awaiting_response`` so ``_client_in_use``
+    reports it busy for the call's lifetime — otherwise ``_get_or_create`` could evict and
+    ``destroy_client`` it mid-flight — then drop it once the response lands.
+    """
+    future = _FakeFuture()
+    client = _FakeClient(future)
+    key = (_FakeClient.srv_name, 'rcl_interfaces/srv/SetParameters')
+    handled = []
+
+    # Dispatch on the ROS thread, exactly as the real parameter paths do.
+    bridge.submit(lambda: bridge._call_then(client, object(), handled.append)).result(timeout=2.0)
+
+    # While the response is pending, the client is busy and cannot be chosen as a victim.
+    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is True
+
+    # The response lands: the client is released and the handler is re-submitted to run.
+    bridge.submit(future.fire).result(timeout=2.0)
+    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is False
+    assert wait_for(lambda: bool(handled), timeout=2.0), 'handle was never invoked'

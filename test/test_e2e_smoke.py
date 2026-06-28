@@ -25,7 +25,7 @@ container — see the README "Try it in Docker"):
     ros2 launch ros_tui demo.launch.py turtlesim:=true   # demo servers + turtlesim
     ros2 run ros_tui ros_tui
 
-  - App starts < 2 s and all three tabs populate with the demo graph.
+  - App starts < 2 s and all four tabs populate with the demo graph.
   - Filter stays responsive while typing.
   - Echo a high-rate topic (/counter @ ~50 Hz): stats line shows Hz, drops counted,
     UI stays smooth; best-effort publishers are received (QoS adaptation).

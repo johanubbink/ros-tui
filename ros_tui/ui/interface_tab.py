@@ -34,21 +34,21 @@ from ros_tui.ros.message_yaml import (
     import_type,
     request_class,
 )
+from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import PrototypeReady
 
 _KIND_SUFFIX = {'msg': '', 'srv': ' — Request', 'action': ' — Goal'}
 
 
-class InterfaceTab(Horizontal):
+class InterfaceTab(EntityTab):
     """Base for the Actions/Services/Topics tabs; subclasses provide controls and verbs."""
 
     kind = 'msg'
     list_placeholder = 'filter…'
 
     def __init__(self, bridge: Any, **kwargs):
-        super().__init__(**kwargs)
-        self._bridge = bridge
+        super().__init__(bridge, **kwargs)
         self._current: InterfaceEntry | None = None
         self._seed_cache: dict[str, str] = {}
         self._edit_cache: dict[str, str] = {}
@@ -84,22 +84,10 @@ class InterfaceTab(Horizontal):
 
     # ------------------------------------------------------------------ tab verbs (app keybindings)
 
-    def primary_action(self) -> None:
-        """ctrl+s: Send / Call / Publish — overridden per tab."""
-
-    def secondary_action(self) -> None:
-        """ctrl+k: Cancel / Stop — overridden per tab."""
-
     def on_selection_changed(self) -> None:
         """Refresh subclass control state after a new entry loads (override hook)."""
 
     # ------------------------------------------------------------------ entries & selection
-
-    def set_entries(self, entries: tuple[InterfaceEntry, ...]) -> None:
-        self.query_one(FilterableList).set_entries(entries)
-
-    def focus_filter(self) -> None:
-        self.query_one(FilterableList).focus_filter()
 
     def select_entity(self, entry: InterfaceEntry) -> None:
         """Programmatically select ``entry`` (e.g. a cross-tab jump from the Nodes tab)."""
@@ -114,13 +102,19 @@ class InterfaceTab(Horizontal):
         message.stop()
         self._store_current_edit()
         self._current = message.entry
-        self.query_one('#detail-line', Static).update(
-            Text(f'loading {message.entry.types[0]} …', style='dim')
-        )
+        type_name = message.entry.types[0] if message.entry.types else ''
+        detail = self.query_one('#detail-line', Static)
+        if not type_name:
+            # A leaf jumped from the Nodes tab can carry no type; degrade instead of crashing.
+            detail.update(Text('no type information for this entry', style='bold red'))
+            self.query_one('#editor', TextArea).load_text('')
+            return
+        detail.update(Text(f'loading {type_name} …', style='dim'))
         self._load_prototype(message.entry)
 
     def _load_prototype(self, entry: InterfaceEntry) -> None:
-        kind, type_name, entry_name = self.kind, entry.types[0], entry.name
+        kind, entry_name = self.kind, entry.name
+        type_name = entry.types[0] if entry.types else ''
 
         def load() -> None:
             try:
@@ -235,3 +229,19 @@ class InterfaceTab(Horizontal):
 
     def clear_log(self) -> None:
         self.query_one('#output-log', RichLog).clear()
+
+    # ------------------------------------------------------------------ future results
+
+    @staticmethod
+    def _error_text(error: BaseException) -> str:
+        """Human-readable text for an exception raised on the ROS thread."""
+        return str(error) or type(error).__name__
+
+    @classmethod
+    def _future_error(cls, done_future) -> str | None:
+        """None if the future succeeded, else its error text (for log/command callbacks)."""
+        try:
+            done_future.result()
+            return None
+        except BaseException as error:  # noqa: BLE001 - rendered in the log
+            return cls._error_text(error)

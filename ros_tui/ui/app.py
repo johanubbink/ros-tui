@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The textual application: three tabs over one shared RosBridge."""
+"""The textual application: four tabs over one shared RosBridge."""
 
 from textual.app import App
 from textual.binding import Binding
@@ -22,7 +22,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
 from ros_tui.ui.actions_tab import ActionsTab
-from ros_tui.ui.interface_tab import InterfaceTab
+from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.messages import GraphUpdated, NavigateToEntity
 from ros_tui.ui.nodes_tab import NodesTab
 from ros_tui.ui.services_tab import ServicesTab
@@ -90,11 +90,17 @@ class RosTuiApp(App):
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
     #node-header { height: 1; }
-    #node-interfaces { height: 2fr; min-height: 6; border: round $surface-lighten-2; }
-    #node-params-group { height: 1fr; min-height: 9; border: round $surface-lighten-2; }
-    #node-params { height: 1fr; min-height: 3; border: none; }
+    /* Split the available height ~60/40 between the interfaces tree and the
+       parameters block. Each fills its share and scrolls when its content
+       overflows (3fr:2fr -> parameters get 40% of the space below the header). */
+    #node-interfaces { height: 3fr; min-height: 6; border: round $surface-lighten-2; }
+    #node-params-group { height: 2fr; min-height: 10; border: round $surface-lighten-2; }
+    #node-params { height: 1fr; min-height: 5; border: none; }
     #node-param-value { width: 1fr; }
     #node-param-status { height: 1; }
+    /* The result log takes no space until a Set writes to it, then grows (capped)
+       to show the ✓/✗ history; the parameter table absorbs the room until then. */
+    #node-param-log { height: auto; max-height: 6; }
     """
 
     BINDINGS = [
@@ -148,18 +154,18 @@ class RosTuiApp(App):
         # `active` change while a descendant widget holds focus.
         self.set_focus(None)
         tabbed.active = message.tab_id
-        self.query_one(f'#{message.tab_id}-tab', InterfaceTab).select_entity(message.entry)
+        # Resolve the destination through the shared EntityTab contract; a tab_id that does
+        # not map to an EntityTab (a typo, or a non-jumpable tab) is a no-op, not a crash.
+        destinations = list(self.query(f'#{message.tab_id}-tab'))
+        tab = destinations[0] if destinations else None
+        if isinstance(tab, EntityTab):
+            tab.select_entity(message.entry)
 
-    def _active_tab(self):
+    def _active_tab(self) -> EntityTab | None:
         tabbed = self.query_one(TabbedContent)
         if not tabbed.active:
             return None
-        pane = tabbed.get_pane(tabbed.active)
-        # Try InterfaceTab subclasses first, then NodesTab.
-        matches = list(pane.query(InterfaceTab))
-        if matches:
-            return matches[0]
-        matches = list(pane.query(NodesTab))
+        matches = list(tabbed.get_pane(tabbed.active).query(EntityTab))
         return matches[0] if matches else None
 
     def action_cycle_tab(self) -> None:
@@ -194,7 +200,7 @@ class RosTuiApp(App):
 
     def action_reset_editor(self) -> None:
         tab = self._active_tab()
-        if tab is not None and hasattr(tab, 'reset_editor'):
+        if tab is not None:
             tab.reset_editor()
 
     def action_clear_log(self) -> None:

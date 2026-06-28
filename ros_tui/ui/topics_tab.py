@@ -72,11 +72,7 @@ class TopicsTab(InterfaceTab):
         message, time_setters = built
         name, type_name = self._current.name, self._current.types[0]
         future = self._bridge.publish_once(name, type_name, message, time_setters)
-        future.add_done_callback(
-            lambda done: self.post_message(
-                PublishCompleted(name, 'publish', self._future_error(done))
-            )
-        )
+        self._report_when_done(future, name, 'publish')
 
     @on(Button.Pressed, '#rate-button')
     def _on_rate_pressed(self, event: Button.Pressed) -> None:
@@ -114,22 +110,14 @@ class TopicsTab(InterfaceTab):
         future = self._bridge.start_periodic_publish(
             name, self._current.types[0], message, rate_hz, time_setters
         )
-        future.add_done_callback(
-            lambda done: self.post_message(
-                PublishCompleted(name, f'start {rate_hz:g} Hz', self._future_error(done))
-            )
-        )
+        self._report_when_done(future, name, f'start {rate_hz:g} Hz')
         self._rate_topics[name] = rate_hz
         self.write_log(f'publishing {name} @ {rate_hz:g} Hz (edits apply after restart)', 'cyan')
         self._update_controls()
 
     def _stop_rate(self, name: str) -> None:
         future = self._bridge.stop_periodic_publish(name)
-        future.add_done_callback(
-            lambda done: self.post_message(
-                PublishCompleted(name, 'stop rate', self._future_error(done))
-            )
-        )
+        self._report_when_done(future, name, 'stop rate')
         self._rate_topics.pop(name, None)
         self.write_log(f'stopped publishing {name}', 'cyan')
         self._update_controls()
@@ -148,13 +136,11 @@ class TopicsTab(InterfaceTab):
         elif message.label == 'publish':
             self.write_log(f'✓ published once on {message.topic_name}', 'green')
 
-    @staticmethod
-    def _future_error(done_future) -> str | None:
-        try:
-            done_future.result()
-            return None
-        except BaseException as error:  # noqa: BLE001 - rendered in the log
-            return str(error) or type(error).__name__
+    def _report_when_done(self, future, name: str, label: str) -> None:
+        """Post a PublishCompleted (with any error text) once ``future`` resolves."""
+        future.add_done_callback(
+            lambda done: self.post_message(PublishCompleted(name, label, self._future_error(done)))
+        )
 
     # ------------------------------------------------------------------ echo
 
@@ -182,9 +168,7 @@ class TopicsTab(InterfaceTab):
         self._echo_topic = name
         self._echo_paused = False
         future = self._bridge.subscribe(name, type_name, self._echo_buffer)
-        future.add_done_callback(
-            lambda done: self.post_message(PublishCompleted(name, 'echo', self._future_error(done)))
-        )
+        self._report_when_done(future, name, 'echo')
         self.write_log(f'echo started on {name}', 'cyan')
         self.query_one('#pause-button', Button).disabled = False
         self.query_one('#pause-button', Button).label = 'Pause'
@@ -195,11 +179,7 @@ class TopicsTab(InterfaceTab):
             return
         name = self._echo_topic
         future = self._bridge.unsubscribe(name)
-        future.add_done_callback(
-            lambda done: self.post_message(
-                PublishCompleted(name, 'stop echo', self._future_error(done))
-            )
-        )
+        self._report_when_done(future, name, 'stop echo')
         self.write_log(f'echo stopped on {name}', 'cyan')
         self._echo_topic = None
         self._echo_buffer = None

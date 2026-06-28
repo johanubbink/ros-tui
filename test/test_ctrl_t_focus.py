@@ -15,7 +15,7 @@ from ros_tui.ui.app import RosTuiApp
 
 @pytest.mark.asyncio
 async def test_ctrl_t_cycles_with_focus_inside_pane():
-    bridge = RosBridge()
+    bridge = RosBridge(node_name='ctrl_t_focus_inside_pane')
     bridge.start()
     app = RosTuiApp(bridge)
     try:
@@ -35,7 +35,7 @@ async def test_ctrl_t_cycles_with_focus_inside_pane():
 
 @pytest.mark.asyncio
 async def test_ctrl_t_cycles_with_no_focus():
-    bridge = RosBridge()
+    bridge = RosBridge(node_name='ctrl_t_focus_no_focus')
     bridge.start()
     app = RosTuiApp(bridge)
     try:
@@ -51,7 +51,7 @@ async def test_ctrl_t_cycles_with_no_focus():
 
 @pytest.mark.asyncio
 async def test_ctrl_t_wraps_around():
-    bridge = RosBridge()
+    bridge = RosBridge(node_name='ctrl_t_focus_wraps_around')
     bridge.start()
     app = RosTuiApp(bridge)
     try:
