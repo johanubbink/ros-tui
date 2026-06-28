@@ -589,3 +589,31 @@ async def test_entry_with_no_type_is_handled_gracefully():
         flist._refresh_options()
         await pilot.pause()
         assert flist.border_subtitle.startswith('1/')  # /chatter matched; /mystery skipped.
+
+
+async def test_unsubmitted_param_edit_survives_navigation():
+    """Typing a new value then moving the cursor must not discard the edit.
+
+    Every cursor move fires RowHighlighted; the box reseeds only while pristine.
+    """
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        table = tab.query_one('#node-params', DataTable)
+        input_box = tab.query_one('#node-param-value', Input)
+
+        # A pristine box seeds from the highlighted row (NODE_PARAMS: rate=10.0, use_sim_time=False).
+        table.move_cursor(row=1)
+        await pilot.pause()
+        assert input_box.value == '10.0'
+        table.move_cursor(row=0)
+        await pilot.pause()
+        assert input_box.value == 'false'
+
+        # The user types a value but does not Set it; navigation must preserve it.
+        input_box.value = '999.0'
+        table.move_cursor(row=1)
+        await pilot.pause()
+        table.move_cursor(row=0)
+        await pilot.pause()
+        assert input_box.value == '999.0'

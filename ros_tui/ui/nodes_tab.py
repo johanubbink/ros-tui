@@ -56,6 +56,7 @@ class NodesTab(EntityTab):
         self._current_node: str | None = None
         self._info = None  # ros_tui.ros.graph.NodeInfo once loaded.
         self._params: list | None = None  # [(name, type_label, value), ...] once loaded.
+        self._seeded_value = ''  # The value the tab last auto-seeded into the edit box.
 
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
@@ -99,6 +100,8 @@ class NodesTab(EntityTab):
         self._params = None
         self.query_one('#node-interfaces', Tree).clear()
         self.query_one('#node-params', DataTable).clear()
+        self.query_one('#node-param-value', Input).value = ''  # Fresh node, fresh edit box.
+        self._seeded_value = ''
         self.query_one('#node-param-refresh', Button).disabled = True
         self.query_one('#node-param-set', Button).disabled = True
         self._clear_error()
@@ -201,7 +204,13 @@ class NodesTab(EntityTab):
         row_key = event.row_key.value
         for name, _type_label, value in self._params or []:
             if name == row_key:
-                self.query_one('#node-param-value', Input).value = _render_value(value)
+                input_box = self.query_one('#node-param-value', Input)
+                rendered = _render_value(value)
+                # Reseed only when the box is pristine; every cursor move fires this handler,
+                # so blindly overwriting would discard a value the user typed but hasn't Set.
+                if input_box.value in ('', self._seeded_value):
+                    input_box.value = rendered
+                    self._seeded_value = rendered
                 self.query_one('#node-param-set', Button).disabled = self._current_node is None
                 break
 
