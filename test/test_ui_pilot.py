@@ -179,6 +179,11 @@ def log_text(tab):
     return '\n'.join(strip.text for strip in log.lines)
 
 
+def node_log_text(tab):
+    log = tab.query_one('#node-param-log', RichLog)
+    return '\n'.join(strip.text for strip in log.lines)
+
+
 def node_status_text(tab):
     return static_text(tab.query_one('#node-param-status', Static))
 
@@ -477,7 +482,7 @@ async def test_set_parameter_calls_bridge():
         tab.primary_action()
         await pilot.pause()
         assert fake.set_param_calls == [('/talker', 'use_sim_time', 'true')]
-        assert await wait_until(pilot, lambda: 'set use_sim_time' in node_status_text(tab))
+        assert await wait_until(pilot, lambda: 'set use_sim_time' in node_log_text(tab))
 
 
 async def test_set_parameter_empty_value_shows_error():
@@ -521,12 +526,14 @@ async def test_node_tab_keybindings_dispatch_through_app():
         assert len(fake.node_info_requests) > info_before
         assert len(fake.param_list_requests) > params_before
 
-        # ctrl+l -> clear_log -> clears the param status line.
+        # ctrl+l -> clear_log -> clears the result log and the status line.
         tab._show_success('something')
-        assert node_status_text(tab) != ''
+        tab.query_one('#node-param-log', RichLog).write('a previous result')
+        await pilot.pause()
+        assert node_status_text(tab) != '' and node_log_text(tab) != ''
         await pilot.press('ctrl+l')
         await pilot.pause()
-        assert node_status_text(tab) == ''
+        assert node_status_text(tab) == '' and node_log_text(tab) == ''
 
         # ctrl+r -> reset_editor -> safe no-op on the Nodes tab (no editor to reset).
         await pilot.press('ctrl+r')
@@ -668,3 +675,34 @@ async def test_set_with_no_parameter_selected_reports_error():
         await pilot.pause()
         assert fake.set_param_calls == []
         assert 'select a parameter' in node_status_text(tab).lower()
+
+
+async def test_set_results_accumulate_in_log():
+    """Each Set result stays visible in the scrollable log, not overwritten (history)."""
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        table = tab.query_one('#node-params', DataTable)
+        input_box = tab.query_one('#node-param-value', Input)
+
+        table.move_cursor(row=0)  # use_sim_time
+        await pilot.pause()
+        input_box.value = 'true'
+        tab.primary_action()
+        await pilot.pause()
+
+        table.move_cursor(row=1)  # rate
+        await pilot.pause()
+        input_box.value = '5.0'
+        tab.primary_action()
+        await pilot.pause()
+
+        assert await wait_until(
+            pilot,
+            lambda: 'set use_sim_time' in node_log_text(tab) and 'set rate' in node_log_text(tab),
+        ), f'both set results should remain in the log: {node_log_text(tab)!r}'
+        assert fake.set_param_calls == [
+            ('/talker', 'use_sim_time', 'true'),
+            ('/talker', 'rate', '5.0'),
+        ]

@@ -23,7 +23,7 @@ Actions tab with that entity pre-selected.
 import yaml
 from textual import on
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Input, Static, Tree
+from textual.widgets import Button, DataTable, Input, RichLog, Static, Tree
 
 from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
@@ -71,6 +71,7 @@ class NodesTab(EntityTab):
                     yield Button('Refresh', id='node-param-refresh', disabled=True)
                     yield Button('Set', id='node-param-set', variant='primary', disabled=True)
                 yield Static('', id='node-param-status')
+                yield RichLog(id='node-param-log', markup=True)
 
     def on_mount(self) -> None:
         self.query_one('#node-params', DataTable).add_columns('Parameter', 'Type', 'Value')
@@ -88,7 +89,8 @@ class NodesTab(EntityTab):
         self._reload()
 
     def clear_log(self) -> None:
-        """ctrl+l — clear the parameter status line (this tab has no scrolling log)."""
+        """ctrl+l — clear the parameter result log and the status line."""
+        self.query_one('#node-param-log', RichLog).clear()
         self._clear_error()
 
     # ---------------------------------------------------------------- selection
@@ -169,10 +171,13 @@ class NodesTab(EntityTab):
         message.stop()
         if message.node_name != self._current_node:
             return
+        # Set results accumulate in the scrollable log so a batch of sets stays visible;
+        # the status line above is reserved for transient validation messages.
+        log = self.query_one('#node-param-log', RichLog)
         if message.error:
-            self._show_error(message.error)
+            log.write(f'[red]✗ set {message.param_name}: {message.error}[/red]')
         else:
-            self._show_success(f'set {message.param_name}')
+            log.write(f'[green]✓ set {message.param_name}[/green]')
             self._load_params()
 
     # ---------------------------------------------------------------- interfaces tree

@@ -92,10 +92,11 @@ class RosTuiApp(App):
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
     #node-header { height: 1; }
     #node-interfaces { height: 2fr; min-height: 6; border: round $surface-lighten-2; }
-    #node-params-group { height: 1fr; min-height: 9; border: round $surface-lighten-2; }
+    #node-params-group { height: 1fr; min-height: 14; border: round $surface-lighten-2; }
     #node-params { height: 1fr; min-height: 3; border: none; }
     #node-param-value { width: 1fr; }
     #node-param-status { height: 1; }
+    #node-param-log { height: 5; min-height: 2; border-top: solid $surface-lighten-2; }
     """
 
     BINDINGS = [
