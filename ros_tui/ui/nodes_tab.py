@@ -22,7 +22,7 @@ Actions tab with that entity pre-selected.
 
 import yaml
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Input, RichLog, Static, Tree
+from textual.widgets import Button, DataTable, Input, Static, Tree
 
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import (
@@ -59,20 +59,20 @@ class NodesTab(Horizontal):
         with Vertical(classes='right-pane'):
             yield Static(_PLACEHOLDER, id='node-header')
             yield Tree('Interfaces', id='node-interfaces')
-            yield DataTable(id='node-params', cursor_type='row')
-            with Horizontal(classes='controls'):
-                yield Input(placeholder='new value (YAML)', id='node-param-value')
-                yield Button('Refresh', id='node-param-refresh', disabled=True)
-                yield Button('Set', id='node-param-set', variant='primary', disabled=True)
-            yield Static('', id='node-error')
-            yield RichLog(id='node-log', markup=True)
+            with Vertical(id='node-params-group'):
+                yield DataTable(id='node-params', cursor_type='row')
+                with Horizontal(classes='controls'):
+                    yield Input(placeholder='new value (YAML)', id='node-param-value')
+                    yield Button('Refresh', id='node-param-refresh', disabled=True)
+                    yield Button('Set', id='node-param-set', variant='primary', disabled=True)
+                yield Static('', id='node-param-status')
 
     def on_mount(self) -> None:
         self.query_one('#node-params', DataTable).add_columns('Parameter', 'Type', 'Value')
         tree = self.query_one('#node-interfaces', Tree)
         tree.show_root = False
         tree.border_title = 'Interfaces'
-        self.query_one('#node-params', DataTable).border_title = 'Parameters'
+        self.query_one('#node-params-group').border_title = 'Parameters'
 
     def set_entries(self, nodes) -> None:
         self.query_one(FilterableList).set_entries(nodes)
@@ -87,7 +87,7 @@ class NodesTab(Horizontal):
         self._reload()
 
     def clear_log(self) -> None:
-        self.query_one('#node-log', RichLog).clear()
+        self._clear_error()
 
     # ---------------------------------------------------------------- selection
 
@@ -105,6 +105,7 @@ class NodesTab(Horizontal):
         self._reload()
 
     def _reload(self) -> None:
+        self._clear_error()
         self._load_node_info()
         self._load_params()
 
@@ -151,18 +152,14 @@ class NodesTab(Horizontal):
         self._params = message.params or []
         self._populate_table(self._params)
         self._refresh_header()
-        self._clear_error()
 
     def on_parameter_set_completed(self, message: ParameterSetCompleted) -> None:
         if message.node_name != self._current_node:
             return
-        log = self.query_one('#node-log', RichLog)
         if message.error:
-            log.write(f'[red]set {message.param_name}: {message.error}[/red]')
             self._show_error(message.error)
         else:
-            log.write(f'[green]set {message.param_name} OK[/green]')
-            self._clear_error()
+            self._show_success(f'set {message.param_name}')
             self._load_params()
 
     # ---------------------------------------------------------------- interfaces tree
@@ -223,7 +220,7 @@ class NodesTab(Horizontal):
             return
         value_str = self.query_one('#node-param-value', Input).value.strip()
         if not value_str:
-            self._show_error('value is empty')
+            self._show_error('enter a value to set')
             return
         node_name = self._current_node
         param_name = str(row_key)
@@ -256,14 +253,13 @@ class NodesTab(Horizontal):
         header.update('   '.join(parts))
 
     def _show_error(self, text: str) -> None:
-        err = self.query_one('#node-error', Static)
-        err.update(f'[red]{text}[/red]')
-        err.display = True
+        self.query_one('#node-param-status', Static).update(f'[red]✗ {text}[/red]')
+
+    def _show_success(self, text: str) -> None:
+        self.query_one('#node-param-status', Static).update(f'[green]✓ {text}[/green]')
 
     def _clear_error(self) -> None:
-        err = self.query_one('#node-error', Static)
-        err.update('')
-        err.display = False
+        self.query_one('#node-param-status', Static).update('')
 
 
 def _format_value(value) -> str:

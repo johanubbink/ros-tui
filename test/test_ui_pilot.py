@@ -177,9 +177,8 @@ def log_text(tab):
     return '\n'.join(strip.text for strip in log.lines)
 
 
-def node_log_text(tab):
-    log = tab.query_one('#node-log', RichLog)
-    return '\n'.join(strip.text for strip in log.lines)
+def node_status_text(tab):
+    return static_text(tab.query_one('#node-param-status', Static))
 
 
 def tree_leaf(tree, name_substr):
@@ -478,7 +477,7 @@ async def test_set_parameter_calls_bridge():
         tab.primary_action()
         await pilot.pause()
         assert fake.set_param_calls == [('/talker', 'use_sim_time', 'true')]
-        assert await wait_until(pilot, lambda: 'set use_sim_time OK' in node_log_text(tab))
+        assert await wait_until(pilot, lambda: 'set use_sim_time' in node_status_text(tab))
 
 
 async def test_set_parameter_empty_value_shows_error():
@@ -492,5 +491,4 @@ async def test_set_parameter_empty_value_shows_error():
         tab.primary_action()
         await pilot.pause()
         assert fake.set_param_calls == []
-        error = tab.query_one('#node-error', Static)
-        assert error.display and 'empty' in static_text(error)
+        assert 'enter a value to set' in node_status_text(tab)
