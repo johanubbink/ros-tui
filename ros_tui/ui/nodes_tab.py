@@ -100,6 +100,7 @@ class NodesTab(EntityTab):
     @on(FilterableList.Selected)
     def _on_node_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
+        self.minimize_list()
         if message.entry.name == self._current_node:
             return  # Already showing this node; keep cached info/params (Refresh re-fetches).
         self._current_node = message.entry.name

@@ -40,7 +40,18 @@ class EntityTab(Horizontal):
         self.query_one(FilterableList).set_entries(entries)
 
     def focus_filter(self) -> None:
+        self.maximize_list()
         self.query_one(FilterableList).focus_filter()
+
+    def maximize_list(self) -> None:
+        """Browse mode: the entity list fills the tab; the right pane is hidden."""
+        self.query_one(FilterableList).display = True
+        self.query_one('.right-pane').display = False
+
+    def minimize_list(self) -> None:
+        """Work mode: the right pane fills the tab; the entity list is hidden."""
+        self.query_one(FilterableList).display = False
+        self.query_one('.right-pane').display = True
 
     def select_entity(self, entry: InterfaceEntry) -> None:
         """Programmatically select ``entry`` (cross-tab jump target).

@@ -875,3 +875,51 @@ async def test_parameter_block_is_40_percent_and_scrolls():
         )
         # The empty result log takes no space at all until a Set writes to it.
         assert log.region.height == 0, f'empty log should take no space, was {log.region.height}'
+
+
+def _is_maximized(tab):
+    """Maximized = the entity list is shown and the right pane is hidden."""
+    return tab.query_one(FilterableList).display and not tab.query_one('.right-pane').display
+
+
+async def test_list_minimizes_on_select_and_maximizes_on_filter_and_cycle():
+    """The list fills the tab while browsing; a selection swaps to the right pane; ctrl+f
+    and ctrl+t bring the list back."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        # Startup: maximized (list only, no right pane).
+        assert _is_maximized(tab)
+
+        # Selecting an entry minimizes — right pane takes over, list hides.
+        await select_entry(pilot, tab, CHATTER_ENTRY)
+        assert not _is_maximized(tab)
+
+        # ctrl+f re-maximizes and focuses the filter.
+        await pilot.press('ctrl+f')
+        await pilot.pause()
+        assert _is_maximized(tab)
+        assert app.focused is not None and app.focused.id == 'filter-input'
+
+        # Minimize again, then ctrl+t maximizes the destination tab. (The seed is already
+        # cached, so select_entry returns at once; pause to let the handler minimize.)
+        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await pilot.pause()
+        assert not _is_maximized(tab)
+        await pilot.press('ctrl+t')
+        await pilot.pause()
+        assert _is_maximized(app._active_tab())
+
+
+async def test_cross_tab_jump_opens_destination_minimized():
+    """Jumping from the Nodes tree lands on the destination tab already minimized."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _jump(pilot, app, '/chatter')
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+        )
+        assert not _is_maximized(topics)

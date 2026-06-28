@@ -102,6 +102,7 @@ class InterfaceTab(EntityTab):
     @on(FilterableList.Selected)
     def _on_entry_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
+        self.minimize_list()
         self._store_current_edit()
         self._current = message.entry
         self.query_one('#detail-title', Static).update(

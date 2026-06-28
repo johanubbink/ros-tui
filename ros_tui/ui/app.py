@@ -78,10 +78,11 @@ class RosTuiApp(App):
     SUB_TITLE = 'ROS 2 interface workbench'
 
     CSS = """
-    .entity-list { width: 32%; min-width: 28; border: round $primary; }
+    .entity-list { width: 1fr; min-width: 28; border: round $primary; }
     .entity-list #filter-input { border: none; height: 1; padding: 0 1; }
     .entity-list #entity-list { height: 1fr; border: none; }
-    .right-pane { width: 1fr; padding: 0 1; }
+    /* Tabs start maximized (list only); selecting an entry reveals the right pane. */
+    .right-pane { width: 1fr; padding: 0 1; display: none; }
     #detail-title, #node-title { height: 1; color: $primary; text-style: bold; }
     #detail-line, #node-header { height: 1; color: $text-muted; }
     #editor { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
@@ -183,6 +184,9 @@ class RosTuiApp(App):
         # worked when the tab bar itself was focused (e.g. just after clicking).
         self.set_focus(None)
         tabbed.active = pane_ids[(index + 1) % len(pane_ids)]
+        tab = self._active_tab()
+        if tab is not None:
+            tab.maximize_list()
 
     def action_focus_filter(self) -> None:
         tab = self._active_tab()
