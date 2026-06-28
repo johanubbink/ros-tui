@@ -44,6 +44,7 @@ _STATUS_STYLES = {
 class ActionsTab(InterfaceTab):
     kind = 'action'
     list_placeholder = 'filter actions…'
+    entity_label = 'Action'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)

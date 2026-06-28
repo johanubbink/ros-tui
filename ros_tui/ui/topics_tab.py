@@ -34,6 +34,7 @@ from ros_tui.ui.messages import PublishCompleted
 class TopicsTab(InterfaceTab):
     kind = 'msg'
     list_placeholder = 'filter topics…'
+    entity_label = 'Topic'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)

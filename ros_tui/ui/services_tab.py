@@ -28,6 +28,7 @@ from ros_tui.ui.messages import ServiceCompleted
 class ServicesTab(InterfaceTab):
     kind = 'srv'
     list_placeholder = 'filter services…'
+    entity_label = 'Service'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)

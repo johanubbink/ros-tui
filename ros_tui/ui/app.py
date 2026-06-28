@@ -82,7 +82,8 @@ class RosTuiApp(App):
     .entity-list #filter-input { border: none; height: 1; padding: 0 1; }
     .entity-list #entity-list { height: 1fr; border: none; }
     .right-pane { width: 1fr; padding: 0 1; }
-    #detail-line { height: 1; }
+    #detail-title, #node-title { height: 1; color: $primary; text-style: bold; }
+    #detail-line, #node-header { height: 1; color: $text-muted; }
     #editor { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
     #editor-error { display: none; height: auto; max-height: 3; }
     .controls { height: 3; }
@@ -90,7 +91,6 @@ class RosTuiApp(App):
     #rate-input { width: 9; }
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
-    #node-header { height: 1; }
     /* Split the available height ~60/40 between the interfaces tree and the
        parameters block. Each fills its share and scrolls when its content
        overflows (3fr:2fr -> parameters get 40% of the space below the header). */

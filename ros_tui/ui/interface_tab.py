@@ -46,6 +46,7 @@ class InterfaceTab(EntityTab):
 
     kind = 'msg'
     list_placeholder = 'filter…'
+    entity_label = 'Entry'
 
     def __init__(self, bridge: Any, **kwargs):
         super().__init__(bridge, **kwargs)
@@ -60,6 +61,7 @@ class InterfaceTab(EntityTab):
     def compose(self):
         yield FilterableList(placeholder=self.list_placeholder, classes='entity-list')
         with Vertical(classes='right-pane'):
+            yield Static('', id='detail-title')
             yield Static('— select an entry on the left —', id='detail-line')
             yield TextArea(
                 id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
@@ -102,6 +104,9 @@ class InterfaceTab(EntityTab):
         message.stop()
         self._store_current_edit()
         self._current = message.entry
+        self.query_one('#detail-title', Static).update(
+            f'{self.entity_label}: {message.entry.name}'
+        )
         type_name = message.entry.types[0] if message.entry.types else ''
         detail = self.query_one('#detail-line', Static)
         if not type_name:
@@ -140,9 +145,7 @@ class InterfaceTab(EntityTab):
         types_note = ''
         if len(self._current.types) > 1:
             types_note = f'  (+{len(self._current.types) - 1} more types)'
-        detail.update(
-            Text(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}', style='bold')
-        )
+        detail.update(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}')
         editor.load_text(self._edit_cache.get(message.entry_name, message.seed_text))
         self._set_editor_error('')
         self.on_selection_changed()

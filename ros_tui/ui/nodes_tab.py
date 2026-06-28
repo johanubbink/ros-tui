@@ -63,6 +63,7 @@ class NodesTab(EntityTab):
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
         with Vertical(classes='right-pane'):
+            yield Static('', id='node-title')
             yield Static(_PLACEHOLDER, id='node-header')
             yield Tree('Interfaces', id='node-interfaces')
             with Vertical(id='node-params-group'):
@@ -262,11 +263,14 @@ class NodesTab(EntityTab):
     # ---------------------------------------------------------------- helpers
 
     def _refresh_header(self) -> None:
+        title = self.query_one('#node-title', Static)
         header = self.query_one('#node-header', Static)
         if self._current_node is None:
+            title.update('')
             header.update(_PLACEHOLDER)
             return
-        parts = [f'[bold]{self._current_node}[/bold]']
+        title.update(f'Node: {self._current_node}')
+        parts = []
         if self._info is not None:
             i = self._info
             parts.append(
