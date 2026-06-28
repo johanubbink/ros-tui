@@ -94,13 +94,16 @@ def build_snapshot(node: Any, version: int) -> GraphSnapshot:
         # ROS allows duplicate node names, and get_node_names_and_namespaces() can
         # report the same node twice during discovery; dedup so each full name is
         # listed once (downstream Option/row keys assume names are unique).
+        # Skip our own bridge node: it is the tool's introspection plumbing, not a
+        # node the user came to inspect (and its endpoints churn as the app is used).
+        own = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
         result = []
         seen = set()
         for name, namespace in sorted(node.get_node_names_and_namespaces()):
             if name.startswith('_'):
                 continue
             full = f'{namespace.rstrip("/")}/{name}'
-            if full in seen:
+            if full == own or full in seen:
                 continue
             seen.add(full)
             result.append(InterfaceEntry(full, (namespace,)))

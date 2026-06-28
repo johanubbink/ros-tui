@@ -63,8 +63,16 @@ def test_empty_graph_sentinel():
 class _StubNode:
     """Minimal node exposing only the graph-query methods build_snapshot calls."""
 
-    def __init__(self, node_names_and_namespaces):
+    def __init__(self, node_names_and_namespaces, name='ros_tui', namespace='/'):
         self._nodes = node_names_and_namespaces
+        self._name = name
+        self._namespace = namespace
+
+    def get_name(self):
+        return self._name
+
+    def get_namespace(self):
+        return self._namespace
 
     def get_node_names_and_namespaces(self):
         return self._nodes
@@ -84,6 +92,16 @@ def test_duplicate_node_names_are_deduped(monkeypatch):
     snapshot = build_snapshot(node, 1)
     assert len(snapshot.nodes) == 1
     assert snapshot.nodes[0].name == '/node_a'
+
+
+def test_own_bridge_node_is_excluded(monkeypatch):
+    # ros_tui's own node is the tool's introspection plumbing, not something the
+    # user came to inspect, so it must not appear in its own node list.
+    monkeypatch.setattr('ros_tui.ros.graph.get_action_names_and_types', lambda node: [])
+    node = _StubNode([('ros_tui', '/'), ('talker', '/')], name='ros_tui', namespace='/')
+    snapshot = build_snapshot(node, 1)
+    names = [entry.name for entry in snapshot.nodes]
+    assert names == ['/talker']
 
 
 def test_split_node_name():
