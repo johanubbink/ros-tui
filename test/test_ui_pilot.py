@@ -599,10 +599,10 @@ async def test_entry_with_no_type_is_handled_gracefully():
         assert flist.border_subtitle.startswith('1/')  # /chatter matched; /mystery skipped.
 
 
-async def test_unsubmitted_param_edit_survives_navigation():
-    """Typing a new value then moving the cursor must not discard the edit.
-
-    Every cursor move fires RowHighlighted; the box reseeds only while pristine.
+async def test_param_value_box_follows_selection():
+    """The value box always shows the highlighted row's value. Moving the cursor
+    discards a value typed but not yet Set — favoured over a box that freezes on a
+    stale value after a Set (every cursor move fires RowHighlighted).
     """
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -610,7 +610,7 @@ async def test_unsubmitted_param_edit_survives_navigation():
         table = tab.query_one('#node-params', DataTable)
         input_box = tab.query_one('#node-param-value', Input)
 
-        # A pristine box seeds from the highlighted row (NODE_PARAMS: rate=10.0, use_sim_time=False).
+        # The box seeds from the highlighted row (NODE_PARAMS: rate=10.0, use_sim_time=False).
         table.move_cursor(row=1)
         await pilot.pause()
         assert input_box.value == '10.0'
@@ -618,13 +618,11 @@ async def test_unsubmitted_param_edit_survives_navigation():
         await pilot.pause()
         assert input_box.value == 'false'
 
-        # The user types a value but does not Set it; navigation must preserve it.
+        # A value typed but not Set is replaced by the next selection's value.
         input_box.value = '999.0'
         table.move_cursor(row=1)
         await pilot.pause()
-        table.move_cursor(row=0)
-        await pilot.pause()
-        assert input_box.value == '999.0'
+        assert input_box.value == '10.0'
 
 
 class _FailingNodeBridge(FakeBridge):
@@ -754,6 +752,36 @@ async def test_set_targets_the_highlighted_row():
         tab.primary_action()
         await pilot.pause()
         assert fake.set_param_calls == [('/talker', 'rate', '7.5')]
+
+
+async def test_set_then_select_another_parameter():
+    """After a successful Set, the value box must follow a new selection instead of
+    staying frozen on the just-submitted value (regression: the edit-preservation
+    guard left the box permanently 'dirty' once a value had been set)."""
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        table = tab.query_one('#node-params', DataTable)
+        input_box = tab.query_one('#node-param-value', Input)
+
+        table.move_cursor(row=0)  # use_sim_time
+        await pilot.pause()
+        input_box.value = 'true'
+        tab.primary_action()
+        await pilot.pause()
+        assert await wait_until(pilot, lambda: 'set use_sim_time' in node_log_text(tab))
+
+        # Selecting a different parameter must refresh the value box to that row's value.
+        table.move_cursor(row=1)  # rate = 10.0
+        await pilot.pause()
+        assert input_box.value == '10.0', f'value box frozen at {input_box.value!r} after Set'
+
+        # ...and Set must now target that newly selected parameter.
+        input_box.value = '5.0'
+        tab.primary_action()
+        await pilot.pause()
+        assert fake.set_param_calls[-1] == ('/talker', 'rate', '5.0')
 
 
 _MANY_PARAMS = [(f'param_{i:02d}', 'int', i) for i in range(12)]

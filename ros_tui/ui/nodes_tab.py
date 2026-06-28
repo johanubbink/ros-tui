@@ -56,7 +56,6 @@ class NodesTab(EntityTab):
         self._current_node: str | None = None
         self._info = None  # ros_tui.ros.graph.NodeInfo once loaded.
         self._params: list | None = None  # [(name, type_label, value), ...] once loaded.
-        self._seeded_value = ''  # The value the tab last auto-seeded into the edit box.
         self._load_failed = False  # True once an info/param load for this node has errored.
         self._rendered: dict[str, str] = {}  # param name -> rendered value (built once per load).
         self._selected_param: str | None = None  # The highlighted parameter row, if any.
@@ -109,7 +108,6 @@ class NodesTab(EntityTab):
         self.query_one('#node-interfaces', Tree).clear()
         self.query_one('#node-params', DataTable).clear()
         self.query_one('#node-param-value', Input).value = ''  # Fresh node, fresh edit box.
-        self._seeded_value = ''
         self._rendered = {}
         self._selected_param = None
         self.query_one('#node-param-refresh', Button).disabled = True
@@ -224,12 +222,10 @@ class NodesTab(EntityTab):
         if rendered is None:
             return
         self._selected_param = event.row_key.value
-        input_box = self.query_one('#node-param-value', Input)
-        # Reseed only when the box is pristine; every cursor move fires this handler,
-        # so blindly overwriting would discard a value the user typed but hasn't Set.
-        if input_box.value in ('', self._seeded_value):
-            input_box.value = rendered
-            self._seeded_value = rendered
+        # The value box always tracks the highlighted row. A value typed but not yet Set
+        # is discarded on navigation — favoured over a box that freezes on a stale value
+        # after a Set (every cursor move and the post-Set reload fire this handler).
+        self.query_one('#node-param-value', Input).value = rendered
         self.query_one('#node-param-set', Button).disabled = self._current_node is None
 
     # ---------------------------------------------------------------- set
