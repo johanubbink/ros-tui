@@ -644,3 +644,27 @@ async def test_node_load_failure_clears_loading_header():
 
         assert await wait_until(pilot, lambda: 'failed' in header())
         assert 'loading' not in header()
+
+
+class _NoParamsBridge(FakeBridge):
+    """A bridge whose nodes expose no parameters."""
+
+    def list_node_parameters(self, node_name, on_done):
+        self.param_list_requests.append(node_name)
+        on_done([], None)
+
+
+async def test_set_with_no_parameter_selected_reports_error():
+    """Set with nothing selectable must report an error, not silently no-op."""
+    fake = _NoParamsBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'nodes')
+        tab = app.query_one('#nodes-tab')
+        tab.post_message(FilterableList.Selected(TALKER_NODE))
+        assert await wait_until(pilot, lambda: tab._params == [])
+
+        tab.primary_action()  # ctrl+s with no selectable parameter row
+        await pilot.pause()
+        assert fake.set_param_calls == []
+        assert 'select a parameter' in node_status_text(tab).lower()

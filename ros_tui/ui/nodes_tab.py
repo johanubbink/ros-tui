@@ -236,11 +236,12 @@ class NodesTab(EntityTab):
         if self._current_node is None:
             return
         table = self.query_one('#node-params', DataTable)
-        if table.cursor_row < 0 or not self._params:
-            return
         try:
-            row_key = table.get_row_at(table.cursor_row)[0]  # first cell = param name
-        except Exception:
+            row_key = table.get_row_at(table.cursor_row)[0] if table.cursor_row >= 0 else None
+        except Exception:  # noqa: BLE001 - a vanished/reloaded row must not silently no-op.
+            row_key = None
+        if not row_key or not self._params:
+            self._show_error('select a parameter to set')
             return
         value_str = self.query_one('#node-param-value', Input).value.strip()
         if not value_str:
