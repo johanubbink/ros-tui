@@ -50,7 +50,7 @@ from ros_tui.constants import (
 )
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind
-from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, build_snapshot
+from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, build_node_info, build_snapshot
 from ros_tui.ros.message_yaml import TimeSetter, import_type
 
 GraphListener = Callable[[GraphSnapshot], None]
@@ -658,6 +658,17 @@ class RosBridge:
                     )
             except Exception as error:
                 on_done(str(error))
+
+        self.submit(command)
+
+    def get_node_info(self, node_name: str, on_done: Callable) -> None:
+        """Introspect ``node_name``'s endpoints; result via ``on_done(info, error)``."""
+
+        def command() -> None:
+            try:
+                on_done(build_node_info(self._node, node_name), None)
+            except Exception as error:
+                on_done(None, str(error))
 
         self.submit(command)
 

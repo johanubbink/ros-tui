@@ -7,7 +7,16 @@ FROM ros:${ROS_DISTRO}-ros-base
 # ---- Dependencies -----------------------------------------------------------
 # colcon + build tooling, the message packages the demo node and app need at
 # runtime, and the test deps so `colcon test` / pytest also work in here.
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+#
+# `apt-get upgrade` first: the ros:${ROS_DISTRO}-ros-base layer is rebuilt less
+# often than the ROS apt repo updates, so freshly installing packages like
+# example_interfaces on top of it can pull a newer build than the fastcdr/rmw
+# already baked in. The ABI then mismatches and FastDDS serialization aborts
+# with an undefined-symbol error (e.g. the /fibonacci action or any action send).
+# Upgrading realigns the whole ROS stack so a build is reproducible whenever it runs.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ros-dev-tools \
         ros-${ROS_DISTRO}-example-interfaces \
         ros-${ROS_DISTRO}-rosidl-runtime-py \

@@ -52,6 +52,24 @@ class FilterableList(Vertical):
     def focus_filter(self) -> None:
         self.query_one('#filter-input', Input).focus()
 
+    def select_entry(self, entry: InterfaceEntry) -> None:
+        """Highlight ``entry`` (clearing the filter so it is visible) and emit Selected.
+
+        Used for cross-tab jumps. If the entry is not in this list (e.g. a service/action
+        client with no server in the graph) the highlight is skipped, but Selected still
+        fires so the destination tab can seed its editor from the entry's type.
+        """
+        filter_input = self.query_one('#filter-input', Input)
+        if filter_input.value:
+            filter_input.value = ''  # Schedules a debounced refresh…
+            self._refresh_options()  # …but refresh now so the option is present immediately.
+        option_list = self.query_one('#entity-list', OptionList)
+        for index in range(option_list.option_count):
+            if option_list.get_option_at_index(index).id == entry.name:
+                option_list.highlighted = index
+                break
+        self.post_message(self.Selected(entry))
+
     @on(Input.Changed, '#filter-input')
     def _on_filter_changed(self, event: Input.Changed) -> None:
         event.stop()

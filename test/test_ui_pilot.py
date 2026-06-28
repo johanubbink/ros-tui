@@ -22,10 +22,20 @@ import pytest
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from ros_tui.ros.events import ActionEvent, ActionEventKind
-from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry
+from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
-from textual.widgets import Button, Input, OptionList, RichLog, Static, TabbedContent, TextArea
+from textual.widgets import (
+    Button,
+    DataTable,
+    Input,
+    OptionList,
+    RichLog,
+    Static,
+    TabbedContent,
+    TextArea,
+    Tree,
+)
 
 pytestmark = pytest.mark.ui
 
@@ -33,14 +43,27 @@ FIBONACCI_ENTRY = InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibon
 ADD_TWO_INTS_ENTRY = InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',))
 CHATTER_ENTRY = InterfaceEntry('/chatter', ('std_msgs/msg/String',))
 POSE_ENTRY = InterfaceEntry('/pose', ('geometry_msgs/msg/PoseStamped',))
+TALKER_NODE = InterfaceEntry('/talker', ('/',))  # nodes store their namespace in types[0].
 
 SNAPSHOT = GraphSnapshot(
     version=1,
     actions=(FIBONACCI_ENTRY,),
     services=(ADD_TWO_INTS_ENTRY, InterfaceEntry('/set_bool', ('std_srvs/srv/SetBool',))),
     topics=(CHATTER_ENTRY, POSE_ENTRY),
-    nodes=(),
+    nodes=(TALKER_NODE,),
 )
+
+# Canned introspection for /talker; entries match SNAPSHOT so jumps can highlight the target.
+NODE_INFO = NodeInfo(
+    node_name='/talker',
+    publishers=(CHATTER_ENTRY,),
+    subscribers=(POSE_ENTRY,),
+    service_servers=(ADD_TWO_INTS_ENTRY,),
+    service_clients=(),
+    action_servers=(FIBONACCI_ENTRY,),
+    action_clients=(),
+)
+NODE_PARAMS = [('use_sim_time', 'bool', False), ('rate', 'double', 10.0)]
 
 
 def completed_future(result=None):
@@ -62,9 +85,24 @@ class FakeBridge:
         self.periodic_started = []
         self.periodic_stopped = []
         self.subscriptions = {}
+        self.node_info_requests = []
+        self.param_list_requests = []
+        self.set_param_calls = []
 
     def set_graph_listener(self, listener):
         self.listener = listener
+
+    def get_node_info(self, node_name, on_done):
+        self.node_info_requests.append(node_name)
+        on_done(NODE_INFO, None)
+
+    def list_node_parameters(self, node_name, on_done):
+        self.param_list_requests.append(node_name)
+        on_done(list(NODE_PARAMS), None)
+
+    def set_node_parameter(self, node_name, name, value_yaml, on_done):
+        self.set_param_calls.append((node_name, name, value_yaml))
+        on_done(None)
 
     def call_service(self, name, type_name, request, time_setters=()):
         self.service_calls.append((name, type_name, request))
@@ -137,6 +175,38 @@ async def select_entry(pilot, tab, entry):
 def log_text(tab):
     log = tab.query_one('#output-log', RichLog)
     return '\n'.join(strip.text for strip in log.lines)
+
+
+def node_log_text(tab):
+    log = tab.query_one('#node-log', RichLog)
+    return '\n'.join(strip.text for strip in log.lines)
+
+
+def tree_leaf(tree, name_substr):
+    """Return the first interface leaf whose label contains ``name_substr`` (or None)."""
+    for branch in tree.root.children:
+        for leaf in branch.children:
+            if name_substr in str(leaf.label):
+                return leaf
+    return None
+
+
+def tree_labels(tree):
+    labels = []
+    for branch in tree.root.children:
+        labels.append(str(branch.label))
+        labels.extend(str(leaf.label) for leaf in branch.children)
+    return labels
+
+
+async def select_node(pilot, app):
+    """Activate the Nodes tab, select /talker, wait for its params + interfaces to load."""
+    await show_tab(pilot, 'nodes')
+    tab = app.query_one('#nodes-tab')
+    tab.post_message(FilterableList.Selected(TALKER_NODE))
+    table = tab.query_one('#node-params', DataTable)
+    assert await wait_until(pilot, lambda: table.row_count == len(NODE_PARAMS))
+    return tab
 
 
 def static_text(widget):
@@ -299,3 +369,128 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
         assert await wait_until(pilot, lambda: 'hello there' in log_text(tab))
         await click_button(pilot, '#echo-button')
         assert '/chatter' not in fake.subscriptions
+
+
+async def test_nodes_tab_present_and_labeled():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        from ros_tui.ui.nodes_tab import NodesTab
+
+        assert isinstance(app.query_one('#nodes-tab'), NodesTab)
+        tab = app.query_one(TabbedContent).get_tab('nodes')
+        assert 'Nodes' in str(tab.label)
+        node_list = app.query_one('#nodes-tab FilterableList OptionList', OptionList)
+        assert node_list.option_count == 1
+
+
+async def test_selecting_node_shows_interfaces_and_params():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        assert fake.node_info_requests == ['/talker']
+        assert fake.param_list_requests == ['/talker']
+        labels = tree_labels(tab.query_one('#node-interfaces', Tree))
+        assert any(label.startswith('Publishers (1)') for label in labels)
+        assert any(label.startswith('Subscribers (1)') for label in labels)
+        assert any(label.startswith('Service Servers (1)') for label in labels)
+        assert any(label.startswith('Action Servers (1)') for label in labels)
+        assert any(label.startswith('Service Clients (0)') for label in labels)
+        assert any('/chatter' in label for label in labels)
+        assert any('/fibonacci' in label for label in labels)
+        # Parameter table populated from the bridge.
+        rows = [tab.query_one('#node-params', DataTable).get_row_at(i)[0] for i in range(2)]
+        assert rows == ['use_sim_time', 'rate']
+
+
+async def _jump(pilot, app, leaf_substr):
+    tab = await select_node(pilot, app)
+    tree = tab.query_one('#node-interfaces', Tree)
+    assert await wait_until(pilot, lambda: tree_leaf(tree, leaf_substr) is not None)
+    leaf = tree_leaf(tree, leaf_substr)
+    tab.on_tree_node_selected(Tree.NodeSelected(leaf))
+    await pilot.pause()
+    return leaf
+
+
+async def test_publisher_leaf_jumps_to_topics_tab():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        leaf = await _jump(pilot, app, '/chatter')
+        assert leaf.data[0] == 'topics'
+        assert app.query_one(TabbedContent).active == 'topics'
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+        )
+
+
+async def test_service_leaf_jumps_to_services_tab():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        leaf = await _jump(pilot, app, '/add_two_ints')
+        assert leaf.data[0] == 'services'
+        assert app.query_one(TabbedContent).active == 'services'
+        services = app.query_one('#services-tab')
+        assert await wait_until(
+            pilot,
+            lambda: services.current_entry is not None
+            and services.current_entry.name == '/add_two_ints',
+        )
+
+
+async def test_action_leaf_jumps_to_actions_tab():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        leaf = await _jump(pilot, app, '/fibonacci')
+        assert leaf.data[0] == 'actions'
+        assert app.query_one(TabbedContent).active == 'actions'
+        actions = app.query_one('#actions-tab')
+        assert await wait_until(
+            pilot,
+            lambda: actions.current_entry is not None
+            and actions.current_entry.name == '/fibonacci',
+        )
+
+
+async def test_selecting_branch_does_not_navigate():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tree = tab.query_one('#node-interfaces', Tree)
+        branch = tree.root.children[0]  # "Publishers (1)" — a category, data is None.
+        assert branch.data is None
+        tab.on_tree_node_selected(Tree.NodeSelected(branch))
+        await pilot.pause()
+        assert app.query_one(TabbedContent).active == 'nodes'  # No jump.
+
+
+async def test_set_parameter_calls_bridge():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        table = tab.query_one('#node-params', DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+        tab.query_one('#node-param-value', Input).value = 'true'
+        tab.primary_action()
+        await pilot.pause()
+        assert fake.set_param_calls == [('/talker', 'use_sim_time', 'true')]
+        assert await wait_until(pilot, lambda: 'set use_sim_time OK' in node_log_text(tab))
+
+
+async def test_set_parameter_empty_value_shows_error():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tab.query_one('#node-params', DataTable).move_cursor(row=0)
+        await pilot.pause()
+        tab.query_one('#node-param-value', Input).value = '   '
+        tab.primary_action()
+        await pilot.pause()
+        assert fake.set_param_calls == []
+        error = tab.query_one('#node-error', Static)
+        assert error.display and 'empty' in static_text(error)

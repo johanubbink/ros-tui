@@ -1,8 +1,9 @@
 # ros_tui
 
-A terminal UI for exploring and exercising a live ROS 2 system: browse **actions, services
-and topics** in three tabs, fill in messages in a prefilled YAML editor, and send goals /
-call services / publish / echo — without composing `ros2 ... "{...}"` one-liners.
+A terminal UI for exploring and exercising a live ROS 2 system: browse **actions, services,
+topics and nodes** in four tabs, fill in messages in a prefilled YAML editor, and send goals /
+call services / publish / echo / set parameters — without composing `ros2 ... "{...}"`
+one-liners.
 
 ```shell
 ros2 run ros_tui ros_tui
@@ -99,6 +100,10 @@ Notes:
   renders messages with array truncation, message/Hz/drop counters in the status line.
   QoS is captured when the echo starts — if a publisher with different QoS appears later,
   restart the echo.
+- **Nodes** — select a node to see, on the right, its **Interfaces** (publishers,
+  subscribers, service servers/clients, action servers/clients — like `ros2 node info`) over
+  its **Parameters**. Selecting an interface jumps to its Topics / Services / Actions tab with
+  that entity pre-selected. Highlight a parameter, edit the value (YAML), `Set` to apply.
 
 ## Editor
 
@@ -120,10 +125,10 @@ prefilled with the message defaults. Extras:
 
 | Key | Action |
 | --- | --- |
-| `ctrl+t` | Cycle tabs (Topics → Services → Actions → Params) |
+| `ctrl+t` | Cycle tabs (Topics → Services → Actions → Nodes) |
 | `ctrl+f` | Focus filter input in the current tab |
-| `ctrl+s` | Primary action (Send goal / Call / Publish once) |
-| `ctrl+k` | Secondary action (Cancel goal / Stop periodic publish) |
+| `ctrl+s` | Primary action (Send goal / Call / Publish once / Set param) |
+| `ctrl+k` | Secondary action (Cancel goal / Stop periodic publish / Refresh node) |
 | `ctrl+r` | Reset editor to message defaults |
 | `ctrl+l` | Clear output log of the current tab |
 | `f2` | Open help |
@@ -138,6 +143,15 @@ Mouse interaction is supported.
 colcon test --packages-select ros_tui
 # or, directly:
 python3 -m pytest test -q
+```
+
+No local ROS install? Run the whole suite in the Docker playground (it bundles rclpy,
+pytest and the message packages). The path is the package source as mounted in the
+container (`/ros_tui_ws/src/ros_tui`):
+
+```shell
+docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh        # full suite
+docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh -m ui  # UI tests only
 ```
 
 Pure unit tests (YAML round-trips over 28 interface types, edge cases like `byte`

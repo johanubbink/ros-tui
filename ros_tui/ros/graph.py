@@ -18,7 +18,11 @@
 from dataclasses import dataclass
 from typing import Any
 
-from rclpy.action import get_action_names_and_types
+from rclpy.action import (
+    get_action_client_names_and_types_by_node,
+    get_action_names_and_types,
+    get_action_server_names_and_types_by_node,
+)
 
 
 @dataclass(frozen=True)
@@ -36,10 +40,23 @@ class GraphSnapshot:
     nodes: tuple[InterfaceEntry, ...]
 
 
+@dataclass(frozen=True)
+class NodeInfo:
+    """One node's graph endpoints, à la `ros2 node info`."""
+
+    node_name: str  # Full name, e.g. '/ns/talker'.
+    publishers: tuple[InterfaceEntry, ...]
+    subscribers: tuple[InterfaceEntry, ...]
+    service_servers: tuple[InterfaceEntry, ...]
+    service_clients: tuple[InterfaceEntry, ...]
+    action_servers: tuple[InterfaceEntry, ...]
+    action_clients: tuple[InterfaceEntry, ...]
+
+
 EMPTY_GRAPH = GraphSnapshot(version=0, actions=(), services=(), topics=(), nodes=())
 
 # Services rclpy auto-creates on every node for parameter handling and type
-# introspection. The Params tab already exposes these, so the Services tab
+# introspection. The Nodes tab already exposes these, so the Services tab
 # hides them to cut noise. Matched by type (package/srv/TypeName) so node
 # naming is irrelevant.
 BUILTIN_SERVICE_TYPES = frozenset({
@@ -95,4 +112,45 @@ def build_snapshot(node: Any, version: int) -> GraphSnapshot:
         services=entries(node.get_service_names_and_types(), skip=is_builtin_service),
         topics=entries(node.get_topic_names_and_types()),
         nodes=node_entries(),
+    )
+
+
+def split_node_name(full_name: str) -> tuple[str, str]:
+    """'/ns/talker' -> ('talker', '/ns'); '/talker' -> ('talker', '/')."""
+    namespace, _, name = full_name.rpartition('/')
+    return name, (namespace or '/')
+
+
+def build_node_info(node: Any, full_name: str) -> NodeInfo:
+    """Introspect ``full_name``'s endpoints via ``node``. Call on the node's spin thread.
+
+    Hidden names (the action's internal ``/foo/_action/*`` topics & services) and the node's
+    auto-created parameter services are dropped, matching what the Services/Nodes tabs show —
+    so a jump from here always lands on an entity the destination tab actually lists.
+    """
+    name, namespace = split_node_name(full_name)
+
+    def entries(name_type_pairs, *, skip=None) -> tuple[InterfaceEntry, ...]:
+        return tuple(
+            InterfaceEntry(entry_name, tuple(types))
+            for entry_name, types in sorted(name_type_pairs)
+            if not is_hidden_name(entry_name) and not (skip and skip(types))
+        )
+
+    return NodeInfo(
+        node_name=full_name,
+        publishers=entries(node.get_publisher_names_and_types_by_node(name, namespace)),
+        subscribers=entries(node.get_subscriber_names_and_types_by_node(name, namespace)),
+        service_servers=entries(
+            node.get_service_names_and_types_by_node(name, namespace), skip=is_builtin_service
+        ),
+        service_clients=entries(
+            node.get_client_names_and_types_by_node(name, namespace), skip=is_builtin_service
+        ),
+        action_servers=entries(
+            get_action_server_names_and_types_by_node(node, name, namespace)
+        ),
+        action_clients=entries(
+            get_action_client_names_and_types_by_node(node, name, namespace)
+        ),
     )

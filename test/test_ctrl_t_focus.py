@@ -57,7 +57,7 @@ async def test_ctrl_t_wraps_around():
     try:
         async with app.run_test() as pilot:
             tabbed = app.query_one(TabbedContent)
-            for expected in ('services', 'actions', 'params', 'topics'):
+            for expected in ('services', 'actions', 'nodes', 'topics'):
                 await pilot.press('ctrl+t')
                 assert tabbed.active == expected
     finally:

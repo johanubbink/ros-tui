@@ -24,7 +24,7 @@ from typing import Any
 from textual.message import Message
 
 from ros_tui.ros.events import ActionEvent
-from ros_tui.ros.graph import GraphSnapshot
+from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry
 
 
 class GraphUpdated(Message):
@@ -87,3 +87,22 @@ class ParameterSetCompleted(Message):
         self.node_name = node_name
         self.param_name = param_name
         self.error = error
+
+
+class NodeInfoReady(Message):
+    """A node's interface endpoints were introspected (or failed) on the ROS thread."""
+
+    def __init__(self, node_name: str, info: Any, error: str | None):
+        super().__init__()
+        self.node_name = node_name
+        self.info = info  # ros_tui.ros.graph.NodeInfo when error is None.
+        self.error = error
+
+
+class NavigateToEntity(Message):
+    """Ask the app to switch to ``tab_id`` and select ``entry`` there."""
+
+    def __init__(self, tab_id: str, entry: InterfaceEntry):
+        super().__init__()
+        self.tab_id = tab_id  # 'topics' | 'services' | 'actions'
+        self.entry = entry

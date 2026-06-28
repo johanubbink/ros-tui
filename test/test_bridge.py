@@ -262,3 +262,51 @@ def test_adapted_qos_truth_table():
     assert adapted_qos([reliable_volatile]).reliability == ReliabilityPolicy.RELIABLE
     assert adapted_qos([transient]).durability == DurabilityPolicy.TRANSIENT_LOCAL
     assert adapted_qos([transient, reliable_volatile]).durability == DurabilityPolicy.VOLATILE
+
+
+def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
+    node = fixture_servers.node
+    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
+
+    def fetch_info():
+        holder = {}
+        done = threading.Event()
+
+        def on_done(info, error):
+            holder['info'] = info
+            holder['error'] = error
+            done.set()
+
+        bridge.get_node_info(full_name, on_done)
+        done.wait(timeout=3.0)
+        return holder.get('info'), holder.get('error')
+
+    def names(entries):
+        return {entry.name for entry in entries}
+
+    def discovered():
+        # Until the bridge has discovered the fixture node, get_*_by_node raises
+        # "nonexistent node" and get_node_info reports it as an error — keep polling.
+        info, _error = fetch_info()
+        if info is None:
+            return None
+        ready = (
+            CHATTER_TOPIC in names(info.publishers)
+            and INBOX_TOPIC in names(info.subscribers)
+            and ADD_TWO_INTS_SERVICE in names(info.service_servers)
+            and FIBONACCI_ACTION in names(info.action_servers)
+        )
+        return info if ready else None
+
+    info = wait_for(discovered, timeout=15.0)
+    assert info is not None, f'fixture node endpoints were not discovered: {fetch_info()}'
+    assert info.node_name == full_name
+    assert CHATTER_TOPIC in names(info.publishers)
+    assert INBOX_TOPIC in names(info.subscribers)
+    assert ADD_TWO_INTS_SERVICE in names(info.service_servers)
+    assert FIBONACCI_ACTION in names(info.action_servers)
+    # The fixture node's own parameter services are hidden, like the Services tab does.
+    assert not any(name.endswith('/get_parameters') for name in names(info.service_servers))
+    # No hidden action-internal endpoints leak into the topic/service lists.
+    leaked = names(info.publishers) | names(info.subscribers) | names(info.service_servers)
+    assert not any('/_' in name for name in leaked), leaked
