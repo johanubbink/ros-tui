@@ -220,14 +220,12 @@ def editor_error_text(tab):
 async def test_tabs_show_entity_lists():
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
-        actions_list = app.query_one('#actions-tab FilterableList OptionList', OptionList)
-        assert actions_list.option_count == 1
-        await pilot.press('ctrl+2')
-        services_list = app.query_one('#services-tab FilterableList OptionList', OptionList)
-        assert services_list.option_count == 2
-        await pilot.press('ctrl+3')
-        topics_list = app.query_one('#topics-tab FilterableList OptionList', OptionList)
-        assert topics_list.option_count == 2
+        await pilot.pause()
+        # Every tab's list populates from the graph regardless of which pane is active.
+        assert app.query_one('#actions-tab FilterableList OptionList', OptionList).option_count == 1
+        assert app.query_one('#services-tab FilterableList OptionList', OptionList).option_count == 2
+        assert app.query_one('#topics-tab FilterableList OptionList', OptionList).option_count == 2
+        assert app.query_one('#nodes-tab FilterableList OptionList', OptionList).option_count == 1
 
 
 async def test_filter_narrows_list():
@@ -372,7 +370,7 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
 
 async def test_nodes_tab_present_and_labeled():
     app = RosTuiApp(FakeBridge())
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         from ros_tui.ui.nodes_tab import NodesTab
 
         assert isinstance(app.query_one('#nodes-tab'), NodesTab)
@@ -492,3 +490,49 @@ async def test_set_parameter_empty_value_shows_error():
         await pilot.pause()
         assert fake.set_param_calls == []
         assert 'enter a value to set' in node_status_text(tab)
+
+
+async def test_node_tab_keybindings_dispatch_through_app():
+    """The Nodes tab honours the app keybindings via the shared EntityTab verb contract.
+
+    Unlike the other Nodes tests this drives the real ctrl+* bindings, so it guards the
+    app._active_tab() resolution and the no-op verb hooks (e.g. ctrl+r has no editor here).
+    """
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        assert app._active_tab() is tab  # active pane resolves to the NodesTab uniformly.
+
+        # ctrl+s -> primary_action -> set the highlighted parameter.
+        tab.query_one('#node-params', DataTable).move_cursor(row=0)
+        await pilot.pause()
+        tab.query_one('#node-param-value', Input).value = 'true'
+        await pilot.press('ctrl+s')
+        await pilot.pause()
+        assert fake.set_param_calls == [('/talker', 'use_sim_time', 'true')]
+
+        # ctrl+k -> secondary_action -> reload re-fetches both info and params.
+        info_before, params_before = len(fake.node_info_requests), len(fake.param_list_requests)
+        await pilot.press('ctrl+k')
+        await pilot.pause()
+        assert len(fake.node_info_requests) > info_before
+        assert len(fake.param_list_requests) > params_before
+
+        # ctrl+l -> clear_log -> clears the param status line.
+        tab._show_success('something')
+        assert node_status_text(tab) != ''
+        await pilot.press('ctrl+l')
+        await pilot.pause()
+        assert node_status_text(tab) == ''
+
+        # ctrl+r -> reset_editor -> safe no-op on the Nodes tab (no editor to reset).
+        await pilot.press('ctrl+r')
+        await pilot.pause()
+        assert node_status_text(tab) == ''  # unchanged, did not raise.
+
+        # ctrl+f -> focus_filter -> focuses the node filter input.
+        await pilot.press('ctrl+f')
+        await pilot.pause()
+        assert isinstance(app.focused, Input)
+        assert app.focused.id == 'filter-input'

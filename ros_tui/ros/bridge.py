@@ -57,11 +57,11 @@ GraphListener = Callable[[GraphSnapshot], None]
 ActionEventCallback = Callable[[ActionEvent], None]
 
 
-def _extract_parameters(names: list, values: list) -> list:
-    """Convert rcl_interfaces ParameterValue list into [(name, type_int, value)] tuples."""
+@functools.lru_cache(maxsize=1)
+def _parameter_type_readers() -> dict:
+    """Map each rcl_interfaces ParameterType to its (type_label, ParameterValue attribute)."""
     from rcl_interfaces.msg import ParameterType  # noqa: PLC0415
-    result = []
-    _type_map = {
+    return {
         ParameterType.PARAMETER_BOOL: ('bool', 'bool_value'),
         ParameterType.PARAMETER_INTEGER: ('int', 'integer_value'),
         ParameterType.PARAMETER_DOUBLE: ('double', 'double_value'),
@@ -72,8 +72,14 @@ def _extract_parameters(names: list, values: list) -> list:
         ParameterType.PARAMETER_DOUBLE_ARRAY: ('double[]', 'double_array_value'),
         ParameterType.PARAMETER_STRING_ARRAY: ('string[]', 'string_array_value'),
     }
+
+
+def _extract_parameters(names: list, values: list) -> list:
+    """Convert rcl_interfaces ParameterValue list into [(name, type_label, value)] tuples."""
+    readers = _parameter_type_readers()
+    result = []
     for name, pv in zip(names, values):
-        type_label, attr = _type_map.get(pv.type, ('?', None))
+        type_label, attr = readers.get(pv.type, ('?', None))
         value = getattr(pv, attr) if attr else None
         if hasattr(value, 'tolist'):
             value = value.tolist()
@@ -285,19 +291,7 @@ class RosBridge:
         dispatch = functools.partial(
             self._dispatch_service, client, request, outer, name, time_setters
         )
-        if client.service_is_ready():
-            dispatch()
-        else:
-            self._entities.pending_ready.append(
-                _PendingReady(
-                    entity=client,
-                    is_ready=client.service_is_ready,
-                    dispatch=dispatch,
-                    fail=outer.set_exception,
-                    deadline=time.monotonic() + READY_TIMEOUT_S,
-                    label=name,
-                )
-            )
+        self._dispatch_or_wait(client, client.service_is_ready, dispatch, outer.set_exception, name)
 
     def _dispatch_service(
         self,
@@ -398,19 +392,7 @@ class RosBridge:
             self._entities.inflight_actions.discard(name)
             on_event(ActionEvent(name, ActionEventKind.ERROR, payload=str(error)))
 
-        if client.server_is_ready():
-            dispatch()
-        else:
-            self._entities.pending_ready.append(
-                _PendingReady(
-                    entity=client,
-                    is_ready=client.server_is_ready,
-                    dispatch=dispatch,
-                    fail=fail,
-                    deadline=time.monotonic() + READY_TIMEOUT_S,
-                    label=name,
-                )
-            )
+        self._dispatch_or_wait(client, client.server_is_ready, dispatch, fail, name)
 
     def _dispatch_goal(
         self,
@@ -542,34 +524,20 @@ class RosBridge:
         request = ListParameters.Request()
         request.depth = ListParameters.Request.DEPTH_RECURSIVE
 
-        def dispatch() -> None:
-            rclpy_future = client.call_async(request)
+        def handle(done_future: Any) -> None:
+            try:
+                names = list(done_future.result().result.names)
+                self._start_get_node_params(node_name, names, on_done)
+            except Exception as error:
+                on_done(None, str(error))
 
-            def on_list_done(done_future: Any) -> None:
-                def handle() -> None:
-                    try:
-                        response = done_future.result()
-                        names = list(response.result.names)
-                        self._start_get_node_params(node_name, names, on_done)
-                    except Exception as error:
-                        on_done(None, str(error))
-                self.submit(handle)
-
-            rclpy_future.add_done_callback(on_list_done)
-
-        if client.service_is_ready():
-            dispatch()
-        else:
-            self._entities.pending_ready.append(
-                _PendingReady(
-                    entity=client,
-                    is_ready=client.service_is_ready,
-                    dispatch=dispatch,
-                    fail=lambda e: on_done(None, str(e)),
-                    deadline=time.monotonic() + READY_TIMEOUT_S,
-                    label=list_srv,
-                )
-            )
+        self._dispatch_or_wait(
+            client,
+            client.service_is_ready,
+            lambda: self._call_then(client, request, handle),
+            lambda e: on_done(None, str(e)),
+            list_srv,
+        )
 
     def _start_get_node_params(self, node_name: str, names: list, on_done: Callable) -> None:
         if not names:
@@ -582,34 +550,19 @@ class RosBridge:
         request = GetParameters.Request()
         request.names = names
 
-        def dispatch() -> None:
-            rclpy_future = client.call_async(request)
+        def handle(done_future: Any) -> None:
+            try:
+                on_done(_extract_parameters(names, done_future.result().values), None)
+            except Exception as error:
+                on_done(None, str(error))
 
-            def on_get_done(done_future: Any) -> None:
-                def handle() -> None:
-                    try:
-                        response = done_future.result()
-                        params = _extract_parameters(names, response.values)
-                        on_done(params, None)
-                    except Exception as error:
-                        on_done(None, str(error))
-                self.submit(handle)
-
-            rclpy_future.add_done_callback(on_get_done)
-
-        if client.service_is_ready():
-            dispatch()
-        else:
-            self._entities.pending_ready.append(
-                _PendingReady(
-                    entity=client,
-                    is_ready=client.service_is_ready,
-                    dispatch=dispatch,
-                    fail=lambda e: on_done(None, str(e)),
-                    deadline=time.monotonic() + READY_TIMEOUT_S,
-                    label=get_srv,
-                )
-            )
+        self._dispatch_or_wait(
+            client,
+            client.service_is_ready,
+            lambda: self._call_then(client, request, handle),
+            lambda e: on_done(None, str(e)),
+            get_srv,
+        )
 
     def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done: Callable) -> None:
         """Set a single parameter on ``node_name``; result via ``on_done(error_str_or_none)``."""
@@ -617,45 +570,30 @@ class RosBridge:
         def command() -> None:
             try:
                 import yaml  # noqa: PLC0415
-                from rcl_interfaces.msg import Parameter, ParameterValue  # noqa: PLC0415
+                from rcl_interfaces.msg import Parameter  # noqa: PLC0415
                 from rcl_interfaces.srv import SetParameters  # noqa: PLC0415
-                py_value = yaml.safe_load(value_yaml)
-                param_value = _python_to_parameter_value(py_value)
-                param = Parameter(name=name, value=param_value)
+                value = _python_to_parameter_value(yaml.safe_load(value_yaml))
                 set_srv = f'{node_name}/set_parameters'
                 client = self._get_client(set_srv, 'rcl_interfaces/srv/SetParameters')
-                request = SetParameters.Request(parameters=[param])
+                request = SetParameters.Request(parameters=[Parameter(name=name, value=value)])
 
-                def dispatch() -> None:
-                    rclpy_future = client.call_async(request)
+                def handle(done_future: Any) -> None:
+                    try:
+                        results = done_future.result().results
+                        if results and not results[0].successful:
+                            on_done(results[0].reason or 'rejected by node')
+                        else:
+                            on_done(None)
+                    except Exception as error:
+                        on_done(str(error))
 
-                    def on_set_done(done_future: Any) -> None:
-                        def handle() -> None:
-                            try:
-                                response = done_future.result()
-                                if response.results and not response.results[0].successful:
-                                    on_done(response.results[0].reason or 'rejected by node')
-                                else:
-                                    on_done(None)
-                            except Exception as error:
-                                on_done(str(error))
-                        self.submit(handle)
-
-                    rclpy_future.add_done_callback(on_set_done)
-
-                if client.service_is_ready():
-                    dispatch()
-                else:
-                    self._entities.pending_ready.append(
-                        _PendingReady(
-                            entity=client,
-                            is_ready=client.service_is_ready,
-                            dispatch=dispatch,
-                            fail=lambda e: on_done(str(e)),
-                            deadline=time.monotonic() + READY_TIMEOUT_S,
-                            label=set_srv,
-                        )
-                    )
+                self._dispatch_or_wait(
+                    client,
+                    client.service_is_ready,
+                    lambda: self._call_then(client, request, handle),
+                    lambda e: on_done(str(e)),
+                    set_srv,
+                )
             except Exception as error:
                 on_done(str(error))
 
@@ -735,6 +673,34 @@ class RosBridge:
                     outer.set_exception(error)
 
         return command
+
+    def _dispatch_or_wait(
+        self,
+        entity: Any,
+        is_ready: Callable[[], bool],
+        dispatch: Callable[[], None],
+        fail: Callable[[Exception], None],
+        label: str,
+    ) -> None:
+        """Dispatch now if the server is ready, else queue until it is (or the deadline). ROS thread."""
+        if is_ready():
+            dispatch()
+        else:
+            self._entities.pending_ready.append(
+                _PendingReady(
+                    entity=entity,
+                    is_ready=is_ready,
+                    dispatch=dispatch,
+                    fail=fail,
+                    deadline=time.monotonic() + READY_TIMEOUT_S,
+                    label=label,
+                )
+            )
+
+    def _call_then(self, client: Any, request: Any, handle: Callable[[Any], None]) -> None:
+        """Call ``client`` async; when the response lands, run ``handle(future)`` on the ROS thread."""
+        rclpy_future = client.call_async(request)
+        rclpy_future.add_done_callback(lambda done: self.submit(lambda: handle(done)))
 
     def _poll_graph(self) -> None:
         previous = self._latest_graph

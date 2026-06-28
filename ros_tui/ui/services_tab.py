@@ -61,8 +61,9 @@ class ServicesTab(InterfaceTab):
                 response = done_future.result()
                 self.post_message(ServiceCompleted(name, response, None, elapsed_ms))
             except BaseException as error:  # noqa: BLE001 - rendered in the log
-                text = str(error) or type(error).__name__
-                self.post_message(ServiceCompleted(name, None, text, elapsed_ms))
+                self.post_message(
+                    ServiceCompleted(name, None, self._error_text(error), elapsed_ms)
+                )
 
         future.add_done_callback(on_done)
 

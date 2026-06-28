@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The textual application: three tabs over one shared RosBridge."""
+"""The textual application: four tabs over one shared RosBridge."""
 
 from textual.app import App
 from textual.binding import Binding
@@ -22,6 +22,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
 from ros_tui.ui.actions_tab import ActionsTab
+from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import GraphUpdated, NavigateToEntity
 from ros_tui.ui.nodes_tab import NodesTab
@@ -150,16 +151,11 @@ class RosTuiApp(App):
         tabbed.active = message.tab_id
         self.query_one(f'#{message.tab_id}-tab', InterfaceTab).select_entity(message.entry)
 
-    def _active_tab(self):
+    def _active_tab(self) -> EntityTab | None:
         tabbed = self.query_one(TabbedContent)
         if not tabbed.active:
             return None
-        pane = tabbed.get_pane(tabbed.active)
-        # Try InterfaceTab subclasses first, then NodesTab.
-        matches = list(pane.query(InterfaceTab))
-        if matches:
-            return matches[0]
-        matches = list(pane.query(NodesTab))
+        matches = list(tabbed.get_pane(tabbed.active).query(EntityTab))
         return matches[0] if matches else None
 
     def action_cycle_tab(self) -> None:
@@ -194,7 +190,7 @@ class RosTuiApp(App):
 
     def action_reset_editor(self) -> None:
         tab = self._active_tab()
-        if tab is not None and hasattr(tab, 'reset_editor'):
+        if tab is not None:
             tab.reset_editor()
 
     def action_clear_log(self) -> None:

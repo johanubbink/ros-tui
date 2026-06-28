@@ -62,6 +62,9 @@ class FixtureServers:
 
     def __init__(self, context):
         self.node = rclpy.create_node('tui_test_fixtures', context=context)
+        # A declared parameter the bridge param tests can list and set without touching
+        # use_sim_time (which would freeze this node's timers and break sibling tests).
+        self.node.declare_parameter('test_param', 0)
         self.inbox_messages: list[str] = []
         callback_group = ReentrantCallbackGroup()
         self.action_server = ActionServer(

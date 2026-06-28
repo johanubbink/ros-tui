@@ -80,15 +80,17 @@ def is_builtin_service(types) -> bool:
     return bool(types) and all(t in BUILTIN_SERVICE_TYPES for t in types)
 
 
+def _entries(name_type_pairs, *, skip=None) -> tuple[InterfaceEntry, ...]:
+    """Sort name/type pairs into InterfaceEntry tuples, dropping hidden and skipped names."""
+    return tuple(
+        InterfaceEntry(name, tuple(types))
+        for name, types in sorted(name_type_pairs)
+        if not is_hidden_name(name) and not (skip and skip(types))
+    )
+
+
 def build_snapshot(node: Any, version: int) -> GraphSnapshot:
     """Query the graph through ``node``. Must be called on the thread spinning the node."""
-
-    def entries(name_type_pairs, *, skip=None) -> tuple[InterfaceEntry, ...]:
-        return tuple(
-            InterfaceEntry(name, tuple(types))
-            for name, types in sorted(name_type_pairs)
-            if not is_hidden_name(name) and not (skip and skip(types))
-        )
 
     def node_entries() -> tuple[InterfaceEntry, ...]:
         # ROS allows duplicate node names, and get_node_names_and_namespaces() can
@@ -111,9 +113,9 @@ def build_snapshot(node: Any, version: int) -> GraphSnapshot:
 
     return GraphSnapshot(
         version=version,
-        actions=entries(get_action_names_and_types(node)),
-        services=entries(node.get_service_names_and_types(), skip=is_builtin_service),
-        topics=entries(node.get_topic_names_and_types()),
+        actions=_entries(get_action_names_and_types(node)),
+        services=_entries(node.get_service_names_and_types(), skip=is_builtin_service),
+        topics=_entries(node.get_topic_names_and_types()),
         nodes=node_entries(),
     )
 
@@ -132,28 +134,16 @@ def build_node_info(node: Any, full_name: str) -> NodeInfo:
     so a jump from here always lands on an entity the destination tab actually lists.
     """
     name, namespace = split_node_name(full_name)
-
-    def entries(name_type_pairs, *, skip=None) -> tuple[InterfaceEntry, ...]:
-        return tuple(
-            InterfaceEntry(entry_name, tuple(types))
-            for entry_name, types in sorted(name_type_pairs)
-            if not is_hidden_name(entry_name) and not (skip and skip(types))
-        )
-
     return NodeInfo(
         node_name=full_name,
-        publishers=entries(node.get_publisher_names_and_types_by_node(name, namespace)),
-        subscribers=entries(node.get_subscriber_names_and_types_by_node(name, namespace)),
-        service_servers=entries(
+        publishers=_entries(node.get_publisher_names_and_types_by_node(name, namespace)),
+        subscribers=_entries(node.get_subscriber_names_and_types_by_node(name, namespace)),
+        service_servers=_entries(
             node.get_service_names_and_types_by_node(name, namespace), skip=is_builtin_service
         ),
-        service_clients=entries(
+        service_clients=_entries(
             node.get_client_names_and_types_by_node(name, namespace), skip=is_builtin_service
         ),
-        action_servers=entries(
-            get_action_server_names_and_types_by_node(node, name, namespace)
-        ),
-        action_clients=entries(
-            get_action_client_names_and_types_by_node(node, name, namespace)
-        ),
+        action_servers=_entries(get_action_server_names_and_types_by_node(node, name, namespace)),
+        action_clients=_entries(get_action_client_names_and_types_by_node(node, name, namespace)),
     )
