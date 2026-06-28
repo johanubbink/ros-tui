@@ -32,7 +32,7 @@ HELP_TEXT = """\
 ros_tui — ROS 2 interface workbench
 
   ctrl+t                     cycle tabs: Topics → Services → Actions → Nodes
-  ctrl+f                     focus the filter box of the current tab
+  ctrl+f                     back to the list (filter box focused) from the detail view
                              (↑/↓ move through matches, enter selects the highlighted one)
   ctrl+s                     primary action: Send goal / Call / Publish once / Set param
   ctrl+k                     Cancel goal / Stop periodic publish / Refresh node
@@ -107,7 +107,7 @@ class RosTuiApp(App):
 
     BINDINGS = [
         Binding('ctrl+t', 'cycle_tab', 'Next tab', priority=True),
-        Binding('ctrl+f', 'focus_filter', 'Filter', priority=True),
+        Binding('ctrl+f', 'focus_filter', 'Back to list', priority=True),
         Binding('ctrl+s', 'primary_action', 'Send/Call/Pub', priority=True),
         Binding('ctrl+k', 'secondary_action', 'Cancel/Stop', priority=True),
         Binding('ctrl+r', 'reset_editor', 'Reset msg', priority=True),
@@ -118,6 +118,7 @@ class RosTuiApp(App):
     def __init__(self, bridge):
         super().__init__()
         self._bridge = bridge
+        self._jumping = False  # True while a cross-tab jump owns the next tab switch.
 
     def compose(self):
         yield Header()
@@ -155,6 +156,10 @@ class RosTuiApp(App):
         # Drop focus first, same as action_cycle_tab: TabbedContent silently reverts an
         # `active` change while a descendant widget holds focus.
         self.set_focus(None)
+        # Suppress the activation-driven maximize: a jump opens the destination minimized,
+        # showing the jumped-to entity. The flag is consumed by the TabActivated handler
+        # below, whichever order it and the Selected (minimize) end up running in.
+        self._jumping = True
         tabbed.active = message.tab_id
         # Resolve the destination through the shared EntityTab contract; a tab_id that does
         # not map to an EntityTab (a typo, or a non-jumpable tab) is a no-op, not a crash.
@@ -162,6 +167,17 @@ class RosTuiApp(App):
         tab = destinations[0] if destinations else None
         if isinstance(tab, EntityTab):
             tab.select_entity(message.entry)
+
+    def on_tabbed_content_tab_activated(self, message: TabbedContent.TabActivated) -> None:
+        # Every way of switching tabs (click, ctrl+t, programmatic) lands here, so the
+        # destination always opens maximized — except a cross-tab jump, which opens
+        # minimized on the jumped-to entity.
+        if self._jumping:
+            self._jumping = False
+            return
+        tab = self._active_tab()
+        if tab is not None:
+            tab.maximize_list()
 
     def _active_tab(self) -> EntityTab | None:
         tabbed = self.query_one(TabbedContent)
@@ -184,9 +200,6 @@ class RosTuiApp(App):
         # worked when the tab bar itself was focused (e.g. just after clicking).
         self.set_focus(None)
         tabbed.active = pane_ids[(index + 1) % len(pane_ids)]
-        tab = self._active_tab()
-        if tab is not None:
-            tab.maximize_list()
 
     def action_focus_filter(self) -> None:
         tab = self._active_tab()
