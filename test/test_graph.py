@@ -19,9 +19,11 @@ from ros_tui.ros.graph import (
     EMPTY_GRAPH,
     GraphSnapshot,
     InterfaceEntry,
+    build_node_info,
     build_snapshot,
     is_builtin_service,
     is_hidden_name,
+    split_node_name,
 )
 
 
@@ -61,8 +63,16 @@ def test_empty_graph_sentinel():
 class _StubNode:
     """Minimal node exposing only the graph-query methods build_snapshot calls."""
 
-    def __init__(self, node_names_and_namespaces):
+    def __init__(self, node_names_and_namespaces, name='ros_tui', namespace='/'):
         self._nodes = node_names_and_namespaces
+        self._name = name
+        self._namespace = namespace
+
+    def get_name(self):
+        return self._name
+
+    def get_namespace(self):
+        return self._namespace
 
     def get_node_names_and_namespaces(self):
         return self._nodes
@@ -82,3 +92,77 @@ def test_duplicate_node_names_are_deduped(monkeypatch):
     snapshot = build_snapshot(node, 1)
     assert len(snapshot.nodes) == 1
     assert snapshot.nodes[0].name == '/node_a'
+
+
+def test_own_bridge_node_is_excluded(monkeypatch):
+    # ros_tui's own node is the tool's introspection plumbing, not something the
+    # user came to inspect, so it must not appear in its own node list.
+    monkeypatch.setattr('ros_tui.ros.graph.get_action_names_and_types', lambda node: [])
+    node = _StubNode([('ros_tui', '/'), ('talker', '/')], name='ros_tui', namespace='/')
+    snapshot = build_snapshot(node, 1)
+    names = [entry.name for entry in snapshot.nodes]
+    assert names == ['/talker']
+
+
+def test_split_node_name():
+    assert split_node_name('/ns/talker') == ('talker', '/ns')
+    assert split_node_name('/talker') == ('talker', '/')
+    assert split_node_name('/deep/ns/talker') == ('talker', '/deep/ns')
+
+
+class _IntrospectNode:
+    """Node exposing the per-node graph queries build_node_info calls."""
+
+    def __init__(self, by_node):
+        self._by_node = by_node  # {method_name: [(name, [types]), ...]}
+
+    def _get(self, key, node_name, namespace):
+        return list(self._by_node.get(key, []))
+
+    def get_publisher_names_and_types_by_node(self, n, ns):
+        return self._get('pub', n, ns)
+
+    def get_subscriber_names_and_types_by_node(self, n, ns):
+        return self._get('sub', n, ns)
+
+    def get_service_names_and_types_by_node(self, n, ns):
+        return self._get('srv', n, ns)
+
+    def get_client_names_and_types_by_node(self, n, ns):
+        return self._get('cli', n, ns)
+
+
+def test_build_node_info_filters_and_maps(monkeypatch):
+    node = _IntrospectNode({
+        'pub': [
+            ('/chatter', ['std_msgs/msg/String']),
+            ('/fibonacci/_action/feedback', ['example_interfaces/action/Fibonacci_FeedbackMessage']),
+        ],
+        'sub': [('/inbox', ['std_msgs/msg/String'])],
+        'srv': [
+            ('/add_two_ints', ['example_interfaces/srv/AddTwoInts']),
+            ('/talker/get_parameters', ['rcl_interfaces/srv/GetParameters']),
+        ],
+        'cli': [('/talker/set_parameters', ['rcl_interfaces/srv/SetParameters'])],
+    })
+    monkeypatch.setattr(
+        'ros_tui.ros.graph.get_action_server_names_and_types_by_node',
+        lambda node, n, ns: [('/fibonacci', ['example_interfaces/action/Fibonacci'])],
+    )
+    monkeypatch.setattr(
+        'ros_tui.ros.graph.get_action_client_names_and_types_by_node',
+        lambda node, n, ns: [],
+    )
+
+    info = build_node_info(node, '/talker')
+
+    assert info.node_name == '/talker'
+    # Hidden /_action/* publisher dropped; real publisher kept.
+    assert [e.name for e in info.publishers] == ['/chatter']
+    assert info.publishers[0].types == ('std_msgs/msg/String',)
+    assert [e.name for e in info.subscribers] == ['/inbox']
+    # Built-in parameter services dropped from both server and client lists.
+    assert [e.name for e in info.service_servers] == ['/add_two_ints']
+    assert info.service_clients == ()
+    assert [e.name for e in info.action_servers] == ['/fibonacci']
+    assert info.action_clients == ()

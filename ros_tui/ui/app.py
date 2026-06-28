@@ -23,22 +23,25 @@ from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
 from ros_tui.ui.actions_tab import ActionsTab
 from ros_tui.ui.interface_tab import InterfaceTab
-from ros_tui.ui.messages import GraphUpdated
-from ros_tui.ui.params_tab import ParamsTab
+from ros_tui.ui.messages import GraphUpdated, NavigateToEntity
+from ros_tui.ui.nodes_tab import NodesTab
 from ros_tui.ui.services_tab import ServicesTab
 from ros_tui.ui.topics_tab import TopicsTab
 
 HELP_TEXT = """\
 ros_tui — ROS 2 interface workbench
 
-  ctrl+t                     cycle tabs: Topics → Services → Actions → Params
+  ctrl+t                     cycle tabs: Topics → Services → Actions → Nodes
   ctrl+f                     focus the filter box of the current tab
-  ctrl+p                     primary action: Send goal / Call / Publish once
-  ctrl+k                     Cancel goal / Stop periodic publish
+  ctrl+s                     primary action: Send goal / Call / Publish once / Set param
+  ctrl+k                     Cancel goal / Stop periodic publish / Refresh node
   ctrl+r                     reset the editor to the message defaults
   ctrl+l                     clear the output log of the current tab
   f2                         this help · esc closes it
   ctrl+q                     quit
+
+On the Nodes tab, select an interface in the tree to jump to its
+Topics / Services / Actions tab with that entity pre-selected.
 
 Editor tips (the YAML dialect of `ros2 action send_goal` / `ros2 topic pub`):
 
@@ -86,11 +89,12 @@ class RosTuiApp(App):
     #rate-input { width: 9; }
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
-    #params-node-label { height: 1; }
-    #params-table { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
-    #value-input { height: 3; }
-    #params-error { display: none; height: auto; max-height: 3; color: $error; }
-    #params-log { height: 1fr; min-height: 4; border: round $surface-lighten-2; }
+    #node-header { height: 1; }
+    #node-interfaces { height: 2fr; min-height: 6; border: round $surface-lighten-2; }
+    #node-params-group { height: 1fr; min-height: 9; border: round $surface-lighten-2; }
+    #node-params { height: 1fr; min-height: 3; border: none; }
+    #node-param-value { width: 1fr; }
+    #node-param-status { height: 1; }
     """
 
     BINDINGS = [
@@ -116,8 +120,8 @@ class RosTuiApp(App):
                 yield ServicesTab(self._bridge, id='services-tab')
             with TabPane('Actions', id='actions'):
                 yield ActionsTab(self._bridge, id='actions-tab')
-            with TabPane('Params', id='params'):
-                yield ParamsTab(self._bridge, id='params-tab')
+            with TabPane('Nodes', id='nodes'):
+                yield NodesTab(self._bridge, id='nodes-tab')
         yield Footer()
 
     def on_mount(self) -> None:
@@ -135,18 +139,27 @@ class RosTuiApp(App):
         self.query_one('#topics-tab', TopicsTab).set_entries(snapshot.topics)
         self.query_one('#services-tab', ServicesTab).set_entries(snapshot.services)
         self.query_one('#actions-tab', ActionsTab).set_entries(snapshot.actions)
-        self.query_one('#params-tab', ParamsTab).set_entries(snapshot.nodes)
+        self.query_one('#nodes-tab', NodesTab).set_entries(snapshot.nodes)
+
+    def on_navigate_to_entity(self, message: NavigateToEntity) -> None:
+        message.stop()
+        tabbed = self.query_one(TabbedContent)
+        # Drop focus first, same as action_cycle_tab: TabbedContent silently reverts an
+        # `active` change while a descendant widget holds focus.
+        self.set_focus(None)
+        tabbed.active = message.tab_id
+        self.query_one(f'#{message.tab_id}-tab', InterfaceTab).select_entity(message.entry)
 
     def _active_tab(self):
         tabbed = self.query_one(TabbedContent)
         if not tabbed.active:
             return None
         pane = tabbed.get_pane(tabbed.active)
-        # Try InterfaceTab subclasses first, then ParamsTab.
+        # Try InterfaceTab subclasses first, then NodesTab.
         matches = list(pane.query(InterfaceTab))
         if matches:
             return matches[0]
-        matches = list(pane.query(ParamsTab))
+        matches = list(pane.query(NodesTab))
         return matches[0] if matches else None
 
     def action_cycle_tab(self) -> None:

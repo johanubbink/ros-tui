@@ -101,6 +101,10 @@ class InterfaceTab(Horizontal):
     def focus_filter(self) -> None:
         self.query_one(FilterableList).focus_filter()
 
+    def select_entity(self, entry: InterfaceEntry) -> None:
+        """Programmatically select ``entry`` (e.g. a cross-tab jump from the Nodes tab)."""
+        self.query_one(FilterableList).select_entry(entry)
+
     @property
     def current_entry(self) -> InterfaceEntry | None:
         return self._current
