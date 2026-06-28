@@ -19,12 +19,14 @@ import time
 from concurrent.futures import Future
 
 import pytest
+import yaml
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
+from ros_tui.ui.nodes_tab import _render_value
 from textual.widgets import (
     Button,
     DataTable,
@@ -536,3 +538,28 @@ async def test_node_tab_keybindings_dispatch_through_app():
         await pilot.pause()
         assert isinstance(app.focused, Input)
         assert app.focused.id == 'filter-input'
+
+
+def test_render_value_blank_for_none():
+    """A missing value renders blank (the input/table cell is simply empty)."""
+    assert _render_value(None) == ''
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        True, False, 0, 42, -7, 3.14, 1e-05, 1e20, -2.5e-10,
+        'true', 'false', '42', '3.14', 'null', 'hello', 'with space', 'a: b', '',
+        [1, 2, 3], [1.0, 2.0], ['x', 'y'], [True, False],
+    ],
+)
+def test_render_value_round_trips(value):
+    """What the Nodes tab shows must parse back (on Set) to the same value and type.
+
+    Guards against re-typing string params like 'true'/'42' and exponential doubles
+    like 1e-05 that a bare str() rendering would corrupt.
+    """
+    rendered = _render_value(value)
+    assert '\n' not in rendered  # single-line; safe to seed a one-line Input / table cell.
+    parsed = yaml.safe_load(rendered)
+    assert parsed == value and type(parsed) is type(value)

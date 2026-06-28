@@ -274,13 +274,15 @@ class NodesTab(EntityTab):
 def _render_value(value) -> str:
     """Render a parameter value as the YAML it round-trips through the edit box on Set.
 
-    Used for both the table's value column and the input seed, so what is shown matches
-    what gets parsed back when the user edits it.
+    Used for both the table's value column and the input seed, so what is shown parses
+    back (via ``yaml.safe_load`` on Set) to the same value *and type*: strings stay
+    strings (quoted when their text would otherwise parse as a bool/int/float), and
+    exponential doubles like ``1e-05`` stay doubles rather than ``str``.
     """
     if value is None:
         return ''
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    if isinstance(value, list):
-        return yaml.dump(value, default_flow_style=True).strip()
-    return str(value)
+    text = yaml.safe_dump(value, default_flow_style=True).strip()
+    # safe_dump appends a '...' document-end marker after a bare scalar root; drop it.
+    if text.endswith('\n...'):
+        text = text[: -len('\n...')].rstrip()
+    return text
