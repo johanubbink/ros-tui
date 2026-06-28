@@ -754,3 +754,47 @@ async def test_set_targets_the_highlighted_row():
         tab.primary_action()
         await pilot.pause()
         assert fake.set_param_calls == [('/talker', 'rate', '7.5')]
+
+
+_MANY_PARAMS = [(f'param_{i:02d}', 'int', i) for i in range(12)]
+
+
+class _ManyParamsBridge(FakeBridge):
+    """A node with few interfaces but many parameters — the parameter table, not the
+    interfaces tree, should get the vertical space."""
+
+    def get_node_info(self, node_name, on_done):
+        self.node_info_requests.append(node_name)
+        on_done(NodeInfo('/talker', (CHATTER_ENTRY,), (), (), (), (), ()), None)
+
+    def list_node_parameters(self, node_name, on_done):
+        self.param_list_requests.append(node_name)
+        on_done(list(_MANY_PARAMS), None)
+
+
+async def test_parameter_block_is_40_percent_and_scrolls():
+    """The interfaces tree and parameters block split the available height ~60/40, each
+    filling its share and scrolling when its content overflows. Regression for the tree
+    ballooning past its content while the parameter table was choked (and an empty result
+    log eating the bottom)."""
+    app = RosTuiApp(_ManyParamsBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'nodes')
+        tab = app.query_one('#nodes-tab')
+        tab.post_message(FilterableList.Selected(TALKER_NODE))
+        table = tab.query_one('#node-params', DataTable)
+        assert await wait_until(pilot, lambda: table.row_count == len(_MANY_PARAMS))
+        await pilot.pause()
+
+        tree = tab.query_one('#node-interfaces')
+        group = tab.query_one('#node-params-group')
+        log = tab.query_one('#node-param-log', RichLog)
+        # Parameters block is ~40% of the two-block height; the tree takes the rest.
+        ratio = group.region.height / (tree.region.height + group.region.height)
+        assert 0.37 <= ratio <= 0.43, f'parameters block should be ~40%, was {ratio:.0%}'
+        # More params than fit must scroll inside the table, not resize the block.
+        assert table.virtual_size.height > table.region.height, (
+            'table should scroll when params overflow its share'
+        )
+        # The empty result log takes no space at all until a Set writes to it.
+        assert log.region.height == 0, f'empty log should take no space, was {log.region.height}'

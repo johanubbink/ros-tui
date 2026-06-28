@@ -90,12 +90,17 @@ class RosTuiApp(App):
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
     #node-header { height: 1; }
-    #node-interfaces { height: 2fr; min-height: 6; border: round $surface-lighten-2; }
-    #node-params-group { height: 1fr; min-height: 14; border: round $surface-lighten-2; }
-    #node-params { height: 1fr; min-height: 3; border: none; }
+    /* Split the available height ~60/40 between the interfaces tree and the
+       parameters block. Each fills its share and scrolls when its content
+       overflows (3fr:2fr -> parameters get 40% of the space below the header). */
+    #node-interfaces { height: 3fr; min-height: 6; border: round $surface-lighten-2; }
+    #node-params-group { height: 2fr; min-height: 10; border: round $surface-lighten-2; }
+    #node-params { height: 1fr; min-height: 5; border: none; }
     #node-param-value { width: 1fr; }
     #node-param-status { height: 1; }
-    #node-param-log { height: 5; min-height: 2; border-top: solid $surface-lighten-2; }
+    /* The result log takes no space until a Set writes to it, then grows (capped)
+       to show the ✓/✗ history; the parameter table absorbs the room until then. */
+    #node-param-log { height: auto; max-height: 6; }
     """
 
     BINDINGS = [
