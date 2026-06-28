@@ -157,13 +157,18 @@ class _PendingReady:
 
 @dataclass
 class _AwaitingResponse:
-    """An in-flight service request with a response deadline."""
+    """An in-flight service request with a response deadline.
+
+    ``outer`` is the caller's Future for request/response calls; parameter calls
+    (dispatched via ``_call_then``) track the client only — to keep it out of LRU
+    eviction while in flight — and leave ``outer`` ``None``.
+    """
 
     client: Any
     rclpy_future: Any
-    outer: Future
     deadline: float
     label: str
+    outer: Future | None = None
 
 
 @dataclass
@@ -698,9 +703,26 @@ class RosBridge:
             )
 
     def _call_then(self, client: Any, request: Any, handle: Callable[[Any], None]) -> None:
-        """Call ``client`` async; when the response lands, run ``handle(future)`` on the ROS thread."""
+        """Call ``client`` async; when the response lands, run ``handle(future)`` on the ROS thread.
+
+        Tracks ``client`` in ``awaiting_response`` for the call's lifetime so the LRU cache in
+        ``_get_or_create`` cannot pick it as an eviction victim and ``destroy_client`` it mid-flight.
+        """
         rclpy_future = client.call_async(request)
-        rclpy_future.add_done_callback(lambda done: self.submit(lambda: handle(done)))
+        record = _AwaitingResponse(
+            client=client,
+            rclpy_future=rclpy_future,
+            deadline=time.monotonic() + RESPONSE_TIMEOUT_S,
+            label=getattr(client, 'srv_name', 'parameter call'),
+        )
+        self._entities.awaiting_response.append(record)
+
+        def on_done(done: Any) -> None:
+            with contextlib.suppress(ValueError):
+                self._entities.awaiting_response.remove(record)
+            self.submit(lambda: handle(done))
+
+        rclpy_future.add_done_callback(on_done)
 
     def _poll_graph(self) -> None:
         previous = self._latest_graph
@@ -759,7 +781,7 @@ class RosBridge:
             if now >= record.deadline:
                 with contextlib.suppress(Exception):
                     record.client.remove_pending_request(record.rclpy_future)
-                if not record.outer.done():
+                if record.outer is not None and not record.outer.done():
                     record.outer.set_exception(
                         TimeoutError(
                             f'no response from {record.label} after {RESPONSE_TIMEOUT_S:.0f} s'

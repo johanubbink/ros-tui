@@ -368,3 +368,50 @@ def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
     bridge.set_node_parameter(full_name, 'no_such_param', '1', on_set)
     assert done.wait(timeout=10.0), 'set_node_parameter never completed'
     assert result['error'] is not None  # undeclared parameter is rejected by the node.
+
+
+class _FakeFuture:
+    """A call_async future whose done callback fires only when the test triggers it."""
+
+    def __init__(self):
+        self._callback = None
+
+    def add_done_callback(self, callback):
+        self._callback = callback
+
+    def fire(self):
+        self._callback(self)
+
+
+class _FakeClient:
+    srv_name = '/fake/set_parameters'
+
+    def __init__(self, future):
+        self._future = future
+
+    def call_async(self, _request):
+        return self._future
+
+
+def test_call_then_marks_client_in_use_until_response(bridge):
+    """An in-flight parameter call keeps its client out of LRU eviction (regression).
+
+    ``_call_then`` must register the client in ``awaiting_response`` so ``_client_in_use``
+    reports it busy for the call's lifetime — otherwise ``_get_or_create`` could evict and
+    ``destroy_client`` it mid-flight — then drop it once the response lands.
+    """
+    future = _FakeFuture()
+    client = _FakeClient(future)
+    key = (_FakeClient.srv_name, 'rcl_interfaces/srv/SetParameters')
+    handled = []
+
+    # Dispatch on the ROS thread, exactly as the real parameter paths do.
+    bridge.submit(lambda: bridge._call_then(client, object(), handled.append)).result(timeout=2.0)
+
+    # While the response is pending, the client is busy and cannot be chosen as a victim.
+    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is True
+
+    # The response lands: the client is released and the handler is re-submitted to run.
+    bridge.submit(future.fire).result(timeout=2.0)
+    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is False
+    assert wait_for(lambda: bool(handled), timeout=2.0), 'handle was never invoked'
