@@ -740,3 +740,17 @@ async def test_reselecting_current_node_skips_reintrospection():
         await pilot.pause()
         assert len(fake.node_info_requests) > info_before
         assert len(fake.param_list_requests) > params_before
+
+
+async def test_set_targets_the_highlighted_row():
+    """Set sends the highlighted parameter, even after moving off row 0 (single source)."""
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tab.query_one('#node-params', DataTable).move_cursor(row=1)  # 'rate', not 'use_sim_time'
+        await pilot.pause()
+        tab.query_one('#node-param-value', Input).value = '7.5'
+        tab.primary_action()
+        await pilot.pause()
+        assert fake.set_param_calls == [('/talker', 'rate', '7.5')]

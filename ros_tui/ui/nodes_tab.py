@@ -59,6 +59,7 @@ class NodesTab(EntityTab):
         self._seeded_value = ''  # The value the tab last auto-seeded into the edit box.
         self._load_failed = False  # True once an info/param load for this node has errored.
         self._rendered: dict[str, str] = {}  # param name -> rendered value (built once per load).
+        self._selected_param: str | None = None  # The highlighted parameter row, if any.
 
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
@@ -110,6 +111,7 @@ class NodesTab(EntityTab):
         self.query_one('#node-param-value', Input).value = ''  # Fresh node, fresh edit box.
         self._seeded_value = ''
         self._rendered = {}
+        self._selected_param = None
         self.query_one('#node-param-refresh', Button).disabled = True
         self.query_one('#node-param-set', Button).disabled = True
         self._clear_error()
@@ -209,6 +211,7 @@ class NodesTab(EntityTab):
     def _populate_table(self, params: list) -> None:
         table = self.query_one('#node-params', DataTable)
         table.clear()
+        self._selected_param = None  # Re-set by the row-highlight that the table re-fires.
         self._rendered = {name: _render_value(value) for name, _type_label, value in params}
         for name, type_label, value in params:
             table.add_row(name, type_label, self._rendered[name], key=name)
@@ -220,6 +223,7 @@ class NodesTab(EntityTab):
         rendered = self._rendered.get(event.row_key.value)
         if rendered is None:
             return
+        self._selected_param = event.row_key.value
         input_box = self.query_one('#node-param-value', Input)
         # Reseed only when the box is pristine; every cursor move fires this handler,
         # so blindly overwriting would discard a value the user typed but hasn't Set.
@@ -243,12 +247,7 @@ class NodesTab(EntityTab):
     def _set_parameter(self) -> None:
         if self._current_node is None:
             return
-        table = self.query_one('#node-params', DataTable)
-        try:
-            row_key = table.get_row_at(table.cursor_row)[0] if table.cursor_row >= 0 else None
-        except Exception:  # noqa: BLE001 - a vanished/reloaded row must not silently no-op.
-            row_key = None
-        if not row_key or not self._params:
+        if not self._selected_param:
             self._show_error('select a parameter to set')
             return
         value_str = self.query_one('#node-param-value', Input).value.strip()
@@ -256,7 +255,7 @@ class NodesTab(EntityTab):
             self._show_error('enter a value to set')
             return
         node_name = self._current_node
-        param_name = str(row_key)
+        param_name = self._selected_param
         self._clear_error()
 
         def on_done(error):
