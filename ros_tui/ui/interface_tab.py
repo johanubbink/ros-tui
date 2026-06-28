@@ -102,13 +102,19 @@ class InterfaceTab(EntityTab):
         message.stop()
         self._store_current_edit()
         self._current = message.entry
-        self.query_one('#detail-line', Static).update(
-            Text(f'loading {message.entry.types[0]} …', style='dim')
-        )
+        type_name = message.entry.types[0] if message.entry.types else ''
+        detail = self.query_one('#detail-line', Static)
+        if not type_name:
+            # A leaf jumped from the Nodes tab can carry no type; degrade instead of crashing.
+            detail.update(Text('no type information for this entry', style='bold red'))
+            self.query_one('#editor', TextArea).load_text('')
+            return
+        detail.update(Text(f'loading {type_name} …', style='dim'))
         self._load_prototype(message.entry)
 
     def _load_prototype(self, entry: InterfaceEntry) -> None:
-        kind, type_name, entry_name = self.kind, entry.types[0], entry.name
+        kind, entry_name = self.kind, entry.name
+        type_name = entry.types[0] if entry.types else ''
 
         def load() -> None:
             try:

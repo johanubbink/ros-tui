@@ -94,7 +94,8 @@ class FilterableList(Vertical):
             matching = [
                 entry
                 for entry in self._entries
-                if filter_text in entry.name.lower() or filter_text in entry.types[0].lower()
+                if filter_text in entry.name.lower()
+                or (entry.types and filter_text in entry.types[0].lower())
             ]
         else:
             matching = list(self._entries)

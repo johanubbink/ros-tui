@@ -563,3 +563,29 @@ def test_render_value_round_trips(value):
     assert '\n' not in rendered  # single-line; safe to seed a one-line Input / table cell.
     parsed = yaml.safe_load(rendered)
     assert parsed == value and type(parsed) is type(value)
+
+
+async def test_entry_with_no_type_is_handled_gracefully():
+    """An entry carrying no type must not crash navigation or filtering (guards types[0]).
+
+    A Nodes-tab interface leaf can have an empty types tuple; jumping to it once raised
+    IndexError on entry.types[0] in the destination tab and in the filter match.
+    """
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        typeless = InterfaceEntry('/mystery', ())
+
+        # Navigation: selecting a typeless entry degrades to a message instead of crashing.
+        tab.post_message(FilterableList.Selected(typeless))
+        await pilot.pause()
+        assert 'type' in static_text(tab.query_one('#detail-line', Static)).lower()
+
+        # Filtering: a typeless entry in the list must not raise on the type-substring match.
+        flist = tab.query_one(FilterableList)
+        flist.set_entries((typeless, CHATTER_ENTRY))
+        flist.query_one('#filter-input', Input).value = 'chat'
+        flist._refresh_options()
+        await pilot.pause()
+        assert flist.border_subtitle.startswith('1/')  # /chatter matched; /mystery skipped.
