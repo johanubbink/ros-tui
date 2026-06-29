@@ -247,6 +247,55 @@ async def test_filter_narrows_list():
         assert option_list.get_option_at_index(0).id == '/chatter'
 
 
+async def test_filter_auto_highlights_first_match():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        option_list = tab.query_one('#entity-list', OptionList)
+        # With no filter the full list still auto-highlights the first row.
+        assert await wait_until(pilot, lambda: option_list.highlighted == 0)
+        tab.query_one('#filter-input', Input).value = 'pose'
+        assert await wait_until(
+            pilot,
+            lambda: option_list.option_count == 1 and option_list.highlighted == 0,
+        )
+        assert option_list.get_option_at_index(0).id == '/pose'
+
+
+async def test_filter_arrows_move_highlight_while_input_focused():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        await pilot.press('ctrl+f')
+        assert app.focused.id == 'filter-input'
+        option_list = app.query_one('#topics-tab #entity-list', OptionList)
+        assert await wait_until(pilot, lambda: option_list.option_count == 2)
+        assert option_list.highlighted == 0
+        await pilot.press('down')
+        assert await wait_until(pilot, lambda: option_list.highlighted == 1)
+        # Focus never leaves the filter input.
+        assert app.focused.id == 'filter-input'
+        await pilot.press('up')
+        assert await wait_until(pilot, lambda: option_list.highlighted == 0)
+
+
+async def test_filter_enter_selects_highlighted_match():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await pilot.press('ctrl+f')
+        tab.query_one('#filter-input', Input).value = 'pose'
+        option_list = tab.query_one('#entity-list', OptionList)
+        assert await wait_until(pilot, lambda: option_list.option_count == 1)
+        await pilot.press('enter')
+        assert await wait_until(
+            pilot,
+            lambda: tab.current_entry is not None and tab.current_entry.name == '/pose',
+        )
+
+
 async def test_selecting_topic_seeds_editor_with_defaults():
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:

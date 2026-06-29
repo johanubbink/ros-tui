@@ -33,6 +33,7 @@ ros_tui — ROS 2 interface workbench
 
   ctrl+t                     cycle tabs: Topics → Services → Actions → Nodes
   ctrl+f                     focus the filter box of the current tab
+                             (↑/↓ move through matches, enter selects the highlighted one)
   ctrl+s                     primary action: Send goal / Call / Publish once / Set param
   ctrl+k                     Cancel goal / Stop periodic publish / Refresh node
   ctrl+r                     reset the editor to the message defaults

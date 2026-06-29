@@ -128,6 +128,8 @@ prefilled with the message defaults. Extras:
 | --- | --- |
 | `ctrl+t` | Cycle tabs (Topics → Services → Actions → Nodes) |
 | `ctrl+f` | Focus filter input in the current tab |
+| `↑` / `↓` | Move through matches while the filter is focused (first match is auto-selected) |
+| `enter` | Select the highlighted match |
 | `ctrl+s` | Primary action (Send goal / Call / Publish once / Set param) |
 | `ctrl+k` | Secondary action (Cancel goal / Stop periodic publish / Refresh node) |
 | `ctrl+r` | Reset editor to message defaults |

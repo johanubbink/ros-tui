@@ -84,6 +84,34 @@ class FilterableList(Vertical):
         if entry is not None:
             self.post_message(self.Selected(entry))
 
+    @on(Input.Submitted, '#filter-input')
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the filter selects the currently highlighted match."""
+        event.stop()
+        option_list = self.query_one('#entity-list', OptionList)
+        if option_list.highlighted is None:
+            return
+        option = option_list.get_option_at_index(option_list.highlighted)
+        entry = self._by_name.get(option.id)
+        if entry is not None:
+            self.post_message(self.Selected(entry))
+
+    def on_key(self, event) -> None:
+        """While the filter input is focused, up/down move the list highlight so the
+        whole search→select flow works without leaving the input or using the mouse."""
+        if event.key not in ('up', 'down'):
+            return
+        focused = self.app.focused
+        if focused is None or focused.id != 'filter-input':
+            return
+        option_list = self.query_one('#entity-list', OptionList)
+        if event.key == 'down':
+            option_list.action_cursor_down()
+        else:
+            option_list.action_cursor_up()
+        event.stop()
+        event.prevent_default()
+
     def _refresh_options(self) -> None:
         option_list = self.query_one('#entity-list', OptionList)
         previous_id = None
@@ -110,9 +138,15 @@ class FilterableList(Vertical):
             seen.add(entry.name)
             options.append(Option(entry.name, id=entry.name))
         option_list.add_options(options)
+        restored = False
         if previous_id is not None:
             for index, entry in enumerate(matching):
                 if entry.name == previous_id:
                     option_list.highlighted = index
+                    restored = True
                     break
+        # Auto-select the first match so Enter always has a target (Textual otherwise
+        # leaves highlighted=None until the user arrow-keys or clicks).
+        if not restored and option_list.option_count > 0:
+            option_list.highlighted = 0
         self.border_subtitle = f'{len(matching)}/{len(self._entries)}'
