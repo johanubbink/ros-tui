@@ -30,15 +30,21 @@ the corresponding tabs/controls are gated off via ``features``.
 import asyncio
 import json
 import threading
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass
 
 import websockets
 
+from ros_tui.constants import RESPONSE_TIMEOUT_S
 from ros_tui.contracts import BackendFeatures
 from ros_tui.foxglove import protocol
 from ros_tui.foxglove.codec import FoxgloveCodec
-from ros_tui.foxglove.typestore import FoxgloveTypestore, normalize_typename
+from ros_tui.foxglove.typestore import (
+    FoxgloveTypestore,
+    normalize_typename,
+    service_message_typename,
+)
 from ros_tui.ros.echo import EchoBuffer  # noqa: F401 - documents the buffer contract
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import (
@@ -54,6 +60,8 @@ from ros_tui.ros.graph import (
 
 _CONNECT_TIMEOUT_S = 10.0
 _ROS2_MSG = 'ros2msg'
+_CDR = 'cdr'
+_TIME_TYPE = 'builtin_interfaces/msg/Time'
 
 
 @dataclass
@@ -109,6 +117,15 @@ class FoxgloveBridge:
         self._subs_by_id: dict[int, _Subscription] = {}
         self._subs_by_topic: dict[str, int] = {}
         self._next_sub_id = 1
+
+        # Write path (publish / periodic / service calls).
+        self._client_channels: dict[str, int] = {}  # topic -> client channel id
+        self._next_client_channel = 1
+        self._periodic: dict[str, object] = {}  # topic -> asyncio.Task
+        # service name -> (service id, request typename, response typename)
+        self._service_by_name: dict[str, tuple[int, str, str]] = {}
+        self._pending_calls: dict[int, tuple] = {}  # call id -> (future, response typename)
+        self._next_call_id = 1
 
         # Snapshots read from the UI thread; assigned atomically (whole-object swap).
         self._latest_graph: GraphSnapshot = EMPTY_GRAPH
@@ -192,6 +209,17 @@ class FoxgloveBridge:
             sub.buffer.push(decoded)
         elif isinstance(message, protocol.TimeMessage):
             self._server_time_ns = message.timestamp
+        elif isinstance(message, protocol.ServiceCallResponse):
+            pending = self._pending_calls.pop(message.call_id, None)
+            if pending is None:
+                return
+            future, response_type = pending
+            if future.done():
+                return
+            try:
+                future.set_result(self.codec.deserialize(response_type, message.payload))
+            except Exception as error:  # noqa: BLE001 - surface decode failure to the caller
+                future.set_exception(error)
 
     # ---------------------------------------------------------------- inbound: JSON
 
@@ -204,14 +232,13 @@ class FoxgloveBridge:
     def _on_serverInfo(self, message: dict) -> None:
         caps = set(message.get('capabilities', []))
         self._has_connection_graph = 'connectionGraph' in caps
-        # actions never (no protocol support); services/parameters/publish stay off until
-        # Phases 2–3 implement them, even when the server advertises the capability.
+        # actions are never supported (no protocol support); parameters stay off until Phase 3.
         self.features = BackendFeatures(
             actions=False,
-            services=False,
+            services='services' in caps,
             parameters=False,
             connection_graph=self._has_connection_graph,
-            publish=False,
+            publish='clientPublish' in caps,
         )
         if self._has_connection_graph:
             self._send_now(protocol.subscribe_connection_graph_msg())
@@ -251,13 +278,53 @@ class FoxgloveBridge:
 
     def _on_advertiseServices(self, message: dict) -> None:
         for service in message.get('services', []):
-            self._services[service['id']] = (service['name'], service.get('type', ''))
+            name = service['name']
+            type_name = service.get('type', '')
+            self._services[service['id']] = (name, type_name)
+            self._register_service(service, name, type_name)
         self._rebuild_graph()
+
+    def _register_service(self, service: dict, name: str, type_name: str) -> None:
+        if not type_name:
+            return
+        request_key = service_message_typename(type_name, 'Request')
+        response_key = service_message_typename(type_name, 'Response')
+        request_type = self._register_service_side(service, 'request', request_key)
+        response_type = self._register_service_side(service, 'response', response_key)
+        if request_type and response_type:
+            self._service_by_name[name] = (service['id'], request_type, response_type)
+
+    def _register_service_side(self, service: dict, side: str, typename: str) -> str:
+        """Register one side's schema (preferred ``request``/``response`` object, else legacy
+        ``requestSchema``/``responseSchema`` string). Returns the typename, or '' if unusable."""
+        block = service.get(side)
+        if isinstance(block, dict):
+            if block.get('schemaEncoding', 'ros2msg') != _ROS2_MSG or not block.get('schema'):
+                return ''
+            schema = block['schema']
+        else:
+            schema = service.get(f'{side}Schema')  # legacy string form
+            if not schema:
+                return ''
+        try:
+            return self._typestore.register_ros2msg(typename, schema)
+        except Exception:  # noqa: BLE001 - unusable schema: service just can't be called
+            return ''
 
     def _on_unadvertiseServices(self, message: dict) -> None:
         for service_id in message.get('serviceIds', []):
-            self._services.pop(service_id, None)
+            entry = self._services.pop(service_id, None)
+            if entry is not None:
+                self._service_by_name.pop(entry[0], None)
         self._rebuild_graph()
+
+    def _on_serviceCallFailure(self, message: dict) -> None:
+        pending = self._pending_calls.pop(message.get('callId'), None)
+        if pending is None:
+            return
+        future, _response_type = pending
+        if not future.done():
+            future.set_exception(RuntimeError(message.get('message', 'service call failed')))
 
     def _on_connectionGraphUpdate(self, message: dict) -> None:
         for topic in message.get('publishedTopics', []):
@@ -292,7 +359,6 @@ class FoxgloveBridge:
             listener(self._latest_graph)
 
     def _node_entries(self) -> tuple[InterfaceEntry, ...]:
-        names = set(self._pub_topics.keys()) | set(self._sub_topics.keys())
         node_ids: set[str] = set()
         for ids in list(self._pub_topics.values()) + list(self._sub_topics.values()):
             node_ids |= ids
@@ -384,19 +450,103 @@ class FoxgloveBridge:
     def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done) -> None:
         on_done('parameters are not yet supported over the Foxglove backend')
 
-    # ---------------------------------------------------------------- write path (Phases 2–3)
+    # ---------------------------------------------------------------- topics: publish
 
     def publish_once(self, name, type_name, message, time_setters=()) -> Future:
-        return _failed_future('publishing over the Foxglove backend is not yet supported')
+        return self._submit(self._publish_once(name, message, time_setters))
+
+    async def _publish_once(self, name, message, time_setters) -> None:
+        channel_id = await self._ensure_client_channel(name, message.__msgtype__)
+        self._apply_time_setters(time_setters)
+        await self._ws.send(protocol.encode_client_message(channel_id, self.codec.serialize(message)))
 
     def start_periodic_publish(self, name, type_name, message, rate_hz, time_setters=()) -> Future:
-        return _failed_future('publishing over the Foxglove backend is not yet supported')
+        return self._submit(self._start_periodic(name, message, rate_hz, time_setters))
+
+    async def _start_periodic(self, name, message, rate_hz, time_setters) -> None:
+        channel_id = await self._ensure_client_channel(name, message.__msgtype__)
+        existing = self._periodic.pop(name, None)
+        if existing is not None:
+            existing.cancel()
+        period = 1.0 / rate_hz
+        self._periodic[name] = asyncio.ensure_future(
+            self._publish_loop(channel_id, message, period, time_setters)
+        )
+
+    async def _publish_loop(self, channel_id, message, period, time_setters) -> None:
+        try:
+            while True:
+                self._apply_time_setters(time_setters)
+                await self._ws.send(
+                    protocol.encode_client_message(channel_id, self.codec.serialize(message))
+                )
+                await asyncio.sleep(period)
+        except asyncio.CancelledError:
+            pass
 
     def stop_periodic_publish(self, name) -> Future:
-        return _resolved_future()
+        return self._submit(self._stop_periodic(name))
+
+    async def _stop_periodic(self, name) -> None:
+        task = self._periodic.pop(name, None)
+        if task is not None:
+            task.cancel()
+
+    async def _ensure_client_channel(self, name: str, typename: str) -> int:
+        channel_id = self._client_channels.get(name)
+        if channel_id is not None:
+            return channel_id
+        channel_id = self._next_client_channel
+        self._next_client_channel += 1
+        self._client_channels[name] = channel_id
+        await self._ws.send(
+            protocol.client_advertise_msg(
+                [{'id': channel_id, 'topic': name, 'encoding': _CDR, 'schemaName': typename}]
+            )
+        )
+        return channel_id
+
+    # ---------------------------------------------------------------- services
 
     def call_service(self, name, type_name, request, time_setters=()) -> Future:
-        return _failed_future('service calls over the Foxglove backend are not yet supported')
+        return self._submit(self._call_service(name, request, time_setters))
+
+    async def _call_service(self, name, request, time_setters):
+        info = self._service_by_name.get(name)
+        if info is None:
+            raise RuntimeError(f'service {name} is not available (no ros2msg schema advertised)')
+        service_id, _request_type, response_type = info
+        self._apply_time_setters(time_setters)
+        payload = self.codec.serialize(request)
+        call_id = self._next_call_id
+        self._next_call_id += 1
+        future = self._loop.create_future()
+        self._pending_calls[call_id] = (future, response_type)
+        await self._ws.send(
+            protocol.encode_service_call_request(service_id, call_id, _CDR, payload)
+        )
+        try:
+            return await asyncio.wait_for(future, RESPONSE_TIMEOUT_S)
+        except asyncio.TimeoutError as error:
+            raise TimeoutError(
+                f'no response from service {name} within {RESPONSE_TIMEOUT_S:.0f}s'
+            ) from error
+        finally:
+            self._pending_calls.pop(call_id, None)
+
+    def _apply_time_setters(self, time_setters) -> None:
+        if not time_setters:
+            return
+        now = self._now_time()
+        for setter in time_setters:
+            setter(now)
+
+    def _now_time(self):
+        nanoseconds = self._server_time_ns if self._server_time_ns is not None else time.time_ns()
+        sec, nanosec = divmod(nanoseconds, 1_000_000_000)
+        return self._typestore.message_class(_TIME_TYPE)(sec=int(sec), nanosec=int(nanosec))
+
+    # ---------------------------------------------------------------- actions (unsupported)
 
     def send_goal(self, name, type_name, goal, on_event, time_setters=()) -> None:
         on_event(
@@ -418,12 +568,6 @@ class FoxgloveBridge:
         """Fire-and-forget a JSON message from the asyncio thread."""
         if self._ws is not None:
             asyncio.ensure_future(self._ws.send(text))
-
-
-def _resolved_future(result=None) -> Future:
-    future: Future = Future()
-    future.set_result(result)
-    return future
 
 
 def _failed_future(message: str) -> Future:

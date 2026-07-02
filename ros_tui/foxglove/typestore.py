@@ -38,6 +38,17 @@ def normalize_typename(name: str, interface: str = 'msg') -> str:
     return name
 
 
+def service_message_typename(type_name: str, side: str) -> str:
+    """rosbags key for a service's request/response message (``side`` is 'Request'/'Response').
+
+    rosbags only models *messages* and mangles any non-``msg`` interface path (it would turn
+    ``pkg/srv/Foo_Request`` into ``pkg/srv/msg/Foo_Request``), so we synthesize the request and
+    response types in the ``msg`` namespace: ``pkg/srv/Foo`` -> ``pkg/msg/Foo_Request``.
+    """
+    parts = type_name.split('/')
+    return f'{parts[0]}/msg/{parts[-1]}_{side}'
+
+
 class FoxgloveTypestore:
     """Holds every type the session has seen and does the CDR conversions."""
 

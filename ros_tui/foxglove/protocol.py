@@ -81,8 +81,8 @@ def parse_server_binary(data: bytes):
         return TimeMessage(timestamp)
     if op == SERVER_SERVICE_CALL_RESPONSE:
         service_id, call_id, enc_len = struct.unpack_from('<III', data, 1)
-        encoding = data[13 : 13 + enc_len].decode('utf-8')
-        return ServiceCallResponse(service_id, call_id, encoding, data[13 + enc_len :])
+        encoding = data[13:13 + enc_len].decode('utf-8')
+        return ServiceCallResponse(service_id, call_id, encoding, data[13 + enc_len:])
     return None
 
 

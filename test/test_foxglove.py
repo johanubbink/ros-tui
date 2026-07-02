@@ -113,6 +113,45 @@ def test_codec_default_yaml_and_render():
         codec.default_yaml('msg', 'nope/msg/Nope')
 
 
+def test_codec_build_roundtrips_through_cdr():
+    store, schema = _string_schema()
+    from ros_tui.foxglove.codec import FoxgloveCodec
+    from ros_tui.foxglove.typestore import FoxgloveTypestore
+
+    ts = FoxgloveTypestore()
+    ts.register_ros2msg(STRING_TYPE, schema)
+    codec = FoxgloveCodec(ts)
+
+    message, setters = codec.build('msg', STRING_TYPE, {'data': 'built'})
+    assert setters == ()
+    assert store.deserialize_cdr(codec.serialize(message), STRING_TYPE).data == 'built'
+
+
+def test_codec_build_validation():
+    pytest.importorskip('rosbags.typesys')
+    from ros_tui.contracts import FieldError
+    from ros_tui.foxglove.codec import FoxgloveCodec
+    from ros_tui.foxglove.typestore import FoxgloveTypestore
+
+    ts = FoxgloveTypestore()
+    ts.register_ros2msg('my_pkg/msg/Probe', 'int8 small\nfloat64[2] pair\nstring label\n')
+    codec = FoxgloveCodec(ts)
+
+    # A valid build succeeds and serializes.
+    message, _ = codec.build('msg', 'my_pkg/msg/Probe', {'small': -5, 'pair': [1.0, 2.0], 'label': 'x'})
+    assert bytes(codec.serialize(message))
+
+    bad = {
+        'int8 out of range': {'small': 200, 'pair': [0.0, 0.0], 'label': ''},
+        'fixed array wrong length': {'small': 0, 'pair': [1.0], 'label': ''},
+        'wrong type for int': {'small': 'nope', 'pair': [0.0, 0.0], 'label': ''},
+        'unknown field': {'nope': 1},
+    }
+    for why, values in bad.items():
+        with pytest.raises(FieldError):
+            codec.build('msg', 'my_pkg/msg/Probe', values)
+
+
 # ------------------------------------------------------------------ bridge (mock server)
 
 
@@ -201,5 +240,81 @@ def test_foxglove_bridge_discovers_graph_and_echoes():
         assert received[0].data == 'hello'
         assert bridge.codec.render(received[0]) == 'data: hello'
         bridge.unsubscribe('/chatter').result(timeout=3)
+    finally:
+        bridge.shutdown()
+
+
+def test_foxglove_bridge_publishes_and_calls_service():
+    websockets = pytest.importorskip('websockets')
+    rosbags_ts = pytest.importorskip('rosbags.typesys')
+    import asyncio
+
+    from rosbags.typesys import get_types_from_msg
+
+    from ros_tui.foxglove.bridge import FoxgloveBridge
+
+    store = rosbags_ts.get_typestore(rosbags_ts.Stores.ROS2_JAZZY)
+    string_schema = store.generate_msgdef(STRING_TYPE)[0]
+    add = 'example_interfaces/srv/AddTwoInts'
+    # The bridge keys service req/resp in the msg namespace; match that in the server store.
+    req_key, resp_key = 'example_interfaces/msg/AddTwoInts_Request', 'example_interfaces/msg/AddTwoInts_Response'
+    store.register(get_types_from_msg('int64 a\nint64 b\n', req_key))
+    store.register(get_types_from_msg('int64 sum\n', resp_key))
+    published = []
+
+    async def handler(ws):
+        await ws.send(json.dumps({
+            'op': 'serverInfo', 'name': 'mock',
+            'capabilities': ['clientPublish', 'services'],
+            'supportedEncodings': ['cdr'], 'metadata': {}, 'sessionId': '1',
+        }))
+        await ws.send(json.dumps({'op': 'advertise', 'channels': [{
+            'id': 10, 'topic': '/chatter', 'encoding': 'cdr',
+            'schemaName': STRING_TYPE, 'schemaEncoding': 'ros2msg', 'schema': string_schema,
+        }]}))
+        await ws.send(json.dumps({'op': 'advertiseServices', 'services': [{
+            'id': 20, 'name': '/add_two_ints', 'type': add,
+            'request': {'encoding': 'cdr', 'schemaName': req_key, 'schemaEncoding': 'ros2msg', 'schema': 'int64 a\nint64 b\n'},
+            'response': {'encoding': 'cdr', 'schemaName': resp_key, 'schemaEncoding': 'ros2msg', 'schema': 'int64 sum\n'},
+        }]}))
+        async for raw in ws:
+            if isinstance(raw, (bytes, bytearray)):
+                raw = bytes(raw)
+                if raw[0] == protocol.CLIENT_MESSAGE_DATA:
+                    published.append(store.deserialize_cdr(raw[5:], STRING_TYPE).data)
+                elif raw[0] == protocol.CLIENT_SERVICE_CALL_REQUEST:
+                    service_id, call_id, enc_len = struct.unpack_from('<III', raw, 1)
+                    request = store.deserialize_cdr(raw[13 + enc_len:], req_key)
+                    body = bytes(store.serialize_cdr(store.types[resp_key](sum=request.a + request.b), resp_key))
+                    await ws.send(struct.pack('<BIII', 3, service_id, call_id, 3) + b'cdr' + body)
+
+    holder, ready = [], threading.Event()
+
+    def run_server():
+        async def main():
+            server = await websockets.serve(handler, 'localhost', 0, subprotocols=[protocol.SUBPROTOCOL])
+            holder.append(server.sockets[0].getsockname()[1])
+            ready.set()
+            await asyncio.Future()
+
+        asyncio.run(main())
+
+    threading.Thread(target=run_server, daemon=True).start()
+    assert ready.wait(5)
+
+    bridge = FoxgloveBridge(f'ws://localhost:{holder[0]}')
+    bridge.start()
+    try:
+        assert bridge.features.publish and bridge.features.services
+        assert _wait_until(lambda: len(bridge.latest_graph.services) == 1)
+
+        message, setters = bridge.codec.build('msg', STRING_TYPE, {'data': 'pub'})
+        bridge.publish_once('/chatter', STRING_TYPE, message, setters).result(timeout=3)
+        assert _wait_until(lambda: published == ['pub'])
+
+        request, _ = bridge.codec.build('srv', add, {'a': 19, 'b': 23})
+        response = bridge.call_service('/add_two_ints', add, request).result(timeout=5)
+        assert response.sum == 42
+        assert bridge.codec.render(response) == 'sum: 42'
     finally:
         bridge.shutdown()

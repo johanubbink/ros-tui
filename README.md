@@ -103,10 +103,12 @@ ros_tui --foxglove ws://ROBOT_HOST:8765   # connect to a running foxglove_bridge
 On the robot (or wherever ROS runs), launch the bridge, e.g.
 `ros2 run foxglove_bridge foxglove_bridge`.
 
-Scope today: **browse** the graph (topics, services, nodes) and **echo** topics. Publishing,
-service calls and parameter get/set are in progress. The **Actions tab is hidden** on this
-backend — the Foxglove WebSocket protocol has no first-class actions. The Nodes tab requires
-the server's `connectionGraph` capability (enabled on `foxglove_bridge` by default).
+Scope today: **browse** the graph (topics, services, nodes), **echo** and **publish** topics
+(once or at a rate), and **call services** — with the same YAML editor, defaults and
+validation as the native backend. Parameter get/set is in progress. The **Actions tab is
+hidden** on this backend — the Foxglove WebSocket protocol has no first-class actions.
+Publishing needs the server's `clientPublish` capability, services need `services`, and the
+Nodes tab needs `connectionGraph` (all enabled on `foxglove_bridge` by default).
 
 ## Tabs
 
