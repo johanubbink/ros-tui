@@ -22,9 +22,9 @@ are marshalled onto that loop with ``run_coroutine_threadsafe`` (which yields th
 ``concurrent.futures.Future`` the UI already expects), and server callbacks fire on that loop's
 thread — exactly the threading contract RosBridge provides.
 
-Phase 1 (this file) is read-only: connect, discover the graph, and echo topics. Publishing,
-service calls and parameters raise a clear "not yet supported" until Phases 2–3 fill them in;
-the corresponding tabs/controls are gated off via ``features``.
+Supports graph discovery, topic echo/publish, service calls and node parameters — each gated
+on the server's advertised capabilities via ``features`` (so unsupported tabs/controls are
+hidden). Actions have no place in the Foxglove protocol and are always off.
 """
 
 import asyncio
@@ -35,6 +35,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 
 import websockets
+import yaml
 
 from ros_tui.constants import RESPONSE_TIMEOUT_S
 from ros_tui.contracts import BackendFeatures
@@ -126,6 +127,11 @@ class FoxgloveBridge:
         self._service_by_name: dict[str, tuple[int, str, str]] = {}
         self._pending_calls: dict[int, tuple] = {}  # call id -> (future, response typename)
         self._next_call_id = 1
+
+        # Parameters (Foxglove params are global; we filter to a node by name prefix).
+        self._pending_params: dict[str, object] = {}  # request id -> asyncio.Future
+        self._next_param_id = 1
+        self._param_prefix: dict[str, str] = {}  # node name -> discovered param-name prefix
 
         # Snapshots read from the UI thread; assigned atomically (whole-object swap).
         self._latest_graph: GraphSnapshot = EMPTY_GRAPH
@@ -236,7 +242,7 @@ class FoxgloveBridge:
         self.features = BackendFeatures(
             actions=False,
             services='services' in caps,
-            parameters=False,
+            parameters='parameters' in caps,
             connection_graph=self._has_connection_graph,
             publish='clientPublish' in caps,
         )
@@ -317,6 +323,11 @@ class FoxgloveBridge:
             if entry is not None:
                 self._service_by_name.pop(entry[0], None)
         self._rebuild_graph()
+
+    def _on_parameterValues(self, message: dict) -> None:
+        future = self._pending_params.get(message.get('id'))
+        if future is not None and not future.done():
+            future.set_result(message.get('parameters', []))
 
     def _on_serviceCallFailure(self, message: dict) -> None:
         pending = self._pending_calls.pop(message.get('callId'), None)
@@ -444,11 +455,69 @@ class FoxgloveBridge:
             on_done(info, None)
 
     def list_node_parameters(self, node_name: str, on_done) -> None:
-        # Phase 3 implements getParameters; report honestly until then.
-        on_done(None, 'parameters are not yet supported over the Foxglove backend')
+        if not self.features.parameters:
+            on_done(None, 'the server does not support parameters')
+            return
+        _relay(self._submit(self._list_params(node_name)), lambda r: on_done(r, None), on_done)
 
     def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done) -> None:
-        on_done('parameters are not yet supported over the Foxglove backend')
+        if not self.features.parameters:
+            on_done('the server does not support parameters')
+            return
+        _relay(
+            self._submit(self._set_param(node_name, name, value_yaml)),
+            lambda _r: on_done(None),
+            lambda error: on_done(error),
+        )
+
+    async def _list_params(self, node_name: str) -> list:
+        values = await self._request_parameters([])  # empty list = every parameter
+        prefix, params = self._filter_node_params(node_name, values)
+        self._param_prefix[node_name] = prefix
+        return params
+
+    async def _set_param(self, node_name: str, name: str, value_yaml: str) -> None:
+        value = yaml.safe_load(value_yaml)
+        prefix = self._param_prefix.get(node_name) or f'{node_name.lstrip("/")}.'
+        req_id = self._new_param_id()
+        future = self._loop.create_future()
+        self._pending_params[req_id] = future
+        await self._ws.send(
+            protocol.set_parameters_msg([_to_foxglove_param(prefix + name, value)], req_id)
+        )
+        try:
+            await asyncio.wait_for(future, RESPONSE_TIMEOUT_S)
+        except asyncio.TimeoutError as error:
+            raise TimeoutError(f'no acknowledgement setting {name}') from error
+        finally:
+            self._pending_params.pop(req_id, None)
+
+    async def _request_parameters(self, names: list) -> list:
+        req_id = self._new_param_id()
+        future = self._loop.create_future()
+        self._pending_params[req_id] = future
+        await self._ws.send(protocol.get_parameters_msg(names, req_id))
+        try:
+            return await asyncio.wait_for(future, RESPONSE_TIMEOUT_S)
+        except asyncio.TimeoutError as error:
+            raise TimeoutError('no response listing parameters') from error
+        finally:
+            self._pending_params.pop(req_id, None)
+
+    def _filter_node_params(self, node_name: str, values: list) -> tuple[str, list]:
+        # Foxglove parameter names are global and node-prefixed; the exact prefix
+        # (leading slash or not) varies by bridge, so try both and keep what matches.
+        for prefix in (f'{node_name.lstrip("/")}.', f'{node_name}.'):
+            matches = [p for p in values if p.get('name', '').startswith(prefix)]
+            if matches:
+                params = [_param_tuple(p['name'][len(prefix):], p) for p in matches]
+                return prefix, params
+        return f'{node_name.lstrip("/")}.', []
+
+    def _new_param_id(self) -> str:
+        req_id = f'p{self._next_param_id}'
+        self._next_param_id += 1
+        return req_id
 
     # ---------------------------------------------------------------- topics: publish
 
@@ -574,6 +643,55 @@ def _failed_future(message: str) -> Future:
     future: Future = Future()
     future.set_exception(RuntimeError(message))
     return future
+
+
+def _relay(future: Future, on_success, on_error) -> None:
+    """Bridge a concurrent.futures.Future to the (result)/(error-string) callback contract."""
+
+    def done(finished: Future) -> None:
+        try:
+            on_success(finished.result())
+        except Exception as error:  # noqa: BLE001 - reported to the UI as text
+            on_error(str(error) or type(error).__name__)
+
+    future.add_done_callback(done)
+
+
+def _param_tuple(bare_name: str, param: dict) -> tuple:
+    """A Foxglove parameter -> the (name, type_label, value) tuple the Nodes tab expects."""
+    return (bare_name, _param_type_label(param.get('value'), param.get('type')), param.get('value'))
+
+
+def _param_type_label(value, ptype) -> str:
+    if isinstance(value, bool):
+        return 'bool'
+    if isinstance(value, int):
+        return 'int'
+    if isinstance(value, float):
+        return 'double'
+    if isinstance(value, str):
+        return 'string'
+    if isinstance(value, list):
+        if ptype == 'byte_array':
+            return 'byte[]'
+        if not value:
+            return 'array'
+        first = value[0]
+        for kind, label in ((bool, 'bool[]'), (int, 'int[]'), (float, 'double[]'), (str, 'string[]')):
+            if isinstance(first, kind):
+                return label
+    return ptype or 'unknown'
+
+
+def _to_foxglove_param(name: str, value) -> dict:
+    param = {'name': name, 'value': value}
+    if isinstance(value, float):
+        param['type'] = 'float64'
+    elif isinstance(value, list) and value and all(
+        isinstance(item, (int, float)) and not isinstance(item, bool) for item in value
+    ):
+        param['type'] = 'float64_array'
+    return param
 
 
 def _normalize_url(url: str) -> str:

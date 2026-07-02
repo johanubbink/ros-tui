@@ -103,12 +103,15 @@ ros_tui --foxglove ws://ROBOT_HOST:8765   # connect to a running foxglove_bridge
 On the robot (or wherever ROS runs), launch the bridge, e.g.
 `ros2 run foxglove_bridge foxglove_bridge`.
 
-Scope today: **browse** the graph (topics, services, nodes), **echo** and **publish** topics
-(once or at a rate), and **call services** — with the same YAML editor, defaults and
-validation as the native backend. Parameter get/set is in progress. The **Actions tab is
-hidden** on this backend — the Foxglove WebSocket protocol has no first-class actions.
-Publishing needs the server's `clientPublish` capability, services need `services`, and the
-Nodes tab needs `connectionGraph` (all enabled on `foxglove_bridge` by default).
+This backend supports **browsing** the graph (topics, services, nodes), **echoing** and
+**publishing** topics (once or at a rate), **calling services**, and **viewing / setting node
+parameters** — with the same YAML editor, defaults and validation as the native backend. The
+**Actions tab is hidden** here: the Foxglove WebSocket protocol has no first-class actions.
+
+Each capability is gated on what the server advertises: publishing needs `clientPublish`,
+services need `services`, parameters need `parameters`, and the Nodes tab needs
+`connectionGraph` (all enabled on `foxglove_bridge` by default). Parameters are global on the
+wire, so per-node lists are matched by name prefix — a lossy approximation of `ros2 param`.
 
 ## Tabs
 

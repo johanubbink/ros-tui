@@ -318,3 +318,63 @@ def test_foxglove_bridge_publishes_and_calls_service():
         assert bridge.codec.render(response) == 'sum: 42'
     finally:
         bridge.shutdown()
+
+
+def test_foxglove_bridge_lists_and_sets_parameters():
+    websockets = pytest.importorskip('websockets')
+    import asyncio
+
+    from ros_tui.foxglove.bridge import FoxgloveBridge
+
+    params = {'talker.rate': 10.0, 'talker.enabled': True, 'listener.depth': 5}
+    set_calls = []
+
+    async def handler(ws):
+        await ws.send(json.dumps({
+            'op': 'serverInfo', 'name': 'mock', 'capabilities': ['parameters'],
+            'supportedEncodings': ['cdr'], 'metadata': {}, 'sessionId': '1',
+        }))
+        async for raw in ws:
+            msg = json.loads(raw)
+            if msg.get('op') == 'getParameters':
+                names = msg.get('parameterNames') or list(params)
+                out = [{'name': n, 'value': params[n]} for n in names if n in params]
+                await ws.send(json.dumps({'op': 'parameterValues', 'parameters': out, 'id': msg.get('id')}))
+            elif msg.get('op') == 'setParameters':
+                for p in msg['parameters']:
+                    set_calls.append((p['name'], p['value'], p.get('type')))
+                await ws.send(json.dumps({'op': 'parameterValues', 'parameters': msg['parameters'], 'id': msg.get('id')}))
+
+    holder, ready = [], threading.Event()
+
+    def run_server():
+        async def main():
+            server = await websockets.serve(handler, 'localhost', 0, subprotocols=[protocol.SUBPROTOCOL])
+            holder.append(server.sockets[0].getsockname()[1])
+            ready.set()
+            await asyncio.Future()
+
+        asyncio.run(main())
+
+    threading.Thread(target=run_server, daemon=True).start()
+    assert ready.wait(5)
+
+    bridge = FoxgloveBridge(f'ws://localhost:{holder[0]}')
+    bridge.start()
+    try:
+        assert bridge.features.parameters
+
+        listed = {}
+        done = threading.Event()
+        bridge.list_node_parameters('/talker', lambda p, e: (listed.update(params=p, error=e), done.set()))
+        assert done.wait(3) and listed['error'] is None
+        by_name = {name: (label, value) for name, label, value in listed['params']}
+        assert by_name == {'rate': ('double', 10.0), 'enabled': ('bool', True)}  # listener.depth filtered out
+
+        set_done = threading.Event()
+        result = {}
+        bridge.set_node_parameter('/talker', 'rate', '20.0', lambda e: (result.update(error=e), set_done.set()))
+        assert set_done.wait(3) and result['error'] is None
+        assert set_calls == [('talker.rate', 20.0, 'float64')]
+    finally:
+        bridge.shutdown()
