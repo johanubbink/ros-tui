@@ -101,7 +101,10 @@ ros_tui --foxglove ws://ROBOT_HOST:8765   # connect to a running foxglove_bridge
 ```
 
 On the robot (or wherever ROS runs), launch the bridge, e.g.
-`ros2 run foxglove_bridge foxglove_bridge`.
+`ros2 run foxglove_bridge foxglove_bridge`. Both the older bridge and the newer Foxglove
+SDK–based `ros-foxglove-bridge` (3.x) are supported — the client offers both the
+`foxglove.websocket.v1` and `foxglove.sdk.v1` handshake subprotocols and uses whichever the
+server speaks.
 
 This backend supports **browsing** the graph (topics, services, nodes), **echoing** and
 **publishing** topics (once or at a rate), **calling services**, and **viewing / setting node
