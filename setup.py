@@ -28,7 +28,10 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
-    install_requires=['setuptools', 'textual', 'rich'],
+    # pyyaml (the editor's YAML dialect) and numpy (message array handling) are used directly
+    # by the app; in a ROS environment apt provides python3-yaml/python3-numpy, but a bare pip
+    # install (e.g. the no-ROS Foxglove backend) needs them declared here.
+    install_requires=['setuptools', 'textual', 'rich', 'pyyaml', 'numpy'],
     extras_require={
         # The Foxglove backend runs with no ROS install; these are its only extra deps.
         # Install with:  pip install '.[foxglove]'
