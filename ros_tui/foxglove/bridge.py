@@ -190,7 +190,7 @@ class FoxgloveBridge:
     async def _main(self) -> None:
         self._loop = asyncio.get_running_loop()
         async with websockets.connect(
-            self._url, subprotocols=[protocol.SUBPROTOCOL], max_size=None
+            self._url, subprotocols=list(protocol.SUBPROTOCOLS), max_size=None
         ) as ws:
             self._ws = ws
             async for raw in ws:

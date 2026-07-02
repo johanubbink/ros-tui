@@ -25,7 +25,12 @@ import re
 import struct
 from dataclasses import dataclass
 
+# The WebSocket subprotocol. The newer Foxglove SDK server (ros-foxglove-bridge >= 3.x)
+# renamed it from 'foxglove.websocket.v1' to 'foxglove.sdk.v1' — same v1 wire protocol, just a
+# different handshake token, matched case-sensitively. We offer both, newest first, so the
+# server selects whichever it speaks (SDK bridges pick sdk.v1, older ones websocket.v1).
 SUBPROTOCOL = 'foxglove.websocket.v1'
+SUBPROTOCOLS = ('foxglove.sdk.v1', 'foxglove.websocket.v1')
 
 # Binary opcodes (first byte). Server->client and client->server reuse the low values but are
 # disambiguated by direction.
