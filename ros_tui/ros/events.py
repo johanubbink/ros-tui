@@ -19,8 +19,6 @@ import enum
 from dataclasses import dataclass
 from typing import Any
 
-from action_msgs.msg import GoalStatus
-
 
 class ActionEventKind(enum.Enum):
     ACCEPTED = 'accepted'
@@ -40,10 +38,17 @@ class ActionEvent:
     status: int | None = None  # action_msgs GoalStatus.* — set for RESULT events.
 
 
+# The standardized action_msgs/msg/GoalStatus.STATUS_* constants, hardcoded so this module
+# imports without ROS (it is pulled in by the UI). These values are fixed by the ROS 2 action
+# protocol and never change.
 _STATUS_NAMES = {
-    getattr(GoalStatus, name): name.removeprefix('STATUS_')
-    for name in dir(GoalStatus)
-    if name.startswith('STATUS_')
+    0: 'UNKNOWN',
+    1: 'ACCEPTED',
+    2: 'EXECUTING',
+    3: 'CANCELING',
+    4: 'SUCCEEDED',
+    5: 'CANCELED',
+    6: 'ABORTED',
 }
 
 

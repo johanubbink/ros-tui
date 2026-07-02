@@ -48,10 +48,11 @@ from ros_tui.constants import (
     READY_TIMEOUT_S,
     RESPONSE_TIMEOUT_S,
 )
+from ros_tui.contracts import BackendFeatures
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, build_node_info, build_snapshot
-from ros_tui.ros.message_yaml import TimeSetter, import_type
+from ros_tui.ros.message_yaml import RclpyCodec, TimeSetter, import_type
 
 GraphListener = Callable[[GraphSnapshot], None]
 ActionEventCallback = Callable[[ActionEvent], None]
@@ -204,6 +205,15 @@ class RosBridge:
     """UI-agnostic facade over one rclpy node spun on a dedicated thread."""
 
     def __init__(self, node_name: str = 'ros_tui'):
+        # The native backend supports every capability; the UI reads these through the bridge.
+        self.codec = RclpyCodec()
+        self.features = BackendFeatures(
+            actions=True,
+            services=True,
+            parameters=True,
+            connection_graph=True,
+            publish=True,
+        )
         self._node_name = node_name
         self._running = False
         self._submit_lock = threading.Lock()

@@ -27,7 +27,7 @@ dotted/indexed path (``pose.position.x``, ``points[1].x``).
 import array
 import functools
 import math
-from typing import Any, Callable
+from typing import Any
 
 import numpy
 import yaml
@@ -50,26 +50,15 @@ from ros_tui.constants import (
     TYPE_CACHE_SIZE,
 )
 
-# A deferred setter receives a builtin_interfaces/msg/Time and stamps it into the message.
-TimeSetter = Callable[[Any], None]
+# FieldError / IntrospectionError / TimeSetter live in the ROS-free contracts module so the UI
+# can catch them without importing anything ROS; re-exported here for the native code paths
+# (and tests) that import them from this module.
+from ros_tui.contracts import FieldError, IntrospectionError, TimeSetter  # noqa: F401
 
 _LOADERS = {'msg': get_message, 'srv': get_service, 'action': get_action}
 _FLOAT_TYPENAMES = ('float', 'double', 'float32', 'float64')
 _HEADER_CLASS = 'std_msgs.msg._header.Header'
 _TIME_CLASS = 'builtin_interfaces.msg._time.Time'
-
-
-class IntrospectionError(Exception):
-    """Raised when an interface type cannot be loaded."""
-
-
-class FieldError(Exception):
-    """A value in the user's YAML does not fit the message, located by its field path."""
-
-    def __init__(self, path: str, detail: str):
-        self.path = path
-        self.detail = detail
-        super().__init__(f'{path}: {detail}' if path else detail)
 
 
 @functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
@@ -371,3 +360,24 @@ def _constants_comment(message_class: type) -> str:
         line += f' {pair},'
     lines.append(line.rstrip(','))
     return '\n'.join(lines) + '\n'
+
+
+class RclpyCodec:
+    """The native (rclpy/rosidl) :class:`~ros_tui.contracts.MessageCodec`.
+
+    A stateless adapter over this module's functions; it produces/consumes real rosidl message
+    instances, which the :class:`~ros_tui.ros.bridge.RosBridge` publishes/calls/sends directly.
+    """
+
+    def default_yaml(self, kind: str, type_name: str) -> str:
+        return default_yaml(kind, type_name)
+
+    def build(
+        self, kind: str, type_name: str, values: Any
+    ) -> tuple[Any, tuple[TimeSetter, ...]]:
+        interface = import_type(kind, type_name)
+        message, setters = build_message(request_class(kind, interface), values)
+        return message, tuple(setters)
+
+    def render(self, payload: Any) -> str:
+        return to_truncated_yaml(payload)

@@ -26,7 +26,6 @@ from ros_tui.constants import (
     PUBLISH_RATE_MIN_HZ,
 )
 from ros_tui.ros.echo import EchoBuffer
-from ros_tui.ros.message_yaml import to_truncated_yaml
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import PublishCompleted
 
@@ -200,7 +199,7 @@ class TopicsTab(InterfaceTab):
             messages = messages[-ECHO_MAX_RENDER_PER_TICK:]
         for received_message in messages:
             self.write_log(f'─── {self._echo_topic}', style='dim')
-            self.write_log(to_truncated_yaml(received_message))
+            self.write_log(self._bridge.codec.render(received_message))
 
     # ------------------------------------------------------------------ status & controls
 
