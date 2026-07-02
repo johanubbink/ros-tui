@@ -119,16 +119,23 @@ class RosTuiApp(App):
         self._bridge = bridge
 
     def compose(self):
+        # Only show tabs the active backend can serve. Topics are always available (echo needs
+        # no special capability); Services/Actions/Nodes depend on what the backend advertises
+        # (e.g. the Foxglove protocol has no actions, so its Actions tab is hidden).
+        features = self._bridge.features
         yield Header()
         with TabbedContent(initial='topics'):
             with TabPane('Topics', id='topics'):
                 yield TopicsTab(self._bridge, id='topics-tab')
-            with TabPane('Services', id='services'):
-                yield ServicesTab(self._bridge, id='services-tab')
-            with TabPane('Actions', id='actions'):
-                yield ActionsTab(self._bridge, id='actions-tab')
-            with TabPane('Nodes', id='nodes'):
-                yield NodesTab(self._bridge, id='nodes-tab')
+            if features.services:
+                with TabPane('Services', id='services'):
+                    yield ServicesTab(self._bridge, id='services-tab')
+            if features.actions:
+                with TabPane('Actions', id='actions'):
+                    yield ActionsTab(self._bridge, id='actions-tab')
+            if features.connection_graph:
+                with TabPane('Nodes', id='nodes'):
+                    yield NodesTab(self._bridge, id='nodes-tab')
         yield Footer()
 
     def on_mount(self) -> None:
@@ -143,10 +150,17 @@ class RosTuiApp(App):
         self._apply_graph(message.snapshot)
 
     def _apply_graph(self, snapshot) -> None:
-        self.query_one('#topics-tab', TopicsTab).set_entries(snapshot.topics)
-        self.query_one('#services-tab', ServicesTab).set_entries(snapshot.services)
-        self.query_one('#actions-tab', ActionsTab).set_entries(snapshot.actions)
-        self.query_one('#nodes-tab', NodesTab).set_entries(snapshot.nodes)
+        # A tab is only present if the backend's features enabled it (see compose); skip the
+        # ones that were not composed rather than raising on a missing pane.
+        self._set_tab_entries('#topics-tab', snapshot.topics)
+        self._set_tab_entries('#services-tab', snapshot.services)
+        self._set_tab_entries('#actions-tab', snapshot.actions)
+        self._set_tab_entries('#nodes-tab', snapshot.nodes)
+
+    def _set_tab_entries(self, selector: str, entries) -> None:
+        matches = list(self.query(selector))
+        if matches:
+            matches[0].set_entries(entries)
 
     def on_navigate_to_entity(self, message: NavigateToEntity) -> None:
         message.stop()

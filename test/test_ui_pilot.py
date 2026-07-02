@@ -22,8 +22,10 @@ import pytest
 import yaml
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from ros_tui.contracts import BackendFeatures
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
+from ros_tui.ros.message_yaml import RclpyCodec
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import NavigateToEntity
@@ -76,7 +78,14 @@ def completed_future(result=None):
 
 
 class FakeBridge:
+    # All-capabilities backend; the codec renders/builds the real rosidl objects the tests
+    # hand back (e.g. AddTwoInts.Response), matching the native RosBridge.
+    features = BackendFeatures(
+        actions=True, services=True, parameters=True, connection_graph=True, publish=True
+    )
+
     def __init__(self, snapshot=SNAPSHOT):
+        self.codec = RclpyCodec()
         self.latest_graph = snapshot
         self.listener = None
         self.service_calls = []
@@ -875,3 +884,43 @@ async def test_parameter_block_is_40_percent_and_scrolls():
         )
         # The empty result log takes no space at all until a Set writes to it.
         assert log.region.height == 0, f'empty log should take no space, was {log.region.height}'
+
+
+class _NoActionsBridge(FakeBridge):
+    """Mimics the Foxglove backend: everything but first-class actions."""
+
+    features = BackendFeatures(
+        actions=False, services=True, parameters=True, connection_graph=True, publish=True
+    )
+
+
+class _TopicsOnlyBridge(FakeBridge):
+    """A minimal backend advertising no services/graph — only the Topics tab survives."""
+
+    features = BackendFeatures(
+        actions=False, services=False, parameters=False, connection_graph=False, publish=False
+    )
+
+
+async def test_actions_tab_hidden_when_backend_lacks_actions():
+    app = RosTuiApp(_NoActionsBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert not app.query('#actions-tab'), 'Actions pane must not be composed'
+        assert app.query('#topics-tab') and app.query('#services-tab') and app.query('#nodes-tab')
+        # A graph update carrying actions/services/nodes must not raise on the absent pane.
+        app._apply_graph(SNAPSHOT)
+        await pilot.pause()
+
+
+async def test_only_topics_tab_when_backend_minimal():
+    app = RosTuiApp(_TopicsOnlyBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.query('#topics-tab')
+        assert not app.query('#services-tab')
+        assert not app.query('#actions-tab')
+        assert not app.query('#nodes-tab')
+        # _apply_graph is resilient to every non-topics pane being absent.
+        app._apply_graph(SNAPSHOT)
+        await pilot.pause()

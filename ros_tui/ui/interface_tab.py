@@ -25,15 +25,8 @@ from textual.widget import Widget
 from textual.widgets import RichLog, Static, TextArea
 
 from ros_tui.constants import EDITOR_PARSE_DEBOUNCE_S, OUTPUT_LOG_MAX_LINES
+from ros_tui.contracts import FieldError, IntrospectionError
 from ros_tui.ros.graph import InterfaceEntry
-from ros_tui.ros.message_yaml import (
-    FieldError,
-    IntrospectionError,
-    build_message,
-    default_yaml,
-    import_type,
-    request_class,
-)
 from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import PrototypeReady
@@ -118,7 +111,7 @@ class InterfaceTab(EntityTab):
 
         def load() -> None:
             try:
-                seed_text = default_yaml(kind, type_name)
+                seed_text = self._bridge.codec.default_yaml(kind, type_name)
                 error = ''
             except IntrospectionError as introspection_error:
                 seed_text, error = '', str(introspection_error)
@@ -194,18 +187,22 @@ class InterfaceTab(EntityTab):
         if self._current is None:
             self._set_editor_error('select an entry on the left first')
             return None
+        # YAML parsing (and its line-numbered error) stays here — it is backend-independent;
+        # only the type-aware build/validate goes through the active backend's codec.
         try:
-            interface = import_type(self.kind, self._current.types[0])
             values = yaml.safe_load(self.query_one('#editor', TextArea).text)
-            message, time_setters = build_message(request_class(self.kind, interface), values)
         except yaml.YAMLError as error:
             self._set_editor_error(self._yaml_error_text(error))
             return None
+        try:
+            payload, time_setters = self._bridge.codec.build(
+                self.kind, self._current.types[0], values
+            )
         except (IntrospectionError, FieldError) as error:
             self._set_editor_error(str(error))
             return None
         self._set_editor_error('')
-        return message, tuple(time_setters)
+        return payload, time_setters
 
     @staticmethod
     def _yaml_error_text(error: yaml.YAMLError) -> str:

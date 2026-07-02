@@ -87,7 +87,7 @@ class _StubNode:
 def test_duplicate_node_names_are_deduped(monkeypatch):
     # ROS can report the same node twice; the snapshot must list it once so
     # downstream Option ids stay unique (regression: textual DuplicateID crash).
-    monkeypatch.setattr('ros_tui.ros.graph.get_action_names_and_types', lambda node: [])
+    monkeypatch.setattr('rclpy.action.get_action_names_and_types', lambda node: [])
     node = _StubNode([('node_a', '/'), ('node_a', '/')])
     snapshot = build_snapshot(node, 1)
     assert len(snapshot.nodes) == 1
@@ -97,7 +97,7 @@ def test_duplicate_node_names_are_deduped(monkeypatch):
 def test_own_bridge_node_is_excluded(monkeypatch):
     # ros_tui's own node is the tool's introspection plumbing, not something the
     # user came to inspect, so it must not appear in its own node list.
-    monkeypatch.setattr('ros_tui.ros.graph.get_action_names_and_types', lambda node: [])
+    monkeypatch.setattr('rclpy.action.get_action_names_and_types', lambda node: [])
     node = _StubNode([('ros_tui', '/'), ('talker', '/')], name='ros_tui', namespace='/')
     snapshot = build_snapshot(node, 1)
     names = [entry.name for entry in snapshot.nodes]
@@ -146,11 +146,11 @@ def test_build_node_info_filters_and_maps(monkeypatch):
         'cli': [('/talker/set_parameters', ['rcl_interfaces/srv/SetParameters'])],
     })
     monkeypatch.setattr(
-        'ros_tui.ros.graph.get_action_server_names_and_types_by_node',
+        'rclpy.action.get_action_server_names_and_types_by_node',
         lambda node, n, ns: [('/fibonacci', ['example_interfaces/action/Fibonacci'])],
     )
     monkeypatch.setattr(
-        'ros_tui.ros.graph.get_action_client_names_and_types_by_node',
+        'rclpy.action.get_action_client_names_and_types_by_node',
         lambda node, n, ns: [],
     )
 

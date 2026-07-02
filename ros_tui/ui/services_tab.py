@@ -20,7 +20,6 @@ import time
 from textual import on
 from textual.widgets import Button
 
-from ros_tui.ros.message_yaml import to_truncated_yaml
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import ServiceCompleted
 
@@ -78,4 +77,4 @@ class ServicesTab(InterfaceTab):
             f'← {message.service_name} response in {message.elapsed_ms:.1f} ms',
             style='bold green',
         )
-        self.write_log(to_truncated_yaml(message.response))
+        self.write_log(self._bridge.codec.render(message.response))

@@ -29,6 +29,11 @@ setup(
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools', 'textual', 'rich'],
+    extras_require={
+        # The Foxglove backend runs with no ROS install; these are its only extra deps.
+        # Install with:  pip install '.[foxglove]'
+        'foxglove': ['websockets', 'rosbags'],
+    },
     zip_safe=True,
     maintainer='Johan Ubbink',
     maintainer_email='johan.ubbink@gmail.com',

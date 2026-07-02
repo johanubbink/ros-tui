@@ -18,11 +18,9 @@
 from dataclasses import dataclass
 from typing import Any
 
-from rclpy.action import (
-    get_action_client_names_and_types_by_node,
-    get_action_names_and_types,
-    get_action_server_names_and_types_by_node,
-)
+# NOTE: rclpy.action is imported lazily inside build_snapshot/build_node_info (the only
+# rclpy-bound functions here) so this module's data types and helpers stay importable on a
+# machine with no ROS install — the UI and the non-ROS backends depend on them.
 
 
 @dataclass(frozen=True)
@@ -91,6 +89,7 @@ def _entries(name_type_pairs, *, skip=None) -> tuple[InterfaceEntry, ...]:
 
 def build_snapshot(node: Any, version: int) -> GraphSnapshot:
     """Query the graph through ``node``. Must be called on the thread spinning the node."""
+    from rclpy.action import get_action_names_and_types
 
     def node_entries() -> tuple[InterfaceEntry, ...]:
         # ROS allows duplicate node names, and get_node_names_and_namespaces() can
@@ -133,6 +132,11 @@ def build_node_info(node: Any, full_name: str) -> NodeInfo:
     auto-created parameter services are dropped, matching what the Services/Nodes tabs show —
     so a jump from here always lands on an entity the destination tab actually lists.
     """
+    from rclpy.action import (
+        get_action_client_names_and_types_by_node,
+        get_action_server_names_and_types_by_node,
+    )
+
     name, namespace = split_node_name(full_name)
     return NodeInfo(
         node_name=full_name,

@@ -87,6 +87,27 @@ Notes:
 - **Tear down:** `docker compose down`. The image is lean (`ros:jazzy-ros-base`, headless —
   no X11); switch distro or to a desktop image via the `ROS_DISTRO` / base-image build arg.
 
+## Connect without ROS (Foxglove backend)
+
+You can run `ros_tui` on a machine with **no ROS install** and point it at a remote
+[`foxglove_bridge`](https://github.com/foxglove/foxglove-sdk) over WebSocket. Message schemas
+come from the bridge over the wire and are decoded with the pure-Python
+[`rosbags`](https://pypi.org/project/rosbags/) library, so no ROS or message packages are
+needed locally.
+
+```shell
+pip install '.[foxglove]'                 # pulls in websockets + rosbags
+ros_tui --foxglove ws://ROBOT_HOST:8765   # connect to a running foxglove_bridge
+```
+
+On the robot (or wherever ROS runs), launch the bridge, e.g.
+`ros2 run foxglove_bridge foxglove_bridge`.
+
+Scope today: **browse** the graph (topics, services, nodes) and **echo** topics. Publishing,
+service calls and parameter get/set are in progress. The **Actions tab is hidden** on this
+backend — the Foxglove WebSocket protocol has no first-class actions. The Nodes tab requires
+the server's `connectionGraph` capability (enabled on `foxglove_bridge` by default).
+
 ## Tabs
 
 - **Actions** — select an action, edit the Goal (seeded with defaults), `Send goal`.

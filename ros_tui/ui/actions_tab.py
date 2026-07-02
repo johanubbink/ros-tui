@@ -28,7 +28,6 @@ from ros_tui.constants import (
     FEEDBACK_MAX_RENDER_PER_TICK,
 )
 from ros_tui.ros.events import ActionEventKind, goal_status_name
-from ros_tui.ros.message_yaml import to_truncated_yaml
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import ActionEventMessage
 
@@ -127,7 +126,7 @@ class ActionsTab(InterfaceTab):
             elapsed = time.monotonic() - self._goal_started
             style = _STATUS_STYLES.get(status, 'bold')
             self.write_log(f'— result: {status} in {elapsed:.2f} s —', style=style)
-            self.write_log(to_truncated_yaml(event.payload))
+            self.write_log(self._bridge.codec.render(event.payload))
             self._finish_goal(status)
 
     def _finish_goal(self, status: str) -> None:
@@ -150,4 +149,4 @@ class ActionsTab(InterfaceTab):
             pending = pending[-FEEDBACK_MAX_RENDER_PER_TICK:]
         for feedback in pending:
             self.write_log('feedback:', style='cyan')
-            self.write_log(to_truncated_yaml(feedback))
+            self.write_log(self._bridge.codec.render(feedback))
