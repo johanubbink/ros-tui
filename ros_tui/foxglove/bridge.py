@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import websockets
 import yaml
+from websockets.exceptions import InvalidStatus
 
 from ros_tui.constants import RESPONSE_TIMEOUT_S
 from ros_tui.contracts import BackendFeatures
@@ -152,7 +153,8 @@ class FoxgloveBridge:
             raise RuntimeError(f'timed out connecting to foxglove bridge at {self._url}')
         if self._startup_error is not None:
             raise RuntimeError(
-                f'could not connect to foxglove bridge at {self._url}: {self._startup_error}'
+                f'could not connect to foxglove bridge at {self._url}: '
+                f'{_describe_connect_error(self._startup_error)}'
             )
 
     def shutdown(self, timeout_s: float = 3.0) -> None:
@@ -698,3 +700,17 @@ def _normalize_url(url: str) -> str:
     if '://' not in url:
         return f'ws://{url}'
     return url
+
+
+def _describe_connect_error(error: BaseException) -> str:
+    """A readable reason for a failed connect, surfacing the server's HTTP-reject body.
+
+    ``foxglove_bridge`` explains a rejected handshake in the 400 body (e.g. an unsupported
+    subprotocol), which ``str(InvalidStatus)`` drops — so extract it.
+    """
+    if isinstance(error, InvalidStatus):
+        response = error.response
+        body = bytes(response.body or b'').decode('utf-8', 'replace').strip()
+        detail = f'HTTP {response.status_code}'
+        return f'{detail} — {body}' if body else detail
+    return str(error) or type(error).__name__
