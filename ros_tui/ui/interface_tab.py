@@ -95,6 +95,9 @@ class InterfaceTab(EntityTab):
         """Programmatically select ``entry`` (e.g. a cross-tab jump from the Nodes tab)."""
         self.query_one(FilterableList).select_entry(entry)
 
+    def has_selection(self) -> bool:
+        return self._current is not None
+
     @property
     def current_entry(self) -> InterfaceEntry | None:
         return self._current

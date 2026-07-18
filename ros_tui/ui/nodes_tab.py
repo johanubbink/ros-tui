@@ -97,6 +97,9 @@ class NodesTab(EntityTab):
 
     # ---------------------------------------------------------------- selection
 
+    def has_selection(self) -> bool:
+        return self._current_node is not None
+
     @on(FilterableList.Selected)
     def _on_node_selected(self, message: FilterableList.Selected) -> None:
         message.stop()

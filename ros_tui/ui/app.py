@@ -119,6 +119,7 @@ class RosTuiApp(App):
         super().__init__()
         self._bridge = bridge
         self._jumping = False  # True while a cross-tab jump owns the next tab switch.
+        self._activated_once = False  # Guards the mount-time TabActivated (see handler).
 
     def compose(self):
         yield Header()
@@ -169,15 +170,27 @@ class RosTuiApp(App):
             tab.select_entity(message.entry)
 
     def on_tabbed_content_tab_activated(self, message: TabbedContent.TabActivated) -> None:
-        # Every way of switching tabs (click, ctrl+t, programmatic) lands here, so the
-        # destination always opens maximized — except a cross-tab jump, which opens
-        # minimized on the jumped-to entity.
+        # Every way of switching tabs (click, ctrl+t, programmatic) lands here. A tab with
+        # no selection opens maximized with the filter box focused, ready to type; a tab
+        # that already has a selected item restores that item's detail view instead (an
+        # extra ctrl+f returns to the list). A cross-tab jump is handled separately below.
         if self._jumping:
             self._jumping = False
             return
         tab = self._active_tab()
-        if tab is not None:
+        if tab is None:
+            return
+        # The first activation is the mount-time one for the initial tab; just maximize it.
+        # Focusing the filter here would schedule a deferred focus that a very fast first
+        # ctrl+t could race (landing focus in the old pane, reverting the switch), and the
+        # user did not switch to this tab — it is simply the startup tab.
+        if not self._activated_once:
+            self._activated_once = True
             tab.maximize_list()
+        elif tab.has_selection():
+            tab.minimize_list()
+        else:
+            tab.focus_filter()
 
     def _active_tab(self) -> EntityTab | None:
         tabbed = self.query_one(TabbedContent)

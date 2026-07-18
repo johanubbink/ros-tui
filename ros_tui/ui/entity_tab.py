@@ -43,6 +43,15 @@ class EntityTab(Horizontal):
         self.maximize_list()
         self.query_one(FilterableList).focus_filter()
 
+    def has_selection(self) -> bool:
+        """True if this tab has a selected entity, i.e. its detail view holds content.
+
+        The app uses this to decide, on tab activation, whether to land in browse mode
+        (list focused) or restore the previously selected item's detail view. A tab that
+        never populates a detail view keeps the default of no selection.
+        """
+        return False
+
     def maximize_list(self) -> None:
         """Browse mode: the entity list fills the tab; the right pane is hidden."""
         self.query_one(FilterableList).display = True

@@ -161,7 +161,12 @@ async def click_button(pilot, selector):
 async def show_tab(pilot, tab_id):
     """Make a tab's pane active so it gets laid out; a hidden pane is sized 0×0,
     which silently drops RichLog writes. Tabs are switched via ctrl+t cycling, so
-    set the active pane directly rather than pressing a numbered shortcut."""
+    set the active pane directly rather than pressing a numbered shortcut.
+
+    Drop focus first, like the real ctrl+t path (action_cycle_tab): once a pane's
+    filter input is focused on activation, TabbedContent silently reverts a direct
+    `active` change while that descendant holds focus."""
+    pilot.app.set_focus(None)
     pilot.app.query_one(TabbedContent).active = tab_id
     await pilot.pause()
 
@@ -910,6 +915,33 @@ async def test_list_minimizes_on_select_and_maximizes_on_filter_and_cycle():
         await pilot.press('ctrl+t')
         await pilot.pause()
         assert _is_maximized(app._active_tab())
+
+
+async def test_returning_to_tab_with_selection_restores_detail_view():
+    """Switching away from a tab with a selection and back restores that item's detail
+    view (minimized), not the list — the selection is not forgotten. A subsequent ctrl+f
+    returns to the list."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await pilot.pause()
+        assert not _is_maximized(tab)  # detail view showing.
+
+        # Cycle all the way around back to topics (topics→services→actions→nodes→topics).
+        for _ in range(4):
+            await pilot.press('ctrl+t')
+            await pilot.pause()
+        assert app._active_tab() is tab
+        # The selection survived, so topics reopens on its detail view, not the list.
+        assert tab.current_entry is not None and tab.current_entry.name == '/chatter'
+        assert not _is_maximized(tab)
+
+        # ctrl+f still returns to the list from there.
+        await pilot.press('ctrl+f')
+        await pilot.pause()
+        assert _is_maximized(tab)
 
 
 async def test_cross_tab_jump_opens_destination_minimized():
