@@ -97,6 +97,9 @@ class RosTuiApp(App):
     #editor-error { display: none; height: auto; max-height: 3; }
     .controls { height: 3; }
     .controls Button { margin-right: 1; min-width: 8; }
+    /* Pushes the view toggle to the right, apart from the topic-action buttons. */
+    .controls-spacer { width: 1fr; }
+    #mode-toggle-button { margin-right: 0; border: round $primary; }
     #rate-input { width: 9; }
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }

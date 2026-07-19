@@ -98,6 +98,9 @@ class TopicsTab(InterfaceTab):
         yield Button('Start rate', id='rate-button')
         yield Button('Echo', id='echo-button')
         yield Button('Pause', id='pause-button', disabled=True)
+        # Spacer pushes the mode toggle to the right edge: switching the tab's view is a
+        # distinct action from the buttons that operate on the topic itself.
+        yield Static('', classes='controls-spacer')
         yield Button('→ Subscribe', id='mode-toggle-button')
 
     def compose_status(self):
