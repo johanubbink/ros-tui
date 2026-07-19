@@ -15,6 +15,7 @@
 
 """Modal asking whether to work with a topic in publish or subscribe mode."""
 
+from rich.text import Text
 from textual import on
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -23,6 +24,13 @@ from textual.widgets import Button, Static
 
 from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ui.messages import TopicCountsReady
+
+
+def _accel(label: str) -> Text:
+    """Label with its first letter bold+underlined to advertise the keyboard shortcut."""
+    text = Text(label)
+    text.stylize('bold underline', 0, 1)
+    return text
 
 
 class TopicModePopup(ModalScreen[str | None]):
@@ -53,8 +61,8 @@ class TopicModePopup(ModalScreen[str | None]):
             yield Static(self._entry.types[0] if self._entry.types else '', id='topic-mode-type')
             yield Static('publishers: … · subscribers: …', id='topic-mode-counts')
             with Horizontal(id='topic-mode-buttons'):
-                yield Button('[P]ublish', id='topic-mode-publish', variant='primary')
-                yield Button('[S]ubscribe', id='topic-mode-subscribe')
+                yield Button(_accel('Publish'), id='topic-mode-publish', variant='primary')
+                yield Button(_accel('Subscribe'), id='topic-mode-subscribe')
 
     def on_mount(self) -> None:
         self._counts_future.add_done_callback(self._post_counts)
