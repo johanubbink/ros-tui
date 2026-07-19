@@ -100,6 +100,11 @@ class RosTuiApp(App):
     #rate-input { width: 9; }
     #goal-status, #topics-status { height: 1; }
     #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
+    /* Topics: publish mode favours the editor; subscribe mode favours the echo console. */
+    #topic-structure-tree { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
+    .right-pane.mode-publish #editor { height: 4fr; }
+    .right-pane.mode-publish #output-log { height: 1fr; }
+    .right-pane.mode-subscribe #output-log { height: 4fr; }
     /* Split the available height ~60/40 between the interfaces tree and the
        parameters block. Each fills its share and scrolls when its content
        overflows (3fr:2fr -> parameters get 40% of the space below the header). */

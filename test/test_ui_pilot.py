@@ -88,6 +88,7 @@ class FakeBridge:
         self.periodic_started = []
         self.periodic_stopped = []
         self.subscriptions = {}
+        self.topic_counts_requests = []
         self.node_info_requests = []
         self.param_list_requests = []
         self.set_param_calls = []
@@ -139,6 +140,10 @@ class FakeBridge:
         self.subscriptions.pop(name, None)
         return completed_future()
 
+    def topic_endpoint_counts(self, name):
+        self.topic_counts_requests.append(name)
+        return completed_future((1, 2))
+
     def shutdown(self):
         pass
 
@@ -175,6 +180,20 @@ async def select_entry(pilot, tab, entry):
     tab.post_message(FilterableList.Selected(entry))
     # Wait for PrototypeReady to land (seed cached), not just for editor text: a late
     # prototype would overwrite any text the test loads into the editor afterwards.
+    assert await wait_until(pilot, lambda: entry.name in tab._seed_cache), (
+        f'prototype never loaded for {entry.name}'
+    )
+
+
+async def select_topic(pilot, tab, entry, mode='publish'):
+    """Select a topic and choose a mode in the popup ('publish' -> p, 'subscribe' -> s)."""
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    tab.post_message(FilterableList.Selected(entry))
+    assert await wait_until(pilot, lambda: isinstance(pilot.app.screen, TopicModePopup)), (
+        'mode popup never appeared'
+    )
+    await pilot.press('p' if mode == 'publish' else 's')
     assert await wait_until(pilot, lambda: entry.name in tab._seed_cache), (
         f'prototype never loaded for {entry.name}'
     )
@@ -295,6 +314,11 @@ async def test_filter_enter_selects_highlighted_match():
         option_list = tab.query_one('#entity-list', OptionList)
         assert await wait_until(pilot, lambda: option_list.option_count == 1)
         await pilot.press('enter')
+        # Selecting a topic pops the mode chooser; pick publish to commit the selection.
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         assert await wait_until(
             pilot,
             lambda: tab.current_entry is not None and tab.current_entry.name == '/pose',
@@ -306,7 +330,7 @@ async def test_selecting_topic_seeds_editor_with_defaults():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, POSE_ENTRY)
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
         editor_text = tab.query_one('#editor', TextArea).text
         assert 'orientation:' in editor_text
         assert 'w: 1.0' in editor_text
@@ -318,7 +342,7 @@ async def test_selecting_topic_focuses_editor():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, POSE_ENTRY)
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
         await pilot.pause()
         assert app.focused is tab.query_one('#editor', TextArea)
 
@@ -432,7 +456,7 @@ async def test_rate_validation_and_start_stop():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'publish')
         tab.query_one('#rate-input', Input).value = '99999'
         await click_button(pilot, '#rate-button')
         assert fake.periodic_started == []
@@ -452,7 +476,7 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'subscribe')
         await click_button(pilot, '#echo-button')
         assert '/chatter' in fake.subscriptions
         from std_msgs.msg import String
@@ -461,6 +485,111 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
         assert await wait_until(pilot, lambda: 'hello there' in log_text(tab))
         await click_button(pilot, '#echo-button')
         assert '/chatter' not in fake.subscriptions
+
+
+async def test_topic_selection_shows_mode_popup_with_counts():
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        tab.post_message(FilterableList.Selected(CHATTER_ENTRY))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        assert fake.topic_counts_requests == ['/chatter']
+        popup = app.screen
+        assert '/chatter' in static_text(popup.query_one('#topic-mode-name', Static))
+        # The stubbed future resolves to (1, 2) publishers/subscribers.
+        counts = popup.query_one('#topic-mode-counts', Static)
+        assert await wait_until(pilot, lambda: 'publishers: 1' in static_text(counts))
+        assert 'subscribers: 2' in static_text(counts)
+
+
+async def test_mode_popup_escape_leaves_view_unchanged():
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        tab.post_message(FilterableList.Selected(CHATTER_ENTRY))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('escape')
+        await pilot.pause()
+        assert not isinstance(app.screen, TopicModePopup)
+        assert tab.current_entry is None  # Nothing was selected before; stays blank.
+
+
+async def test_publish_mode_shows_publish_controls_only():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        assert tab.query_one('#editor', TextArea).display
+        assert not tab.query_one('#topic-structure-tree', Tree).display
+        assert tab.query_one('#publish-button', Button).display
+        assert tab.query_one('#rate-button', Button).display
+        assert not tab.query_one('#echo-button', Button).display
+        assert not tab.query_one('#pause-button', Button).display
+        assert str(tab.query_one('#mode-toggle-button', Button).label) == '→ Subscribe'
+
+
+async def test_subscribe_mode_shows_structure_tree_and_echo_controls():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        assert tree.display
+        assert not tab.query_one('#editor', TextArea).display
+        assert tab.query_one('#echo-button', Button).display
+        assert not tab.query_one('#publish-button', Button).display
+        assert str(tab.query_one('#mode-toggle-button', Button).label) == '→ Publish'
+        # PoseStamped: header + pose branches, collapsed, with nested children.
+        labels = [str(node.label) for node in tree.root.children]
+        assert any(label.startswith('header:') for label in labels)
+        pose = next(node for node in tree.root.children if str(node.label).startswith('pose:'))
+        assert not pose.is_expanded
+        assert any('position:' in str(child.label) for child in pose.children)
+
+
+async def test_mode_toggle_flips_and_stops_running_echo():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'subscribe')
+        await click_button(pilot, '#echo-button')
+        assert '/chatter' in fake.subscriptions
+        # Toggling to publish stops the live echo and swaps the layout.
+        await click_button(pilot, '#mode-toggle-button')
+        assert '/chatter' not in fake.subscriptions
+        assert tab.query_one('#editor', TextArea).display
+        assert tab.current_entry.name == '/chatter'  # topic preserved across the switch.
+
+
+async def test_ctrl_s_publishes_in_publish_mode_and_echoes_in_subscribe_mode():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'publish')
+        tab.query_one('#editor', TextArea).load_text('data: hi')
+        await pilot.press('ctrl+s')
+        await pilot.pause()
+        assert len(fake.published) == 1
+
+        await click_button(pilot, '#mode-toggle-button')  # -> subscribe
+        await pilot.press('ctrl+s')  # primary action now toggles echo
+        await pilot.pause()
+        assert '/chatter' in fake.subscriptions
 
 
 async def test_nodes_tab_present_and_labeled():
@@ -519,6 +648,10 @@ async def test_interfaces_tree_prehighlights_first_interface():
         # Enter on the pre-highlighted leaf jumps immediately.
         await pilot.press('enter')
         assert app.query_one(TabbedContent).active == 'topics'
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         topics = app.query_one('#topics-tab')
         assert await wait_until(
             pilot,
@@ -546,6 +679,10 @@ async def test_interfaces_tree_keyboard_navigation_jumps():
         )
         await pilot.press('enter')
         assert app.query_one(TabbedContent).active == 'topics'
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         topics = app.query_one('#topics-tab')
         assert await wait_until(
             pilot,
@@ -569,6 +706,11 @@ async def test_publisher_leaf_jumps_to_topics_tab():
         leaf = await _jump(pilot, app, '/chatter')
         assert leaf.data[0] == 'topics'
         assert app.query_one(TabbedContent).active == 'topics'
+        # A jump to a topic pops the mode chooser too; pick publish to land on the topic.
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         topics = app.query_one('#topics-tab')
         assert await wait_until(
             pilot,
@@ -989,7 +1131,7 @@ async def test_list_minimizes_on_select_and_maximizes_on_filter_and_cycle():
         assert _is_maximized(tab)
 
         # Selecting an entry minimizes — right pane takes over, list hides.
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await select_topic(pilot, tab, CHATTER_ENTRY)
         assert not _is_maximized(tab)
 
         # ctrl+f re-maximizes and focuses the filter.
@@ -998,9 +1140,8 @@ async def test_list_minimizes_on_select_and_maximizes_on_filter_and_cycle():
         assert _is_maximized(tab)
         assert app.focused is not None and app.focused.id == 'filter-input'
 
-        # Minimize again, then ctrl+t maximizes the destination tab. (The seed is already
-        # cached, so select_entry returns at once; pause to let the handler minimize.)
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        # Minimize again, then ctrl+t maximizes the destination tab.
+        await select_topic(pilot, tab, CHATTER_ENTRY)
         await pilot.pause()
         assert not _is_maximized(tab)
         await pilot.press('ctrl+t')
@@ -1016,7 +1157,7 @@ async def test_returning_to_tab_with_selection_restores_detail_view():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await select_topic(pilot, tab, CHATTER_ENTRY)
         await pilot.pause()
         assert not _is_maximized(tab)  # detail view showing.
 
@@ -1060,6 +1201,10 @@ async def test_cross_tab_jump_opens_destination_minimized():
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
         await _jump(pilot, app, '/chatter')
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         topics = app.query_one('#topics-tab')
         assert await wait_until(
             pilot,

@@ -53,6 +53,7 @@ class InterfaceTab(EntityTab):
         self._current: InterfaceEntry | None = None
         self._seed_cache: dict[str, str] = {}
         self._edit_cache: dict[str, str] = {}
+        self._extra_cache: dict[str, Any] = {}
         self._parse_timer = None
         self._editor_error_text = ''
 
@@ -63,9 +64,7 @@ class InterfaceTab(EntityTab):
         with Vertical(classes='right-pane'):
             yield Static('', id='detail-title')
             yield Static('— select an entry on the left —', id='detail-line')
-            yield TextArea(
-                id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
-            )
+            yield from self.compose_editor_area()
             yield Static('', id='editor-error')
             with Horizontal(classes='controls'):
                 yield from self.compose_controls()
@@ -77,6 +76,9 @@ class InterfaceTab(EntityTab):
                 markup=False,
                 highlight=False,
             )
+
+    def compose_editor_area(self) -> Iterable[Widget]:
+        yield TextArea(id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False)
 
     def compose_controls(self) -> Iterable[Widget]:
         return ()
@@ -109,13 +111,20 @@ class InterfaceTab(EntityTab):
     @on(FilterableList.Selected)
     def _on_entry_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
+        if self._defer_selection(message.entry):
+            return
+        self._apply_selection(message.entry)
+
+    def _defer_selection(self, entry: InterfaceEntry) -> bool:
+        """Override to intercept a selection (e.g. a mode-choice popup). True = deferred."""
+        return False
+
+    def _apply_selection(self, entry: InterfaceEntry) -> None:
         self.minimize_list()
         self._store_current_edit()
-        self._current = message.entry
-        self.query_one('#detail-title', Static).update(
-            f'{self.entity_label}: {message.entry.name}'
-        )
-        type_name = message.entry.types[0] if message.entry.types else ''
+        self._current = entry
+        self.query_one('#detail-title', Static).update(f'{self.entity_label}: {entry.name}')
+        type_name = entry.types[0] if entry.types else ''
         detail = self.query_one('#detail-line', Static)
         if not type_name:
             # A leaf jumped from the Nodes tab can carry no type; degrade instead of crashing.
@@ -123,7 +132,11 @@ class InterfaceTab(EntityTab):
             self.query_one('#editor', TextArea).load_text('')
             return
         detail.update(Text(f'loading {type_name} …', style='dim'))
-        self._load_prototype(message.entry)
+        self._load_prototype(entry)
+
+    def _extra_prototype_data(self, kind: str, type_name: str) -> Any:
+        """Extra data computed alongside the YAML seed in the worker (override hook)."""
+        return None
 
     def _load_prototype(self, entry: InterfaceEntry) -> None:
         kind, entry_name = self.kind, entry.name
@@ -132,10 +145,11 @@ class InterfaceTab(EntityTab):
         def load() -> None:
             try:
                 seed_text = default_yaml(kind, type_name)
+                extra = self._extra_prototype_data(kind, type_name)
                 error = ''
             except IntrospectionError as introspection_error:
-                seed_text, error = '', str(introspection_error)
-            self.post_message(PrototypeReady(entry_name, type_name, seed_text, error))
+                seed_text, extra, error = '', None, str(introspection_error)
+            self.post_message(PrototypeReady(entry_name, type_name, seed_text, error, extra))
 
         self.run_worker(load, thread=True, exclusive=True, group='type-load')
 
@@ -150,6 +164,7 @@ class InterfaceTab(EntityTab):
             editor.load_text('')
             return
         self._seed_cache[message.entry_name] = message.seed_text
+        self._extra_cache[message.entry_name] = message.extra
         types_note = ''
         if len(self._current.types) > 1:
             types_note = f'  (+{len(self._current.types) - 1} more types)'

@@ -27,6 +27,7 @@ dotted/indexed path (``pose.position.x``, ``points[1].x``).
 import array
 import functools
 import math
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy
@@ -101,6 +102,41 @@ def default_yaml(kind: str, type_name: str) -> str:
     text = _dump_yaml(plain) if plain else '# (no fields)\n'
     constants = _constants_comment(fillable)
     return text + constants
+
+
+@dataclass(frozen=True)
+class FieldNode:
+    """A field in a message's static structure: its name, type label, and nested fields."""
+
+    name: str
+    type_label: str
+    children: tuple['FieldNode', ...] = field(default_factory=tuple)
+
+
+@functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
+def message_structure(kind: str, type_name: str) -> tuple[FieldNode, ...]:
+    """Static field tree for ``kind``/``type_name`` (introspected from the class, no instance)."""
+    fillable = request_class(kind, import_type(kind, type_name))
+    return _class_fields(fillable, frozenset())
+
+
+def _class_fields(message_class: type, seen: frozenset) -> tuple[FieldNode, ...]:
+    types = message_class.get_fields_and_field_types()
+    return tuple(
+        FieldNode(name, types[name], _slot_children(slot, seen))
+        for name, slot in zip(types, message_class.SLOT_TYPES)
+    )
+
+
+def _slot_children(slot: Any, seen: frozenset) -> tuple['FieldNode', ...]:
+    value_type = slot.value_type if isinstance(slot, AbstractNestedType) else slot
+    if not isinstance(value_type, NamespacedType):
+        return ()
+    nested = import_message_from_namespaced_type(value_type)
+    key = f'{nested.__module__}.{nested.__name__}'
+    if key in seen:
+        return ()  # Defensive: ROS IDL messages are not normally cyclic.
+    return _class_fields(nested, seen | {key})
 
 
 def message_to_plain(message: Any) -> dict:

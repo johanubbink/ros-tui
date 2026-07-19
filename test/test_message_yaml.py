@@ -26,6 +26,7 @@ from ros_tui.ros.message_yaml import (
     default_yaml,
     import_type,
     interface_label,
+    message_structure,
     message_to_plain,
     request_class,
 )
@@ -274,3 +275,30 @@ def test_build_from_none_returns_defaults():
     message, time_setters = build_message(string_class, None)
     assert message == string_class()
     assert time_setters == []
+
+
+def test_message_structure_scalar_leaf():
+    fields = message_structure('msg', 'std_msgs/msg/String')
+    assert len(fields) == 1
+    assert fields[0].name == 'data'
+    assert fields[0].type_label == 'string'
+    assert fields[0].children == ()
+
+
+def test_message_structure_nested_and_labels():
+    fields = {node.name: node for node in message_structure('msg', 'geometry_msgs/msg/PoseStamped')}
+    assert fields['header'].children  # std_msgs/Header expands.
+    pose = fields['pose']
+    child_names = [child.name for child in pose.children]
+    assert child_names == ['position', 'orientation']
+    # Leaf type labels match the raw get_fields_and_field_types() strings.
+    position = next(child for child in pose.children if child.name == 'position')
+    x_field = next(child for child in position.children if child.name == 'x')
+    assert x_field.type_label == 'double'
+
+
+def test_message_structure_walks_into_array_element_type():
+    fields = {node.name: node for node in message_structure('msg', 'geometry_msgs/msg/Polygon')}
+    points = fields['points']  # geometry_msgs/Point32[]
+    assert points.children  # walks into the array's element message, not treated as scalar.
+    assert any(child.name == 'x' for child in points.children)

@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# Copyright 2026 Johan Ubbink
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Modal asking whether to work with a topic in publish or subscribe mode."""
+
+from textual import on
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Button, Static
+
+from ros_tui.ros.graph import InterfaceEntry
+from ros_tui.ui.messages import TopicCountsReady
+
+
+class TopicModePopup(ModalScreen[str | None]):
+    """Dismisses with 'publish', 'subscribe', or None (cancelled)."""
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Cancel', priority=True),
+        Binding('p', 'choose_publish', 'Publish', show=False),
+        Binding('s', 'choose_subscribe', 'Subscribe', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    TopicModePopup { align: center middle; }
+    TopicModePopup #topic-mode-box { width: 60; height: auto; border: round $primary; padding: 1 2; }
+    TopicModePopup #topic-mode-box Static { height: 1; }
+    TopicModePopup #topic-mode-buttons { height: 3; margin-top: 1; }
+    TopicModePopup #topic-mode-buttons Button { margin-right: 1; }
+    """
+
+    def __init__(self, entry: InterfaceEntry, counts_future):
+        super().__init__()
+        self._entry = entry
+        self._counts_future = counts_future
+
+    def compose(self):
+        with Vertical(id='topic-mode-box'):
+            yield Static(f'Topic: {self._entry.name}', id='topic-mode-name')
+            yield Static(self._entry.types[0] if self._entry.types else '', id='topic-mode-type')
+            yield Static('publishers: … · subscribers: …', id='topic-mode-counts')
+            with Horizontal(id='topic-mode-buttons'):
+                yield Button('[P]ublish', id='topic-mode-publish', variant='primary')
+                yield Button('[S]ubscribe', id='topic-mode-subscribe')
+
+    def on_mount(self) -> None:
+        self._counts_future.add_done_callback(self._post_counts)
+
+    def _post_counts(self, done) -> None:
+        try:
+            pubs, subs = done.result()
+            self.post_message(TopicCountsReady(pubs, subs, None))
+        except BaseException as error:  # noqa: BLE001 - shown as '?' in the popup
+            self.post_message(TopicCountsReady(None, None, str(error) or type(error).__name__))
+
+    def on_topic_counts_ready(self, message: TopicCountsReady) -> None:
+        message.stop()
+        if message.error is None:
+            text = f'publishers: {message.pub_count} · subscribers: {message.sub_count}'
+        else:
+            text = 'publishers: ? · subscribers: ?'
+        self.query_one('#topic-mode-counts', Static).update(text)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_choose_publish(self) -> None:
+        self.dismiss('publish')
+
+    def action_choose_subscribe(self) -> None:
+        self.dismiss('subscribe')
+
+    @on(Button.Pressed, '#topic-mode-publish')
+    def _publish_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss('publish')
+
+    @on(Button.Pressed, '#topic-mode-subscribe')
+    def _subscribe_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss('subscribe')
