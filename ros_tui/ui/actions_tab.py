@@ -20,7 +20,7 @@ from collections import deque
 
 from rich.text import Text
 from textual import on
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, TextArea
 
 from ros_tui.constants import (
     ECHO_RENDER_PERIOD_S,
@@ -61,6 +61,11 @@ class ActionsTab(InterfaceTab):
 
     def on_mount(self) -> None:
         self.set_interval(ECHO_RENDER_PERIOD_S, self._drain_feedback)
+
+    def on_selection_changed(self) -> None:
+        # Land in the editor so the goal is ready to edit and send straight after
+        # picking an action — the whole point of selecting one here is to send a goal.
+        self.query_one('#editor', TextArea).focus()
 
     @on(Button.Pressed, '#send-button')
     def _on_send_pressed(self, event: Button.Pressed) -> None:

@@ -81,6 +81,14 @@ class RosTuiApp(App):
     .entity-list { width: 1fr; min-width: 28; border: round $primary; }
     .entity-list #filter-input { border: none; height: 1; padding: 0 1; }
     .entity-list #entity-list { height: 1fr; border: none; }
+    /* Keep the highlighted row a dark gray in both focus states. Textual otherwise
+       paints the focused option with the cyan block cursor, which collides with the
+       cyan message-type text and makes it unreadable. */
+    .entity-list #entity-list > .option-list--option-highlighted,
+    .entity-list #entity-list:focus > .option-list--option-highlighted {
+        background: $surface-lighten-2;
+        color: $text;
+    }
     /* Tabs start maximized (list only); selecting an entry reveals the right pane. */
     .right-pane { width: 1fr; padding: 0 1; display: none; }
     #detail-title, #node-title { height: 1; color: $primary; text-style: bold; }

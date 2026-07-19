@@ -15,6 +15,8 @@
 
 """Filterable entity list: an Input over an OptionList, debounced, selection-preserving."""
 
+from rich.table import Table
+from rich.text import Text
 from textual import on
 from textual.containers import Vertical
 from textual.message import Message
@@ -112,6 +114,19 @@ class FilterableList(Vertical):
         event.stop()
         event.prevent_default()
 
+    @staticmethod
+    def _render_prompt(entry: InterfaceEntry):
+        """Row content: entry name left-aligned (kept in full), message type on the
+        right in a distinct dim-cyan. The type column absorbs the slack and truncates
+        first, so a narrow list clips the (less important) type before the name."""
+        if not entry.types:
+            return entry.name
+        grid = Table.grid(expand=True)
+        grid.add_column(no_wrap=True, overflow='ellipsis')  # name: priority
+        grid.add_column(justify='right', no_wrap=True, overflow='ellipsis', ratio=1)
+        grid.add_row(entry.name, Text('  ' + entry.types[0], style='dim cyan'))
+        return grid
+
     def _refresh_options(self) -> None:
         option_list = self.query_one('#entity-list', OptionList)
         previous_id = None
@@ -136,7 +151,7 @@ class FilterableList(Vertical):
             if entry.name in seen:
                 continue
             seen.add(entry.name)
-            options.append(Option(entry.name, id=entry.name))
+            options.append(Option(self._render_prompt(entry), id=entry.name))
         option_list.add_options(options)
         restored = False
         if previous_id is not None:

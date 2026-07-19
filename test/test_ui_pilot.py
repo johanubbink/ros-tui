@@ -312,6 +312,28 @@ async def test_selecting_topic_seeds_editor_with_defaults():
         assert 'w: 1.0' in editor_text
 
 
+async def test_selecting_topic_focuses_editor():
+    """Selecting a topic lands focus in the message editor, ready to edit and publish."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_entry(pilot, tab, POSE_ENTRY)
+        await pilot.pause()
+        assert app.focused is tab.query_one('#editor', TextArea)
+
+
+async def test_selecting_service_focuses_editor():
+    """Selecting a service lands focus in the request editor, ready to edit and call."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'services')
+        tab = app.query_one('#services-tab')
+        await select_entry(pilot, tab, ADD_TWO_INTS_ENTRY)
+        await pilot.pause()
+        assert app.focused is tab.query_one('#editor', TextArea)
+
+
 async def test_invalid_yaml_blocks_call_with_inline_error():
     fake = FakeBridge()
     app = RosTuiApp(fake)
@@ -350,6 +372,17 @@ async def test_call_sends_request_and_renders_response():
         assert await wait_until(pilot, lambda: not tab.query_one('#call-button', Button).disabled)
         assert 'response in' in log_text(tab)
         assert 'sum: 5' in log_text(tab)
+
+
+async def test_selecting_action_focuses_editor():
+    """Selecting an action lands focus in the goal editor, ready to edit and send."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'actions')
+        tab = app.query_one('#actions-tab')
+        await select_entry(pilot, tab, FIBONACCI_ENTRY)
+        await pilot.pause()
+        assert app.focused is tab.query_one('#editor', TextArea)
 
 
 async def test_action_goal_feedback_result_render():

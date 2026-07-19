@@ -17,7 +17,7 @@
 
 from rich.text import Text
 from textual import on
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from ros_tui.constants import (
     ECHO_MAX_RENDER_PER_TICK,
@@ -58,6 +58,9 @@ class TopicsTab(InterfaceTab):
 
     def on_selection_changed(self) -> None:
         self._update_controls()
+        # Land in the editor so the message is ready to edit and publish straight after
+        # picking a topic — the whole point of selecting one here is to send something.
+        self.query_one('#editor', TextArea).focus()
 
     # ------------------------------------------------------------------ publishing
 
