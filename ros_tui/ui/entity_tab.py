@@ -62,6 +62,14 @@ class EntityTab(Horizontal):
         self.query_one(FilterableList).display = False
         self.query_one('.right-pane').display = True
 
+    def focus_content(self) -> None:
+        """Move focus onto the detail pane's primary widget (editor / interfaces tree).
+
+        Called when re-entering a tab that already has a selection, so the content is
+        ready to edit or navigate without a detour through the list. A tab with no such
+        widget inherits this no-op.
+        """
+
     def select_entity(self, entry: InterfaceEntry) -> None:
         """Programmatically select ``entry`` (cross-tab jump target).
 

@@ -89,6 +89,10 @@ class InterfaceTab(EntityTab):
     def on_selection_changed(self) -> None:
         """Refresh subclass control state after a new entry loads (override hook)."""
 
+    def focus_content(self) -> None:
+        """Re-entering the tab lands in the editor, ready to edit the message."""
+        self.query_one('#editor', TextArea).focus()
+
     # ------------------------------------------------------------------ entries & selection
 
     def select_entity(self, entry: InterfaceEntry) -> None:

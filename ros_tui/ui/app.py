@@ -197,6 +197,7 @@ class RosTuiApp(App):
             tab.maximize_list()
         elif tab.has_selection():
             tab.minimize_list()
+            tab.focus_content()
         else:
             tab.focus_filter()
 

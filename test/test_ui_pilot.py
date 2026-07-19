@@ -1001,11 +1001,31 @@ async def test_returning_to_tab_with_selection_restores_detail_view():
         # The selection survived, so topics reopens on its detail view, not the list.
         assert tab.current_entry is not None and tab.current_entry.name == '/chatter'
         assert not _is_maximized(tab)
+        # Focus lands in the editor, ready to edit the message without a detour via the list.
+        assert app.focused is tab.query_one('#editor', TextArea)
 
         # ctrl+f still returns to the list from there.
         await pilot.press('ctrl+f')
         await pilot.pause()
         assert _is_maximized(tab)
+
+
+async def test_returning_to_nodes_tab_with_selection_focuses_tree():
+    """Re-entering the Nodes tab with a node already selected lands focus on the
+    interfaces tree, ready to navigate — the counterpart to the editor focus on the
+    interface tabs."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        assert not _is_maximized(tab)
+
+        # Cycle away and all the way back to the Nodes tab.
+        for _ in range(4):
+            await pilot.press('ctrl+t')
+            await pilot.pause()
+        assert app._active_tab() is tab
+        assert not _is_maximized(tab)
+        assert app.focused is tab.query_one('#node-interfaces', Tree)
 
 
 async def test_cross_tab_jump_opens_destination_minimized():

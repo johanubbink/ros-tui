@@ -100,6 +100,10 @@ class NodesTab(EntityTab):
     def has_selection(self) -> bool:
         return self._current_node is not None
 
+    def focus_content(self) -> None:
+        """Re-entering the tab lands on the interfaces tree, ready to navigate."""
+        self.query_one('#node-interfaces', Tree).focus()
+
     @on(FilterableList.Selected)
     def _on_node_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
