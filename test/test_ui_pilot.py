@@ -495,6 +495,37 @@ async def test_selecting_node_shows_interfaces_and_params():
         assert rows == ['use_sim_time', 'rate']
 
 
+async def test_selecting_node_focuses_interfaces_tree():
+    """Selecting a node lands focus on the interfaces tree, ready for keyboard navigation."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        assert app.focused is tab.query_one('#node-interfaces', Tree)
+
+
+async def test_interfaces_tree_keyboard_navigation_jumps():
+    """From the focused tree, arrow keys move the cursor and enter jumps to the target tab."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tree = tab.query_one('#node-interfaces', Tree)
+        assert app.focused is tree
+        # First down places the cursor on the Publishers branch, second on its /chatter leaf.
+        await pilot.press('down')
+        await pilot.press('down')
+        assert await wait_until(
+            pilot,
+            lambda: tree.cursor_node is not None and 'chatter' in str(tree.cursor_node.label),
+        )
+        await pilot.press('enter')
+        assert app.query_one(TabbedContent).active == 'topics'
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+        )
+
+
 async def _jump(pilot, app, leaf_substr):
     tab = await select_node(pilot, app)
     tree = tab.query_one('#node-interfaces', Tree)

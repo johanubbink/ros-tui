@@ -104,6 +104,9 @@ class NodesTab(EntityTab):
     def _on_node_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
         self.minimize_list()
+        # Land on the interfaces tree so its entries are navigable straight away:
+        # up/down move the cursor, enter jumps to the highlighted interface's tab.
+        self.query_one('#node-interfaces', Tree).focus()
         if message.entry.name == self._current_node:
             return  # Already showing this node; keep cached info/params (Refresh re-fetches).
         self._current_node = message.entry.name
