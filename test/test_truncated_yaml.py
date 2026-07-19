@@ -19,7 +19,7 @@ import array
 import time
 
 import yaml
-from ros_tui.ros.message_yaml import import_type, to_truncated_yaml
+from ros_tui.ros.message_yaml import import_type, to_filtered_yaml, to_truncated_yaml
 
 
 def test_array_over_limit_truncated_with_total():
@@ -82,3 +82,55 @@ def test_megabyte_blob_renders_fast():
 def test_no_fields_message_renders_placeholder():
     trigger = import_type('srv', 'std_srvs/srv/Trigger')
     assert to_truncated_yaml(trigger.Request()) == '(no fields)'
+
+
+def test_filtered_keeps_only_selected_scalar():
+    point_class = import_type('msg', 'geometry_msgs/msg/Point')
+    message = point_class(x=1.0, y=2.0, z=3.0)
+    rendered = yaml.safe_load(to_filtered_yaml(message, {'x'}))
+    assert rendered == {'x': 1.0}
+
+
+def test_filtered_keeps_nested_path():
+    pose_class = import_type('msg', 'geometry_msgs/msg/PoseStamped')
+    message = pose_class()
+    message.pose.position.x = 5.0
+    rendered = yaml.safe_load(to_filtered_yaml(message, {'pose.position.x'}))
+    assert rendered == {'pose': {'position': {'x': 5.0}}}
+
+
+def test_filtered_sequence_of_message_applies_subpath_per_element():
+    polygon_class = import_type('msg', 'geometry_msgs/msg/Polygon')
+    point_class = import_type('msg', 'geometry_msgs/msg/Point32')
+    message = polygon_class()
+    message.points = [point_class(x=float(index), y=9.0) for index in range(3)]
+    rendered = yaml.safe_load(to_filtered_yaml(message, {'points.x'}))
+    assert rendered == {'points': [{'x': 0.0}, {'x': 1.0}, {'x': 2.0}]}
+
+
+def test_filtered_all_leaves_matches_truncated():
+    pose_class = import_type('msg', 'geometry_msgs/msg/PoseStamped')
+    message = pose_class()
+    all_paths = {
+        'header.stamp.sec',
+        'header.stamp.nanosec',
+        'header.frame_id',
+        'pose.position.x',
+        'pose.position.y',
+        'pose.position.z',
+        'pose.orientation.x',
+        'pose.orientation.y',
+        'pose.orientation.z',
+        'pose.orientation.w',
+    }
+    assert to_filtered_yaml(message, all_paths) == to_truncated_yaml(message)
+
+
+def test_filtered_array_still_truncated():
+    multi_array_class = import_type('msg', 'std_msgs/msg/UInt8MultiArray')
+    message = multi_array_class()
+    message.data = list(range(100))
+    rendered = yaml.safe_load(to_filtered_yaml(message, {'data'}))
+    assert 'layout' not in rendered
+    assert len(rendered['data']) == 17
+    assert rendered['data'][16] == '… (100 total)'

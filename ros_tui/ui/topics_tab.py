@@ -15,6 +15,8 @@
 
 """Topics tab: publish or subscribe to a topic, chosen per topic via a mode popup."""
 
+from dataclasses import dataclass
+
 from rich.text import Text
 from textual import on
 from textual.widgets import Button, Input, Static, TextArea, Tree
@@ -27,10 +29,49 @@ from ros_tui.constants import (
 )
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.graph import InterfaceEntry
-from ros_tui.ros.message_yaml import FieldNode, message_structure, to_truncated_yaml
+from ros_tui.ros.message_yaml import (
+    FieldNode,
+    field_path,
+    message_structure,
+    to_filtered_yaml,
+    to_truncated_yaml,
+)
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import PublishCompleted
 from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+_CHECKBOX = {'checked': '[x]', 'unchecked': '[ ]', 'partial': '[~]'}
+
+
+@dataclass(frozen=True)
+class _FieldNodeData:
+    """Payload attached to each structure-tree node: its dotted path and label pieces."""
+
+    path: str
+    name: str
+    type_label: str
+
+
+def _leaf_paths_under(node) -> list[str]:
+    """Every leaf field path at or below ``node`` (the tree root carries no data)."""
+    if node.data is None:
+        return [path for child in node.children for path in _leaf_paths_under(child)]
+    if not node.children:
+        return [node.data.path]
+    return [path for child in node.children for path in _leaf_paths_under(child)]
+
+
+def _node_state(node, selected: set[str] | None) -> str:
+    """Tri-state of a node's checkbox, derived from how many of its leaves are selected."""
+    if not selected:
+        return 'checked'  # No selection means "show everything".
+    leaves = _leaf_paths_under(node)
+    count = sum(1 for leaf in leaves if leaf in selected)
+    if count == len(leaves):
+        return 'checked'
+    if count == 0:
+        return 'unchecked'
+    return 'partial'
 
 
 class TopicsTab(InterfaceTab):
@@ -45,6 +86,7 @@ class TopicsTab(InterfaceTab):
         self._echo_topic: str | None = None
         self._echo_buffer: EchoBuffer | None = None
         self._echo_paused = False
+        self._topic_selection: dict[str, set[str]] = {}  # topic -> selected leaf paths
 
     def compose_editor_area(self):
         yield TextArea(id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False)
@@ -62,7 +104,11 @@ class TopicsTab(InterfaceTab):
         yield Static('', id='topics-status')
 
     def on_mount(self) -> None:
-        self.query_one('#topic-structure-tree', Tree).show_root = False
+        tree = self.query_one('#topic-structure-tree', Tree)
+        tree.show_root = False
+        # Selecting a branch toggles its checkbox; keep it from also expand/collapsing
+        # (Tree's built-in auto_expand runs on NodeSelected before our handler).
+        tree.auto_expand = False
         self.set_interval(ECHO_RENDER_PERIOD_S, self._drain_echo)
         self._apply_mode_layout()
 
@@ -129,17 +175,57 @@ class TopicsTab(InterfaceTab):
         tree = self.query_one('#topic-structure-tree', Tree)
         tree.clear()
         fields = self._extra_cache.get(self._current.name) if self._current else None
+        selected = self._topic_selection.get(self._current.name) if self._current else None
         for field in fields or ():
-            self._add_field_node(tree.root, field)
+            self._add_field_node(tree.root, field, '', selected)
 
-    def _add_field_node(self, parent, field: FieldNode) -> None:
-        label = f'{field.name}: {field.type_label}'
+    def _add_field_node(self, parent, field: FieldNode, path_prefix: str, selected) -> None:
+        path = field_path(path_prefix, field.name)
+        data = _FieldNodeData(path, field.name, field.type_label)
         if field.children:
-            node = parent.add(label, expand=False)
+            node = parent.add(Text(''), data=data, expand=False)
             for child in field.children:
-                self._add_field_node(node, child)
+                self._add_field_node(node, child, path, selected)
         else:
-            parent.add_leaf(label)
+            node = parent.add_leaf(Text(''), data=data)
+        self._relabel(node, selected)
+
+    def _relabel(self, node, selected) -> None:
+        state = _node_state(node, selected)
+        node.set_label(Text(f'{_CHECKBOX[state]} {node.data.name}: {node.data.type_label}'))
+
+    def _refresh_labels(self, node, selected) -> None:
+        self._relabel(node, selected)
+        for child in node.children:
+            self._refresh_labels(child, selected)
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        event.stop()
+        node = event.node
+        if node.data is None or self._current is None:
+            return
+        tree = self.query_one('#topic-structure-tree', Tree)
+        name = self._current.name
+        selected = self._topic_selection.get(name)
+        if not selected:  # Absent or empty: materialize "all selected", then toggle from there.
+            selected = set(_leaf_paths_under(tree.root))
+            self._topic_selection[name] = selected
+        leaves = _leaf_paths_under(node)
+        if any(leaf not in selected for leaf in leaves):
+            selected.update(leaves)  # Partial/unchecked -> select the whole subtree.
+        else:
+            selected.difference_update(leaves)  # Fully selected -> clear it.
+        for child in tree.root.children:
+            self._refresh_labels(child, selected)
+
+    def reset_editor(self) -> None:
+        """ctrl+r: in subscribe mode clear the field selection (echo everything again)."""
+        if self._mode == 'subscribe':
+            if self._current is not None:
+                self._topic_selection.pop(self._current.name, None)
+                self._populate_structure_tree()
+            return
+        super().reset_editor()
 
     # ------------------------------------------------------------------ publishing
 
@@ -295,9 +381,13 @@ class TopicsTab(InterfaceTab):
             hidden = len(messages) - ECHO_MAX_RENDER_PER_TICK
             self.write_log(f'(+{hidden} messages not shown)', style='dim')
             messages = messages[-ECHO_MAX_RENDER_PER_TICK:]
+        selected = self._topic_selection.get(self._echo_topic)
         for received_message in messages:
             self.write_log(f'─── {self._echo_topic}', style='dim')
-            self.write_log(to_truncated_yaml(received_message))
+            if selected:
+                self.write_log(to_filtered_yaml(received_message, selected))
+            else:
+                self.write_log(to_truncated_yaml(received_message))
 
     # ------------------------------------------------------------------ status & controls
 

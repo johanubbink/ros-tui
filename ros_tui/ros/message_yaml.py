@@ -104,6 +104,11 @@ def default_yaml(kind: str, type_name: str) -> str:
     return text + constants
 
 
+def field_path(parent_path: str, name: str) -> str:
+    """Dotted field path used by the structure tree and to_filtered_yaml (indices collapsed)."""
+    return f'{parent_path}.{name}' if parent_path else name
+
+
 @dataclass(frozen=True)
 class FieldNode:
     """A field in a message's static structure: its name, type label, and nested fields."""
@@ -166,7 +171,25 @@ def to_truncated_yaml(
 ) -> str:
     """Render a message as display YAML, truncating long arrays/strings and capping lines."""
     plain = _plain_message(message, max_array=max_array, max_str=TRUNCATE_STRING_CHARS)
-    text = _dump_yaml(plain) if plain else '(no fields)'
+    return _render_yaml_text(plain, max_lines, '(no fields)')
+
+
+def to_filtered_yaml(
+    message: Any,
+    selected_paths: Any,
+    max_array: int = TRUNCATE_ARRAY_ELEMENTS,
+    max_lines: int = TRUNCATE_RENDER_LINES,
+) -> str:
+    """Like to_truncated_yaml, but only includes fields whose dotted path is in ``selected_paths``
+    (or has a selected descendant, for nested/sequence-of-message fields)."""
+    plain = _plain_message(
+        message, max_array, TRUNCATE_STRING_CHARS, frozenset(selected_paths), ''
+    )
+    return _render_yaml_text(plain, max_lines, '(no fields)')
+
+
+def _render_yaml_text(plain: dict, max_lines: int, empty_text: str) -> str:
+    text = _dump_yaml(plain) if plain else empty_text
     lines = text.splitlines()
     if len(lines) > max_lines:
         hidden_count = len(lines) - max_lines
@@ -342,14 +365,36 @@ def _byte_value(value: Any, path: str) -> bytes:
     raise FieldError(path, f'byte field must be an integer in [0, 255], got {value!r}')
 
 
-def _plain_message(message: Any, max_array: int | None, max_str: int | None) -> dict:
+def _plain_message(
+    message: Any,
+    max_array: int | None,
+    max_str: int | None,
+    selected: frozenset[str] | None = None,
+    path: str = '',
+) -> dict:
     plain = {}
     for field_name, slot in zip(message.get_fields_and_field_types().keys(), message.SLOT_TYPES):
-        plain[field_name] = _plain_value(getattr(message, field_name), slot, max_array, max_str)
+        child_path = field_path(path, field_name)
+        if selected is not None and not _field_included(child_path, selected):
+            continue
+        plain[field_name] = _plain_value(
+            getattr(message, field_name), slot, max_array, max_str, selected, child_path
+        )
     return plain
 
 
-def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | None) -> Any:
+def _field_included(path: str, selected: frozenset[str]) -> bool:
+    return path in selected or any(candidate.startswith(f'{path}.') for candidate in selected)
+
+
+def _plain_value(
+    value: Any,
+    slot: Any,
+    max_array: int | None,
+    max_str: int | None,
+    selected: frozenset[str] | None = None,
+    path: str = '',
+) -> Any:
     if isinstance(slot, AbstractNestedType):
         total = len(value)
         truncated = max_array is not None and total > max_array
@@ -357,8 +402,11 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
         if isinstance(slot.value_type, BasicType) and slot.value_type.typename == 'octet':
             plain_items = [_byte_to_int(item) for item in items]
         else:
+            # Sequence-of-message: reuse the same collapsed path for every element, so a
+            # schema-level path like ``points.x`` filters each element uniformly.
             plain_items = [
-                _plain_value(item, slot.value_type, max_array, max_str) for item in items
+                _plain_value(item, slot.value_type, max_array, max_str, selected, path)
+                for item in items
             ]
         if truncated:
             plain_items.append(f'… ({total} total)')
@@ -366,7 +414,7 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
     if isinstance(slot, BasicType) and slot.typename == 'octet':
         return _byte_to_int(value)
     if hasattr(value, 'get_fields_and_field_types'):
-        return _plain_message(value, max_array, max_str)
+        return _plain_message(value, max_array, max_str, selected, path)
     if isinstance(value, numpy.number):
         return value.item()
     if isinstance(value, str) and max_str is not None and len(value) > max_str:

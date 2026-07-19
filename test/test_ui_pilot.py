@@ -551,11 +551,105 @@ async def test_subscribe_mode_shows_structure_tree_and_echo_controls():
         assert not tab.query_one('#publish-button', Button).display
         assert str(tab.query_one('#mode-toggle-button', Button).label) == '→ Publish'
         # PoseStamped: header + pose branches, collapsed, with nested children.
+        # Labels carry a checkbox prefix ('[x] header: ...'), default all selected.
         labels = [str(node.label) for node in tree.root.children]
-        assert any(label.startswith('header:') for label in labels)
-        pose = next(node for node in tree.root.children if str(node.label).startswith('pose:'))
+        assert any('header:' in label for label in labels)
+        pose = next(node for node in tree.root.children if 'pose:' in str(node.label))
         assert not pose.is_expanded
         assert any('position:' in str(child.label) for child in pose.children)
+
+
+def structure_node(tree, path):
+    """Find a node in the structure tree by its dotted path (stored on node.data)."""
+
+    def walk(node):
+        for child in node.children:
+            if child.data is not None and child.data.path == path:
+                return child
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+
+    return walk(tree.root)
+
+
+async def test_toggling_branch_off_filters_echo():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        header = structure_node(tree, 'header')
+        assert str(header.label).startswith('[x] ')
+        tab.on_tree_node_selected(Tree.NodeSelected(header))
+        await pilot.pause()
+        assert str(header.label).startswith('[ ] ')
+
+        await click_button(pilot, '#echo-button')
+        from geometry_msgs.msg import PoseStamped
+
+        fake.subscriptions['/pose'].push(PoseStamped())
+        assert await wait_until(pilot, lambda: 'pose:' in log_text(tab))
+        assert 'header:' not in log_text(tab)
+
+
+async def test_toggling_deep_leaf_marks_ancestors_partial():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        leaf = structure_node(tree, 'pose.position.x')
+        tab.on_tree_node_selected(Tree.NodeSelected(leaf))
+        await pilot.pause()
+        assert str(leaf.label).startswith('[ ] ')
+        assert str(structure_node(tree, 'pose.position').label).startswith('[~] ')
+        assert str(structure_node(tree, 'pose').label).startswith('[~] ')
+        assert str(structure_node(tree, 'pose.orientation').label).startswith('[x] ')
+
+
+async def test_enter_toggles_checkbox_without_expanding_branch():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        tree.focus()
+        header = structure_node(tree, 'header')
+        tree.move_cursor(header)
+        await pilot.pause()
+        assert not header.is_expanded
+        await pilot.press('enter')
+        await pilot.pause()
+        assert not header.is_expanded  # enter toggles the checkbox, not expand/collapse
+        assert str(header.label).startswith('[ ] ')
+
+
+async def test_reset_clears_field_selection():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        tab.on_tree_node_selected(Tree.NodeSelected(structure_node(tree, 'header')))
+        await pilot.pause()
+        assert '/pose' in tab._topic_selection
+        await pilot.press('ctrl+r')
+        await pilot.pause()
+        assert '/pose' not in tab._topic_selection
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        assert str(structure_node(tree, 'header').label).startswith('[x] ')
 
 
 async def test_mode_toggle_flips_and_stops_running_echo():
