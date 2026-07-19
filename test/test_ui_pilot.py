@@ -503,6 +503,29 @@ async def test_selecting_node_focuses_interfaces_tree():
         assert app.focused is tab.query_one('#node-interfaces', Tree)
 
 
+async def test_interfaces_tree_prehighlights_first_interface():
+    """The first interface leaf is pre-highlighted so the focused tree obviously shows
+    where the cursor sits; enter jumps straight away without any arrow keys first."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tree = tab.query_one('#node-interfaces', Tree)
+        # Highlighted (cursor on the first leaf), not selected — no jump has happened yet.
+        assert await wait_until(
+            pilot,
+            lambda: tree.cursor_node is not None and 'chatter' in str(tree.cursor_node.label),
+        )
+        assert app.query_one(TabbedContent).active == 'nodes'
+        # Enter on the pre-highlighted leaf jumps immediately.
+        await pilot.press('enter')
+        assert app.query_one(TabbedContent).active == 'topics'
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+        )
+
+
 async def test_interfaces_tree_keyboard_navigation_jumps():
     """From the focused tree, arrow keys move the cursor and enter jumps to the target tab."""
     app = RosTuiApp(FakeBridge())
@@ -510,19 +533,23 @@ async def test_interfaces_tree_keyboard_navigation_jumps():
         tab = await select_node(pilot, app)
         tree = tab.query_one('#node-interfaces', Tree)
         assert app.focused is tree
-        # First down places the cursor on the Publishers branch, second on its /chatter leaf.
-        await pilot.press('down')
-        await pilot.press('down')
+        # Cursor starts on the /chatter leaf; move down to the /pose subscriber leaf.
         assert await wait_until(
             pilot,
             lambda: tree.cursor_node is not None and 'chatter' in str(tree.cursor_node.label),
+        )
+        await pilot.press('down')  # onto the Subscribers branch
+        await pilot.press('down')  # onto its /pose leaf
+        assert await wait_until(
+            pilot,
+            lambda: tree.cursor_node is not None and 'pose' in str(tree.cursor_node.label),
         )
         await pilot.press('enter')
         assert app.query_one(TabbedContent).active == 'topics'
         topics = app.query_one('#topics-tab')
         assert await wait_until(
             pilot,
-            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/pose',
         )
 
 
