@@ -22,19 +22,22 @@ Brings up, on one node, one entity for each tab:
   EXECUTING → SUCCEEDED/CANCELED.
 - Services — ``example_interfaces/AddTwoInts`` on ``/add_two_ints``.
 - Topics   — ``/chatter`` (``std_msgs/String`` @ ~1 Hz) for a calm echo, ``/counter``
-  (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, and ``/inbox``
-  (``std_msgs/String`` subscriber) as a target for the Publish demo — what arrives is
-  logged so you can see your published message land.
+  (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, ``/localisation_pose``
+  (``geometry_msgs/PoseWithCovarianceStamped`` @ ~2 Hz) as a richer, nested message type to
+  browse and edit, and ``/inbox`` (``std_msgs/String`` subscriber) as a target for the Publish
+  demo — what arrives is logged so you can see your published message land.
 
 This mirrors the in-process ``FixtureServers`` used by the test suite
 (``test/conftest.py``), but as an installable node with public-looking names.
 """
 
+import math
 import time
 
 import rclpy
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
@@ -45,10 +48,12 @@ FIBONACCI_ACTION = '/fibonacci'
 ADD_TWO_INTS_SERVICE = '/add_two_ints'
 CHATTER_TOPIC = '/chatter'
 COUNTER_TOPIC = '/counter'
+LOCALISATION_POSE_TOPIC = '/localisation_pose'
 INBOX_TOPIC = '/inbox'
 
 CHATTER_PERIOD_S = 1.0
 COUNTER_PERIOD_S = 0.02  # ~50 Hz, fast enough to exercise the echo Hz/drop counters.
+LOCALISATION_POSE_PERIOD_S = 0.5  # ~2 Hz, a nested message type to browse and edit.
 FIBONACCI_FEEDBACK_PERIOD_S = 0.3  # Slow enough to watch the feedback stream in the UI.
 
 
@@ -79,13 +84,28 @@ class DemoServers(Node):
         self._counter = 0
         self.create_timer(COUNTER_PERIOD_S, self._publish_counter, callback_group=callback_group)
 
+        self._localisation_pose_publisher = self.create_publisher(
+            PoseWithCovarianceStamped, LOCALISATION_POSE_TOPIC, 10
+        )
+        self._localisation_step = 0
+        self.create_timer(
+            LOCALISATION_POSE_PERIOD_S, self._publish_localisation_pose, callback_group=callback_group
+        )
+
         self.create_subscription(
             String, INBOX_TOPIC, self._on_inbox, 10, callback_group=callback_group
         )
 
         self.get_logger().info(
-            'Demo servers ready: action %s, service %s, topics %s, %s, sub %s'
-            % (FIBONACCI_ACTION, ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, COUNTER_TOPIC, INBOX_TOPIC)
+            'Demo servers ready: action %s, service %s, topics %s, %s, %s, sub %s'
+            % (
+                FIBONACCI_ACTION,
+                ADD_TWO_INTS_SERVICE,
+                CHATTER_TOPIC,
+                COUNTER_TOPIC,
+                LOCALISATION_POSE_TOPIC,
+                INBOX_TOPIC,
+            )
         )
 
     def _publish_chatter(self):
@@ -95,6 +115,23 @@ class DemoServers(Node):
     def _publish_counter(self):
         self._counter += 1
         self._counter_publisher.publish(Int32(data=self._counter))
+
+    def _publish_localisation_pose(self):
+        self._localisation_step += 1
+        angle = self._localisation_step * LOCALISATION_POSE_PERIOD_S  # radians, ~1 rad/s.
+        message = PoseWithCovarianceStamped()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = 'map'
+        pose = message.pose.pose
+        pose.position.x = 2.0 * math.cos(angle)
+        pose.position.y = 2.0 * math.sin(angle)
+        pose.orientation.z = math.sin(angle / 2.0)
+        pose.orientation.w = math.cos(angle / 2.0)
+        # 6x6 row-major covariance; small variance on x/y/yaw, the rest left at zero.
+        message.pose.covariance[0] = 0.05  # x
+        message.pose.covariance[7] = 0.05  # y
+        message.pose.covariance[35] = 0.02  # yaw
+        self._localisation_pose_publisher.publish(message)
 
     def _on_inbox(self, message):
         self.get_logger().info(f'/inbox received: {message.data!r}')

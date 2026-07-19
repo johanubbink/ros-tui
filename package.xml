@@ -21,6 +21,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>example_interfaces</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-pytest-asyncio</test_depend>
