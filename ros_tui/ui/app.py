@@ -153,6 +153,7 @@ class RosTuiApp(App):
     def on_mount(self) -> None:
         self._bridge.set_graph_listener(lambda snapshot: self.post_message(GraphUpdated(snapshot)))
         self._apply_graph(self._bridge.latest_graph)
+        self.action_focus_filter()
 
     def on_unmount(self) -> None:
         self._bridge.set_graph_listener(None)
