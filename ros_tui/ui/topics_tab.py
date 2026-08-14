@@ -43,6 +43,20 @@ from ros_tui.ui.topic_mode_popup import TopicModePopup
 _CHECKBOX = {'checked': '[x]', 'unchecked': '[ ]', 'partial': '[~]'}
 
 
+def _first_value_location(text: str) -> tuple[int, int]:
+    """Cursor position of the first fillable value in seed YAML (skips parent keys/comments)."""
+    for row, line in enumerate(text.splitlines()):
+        stripped = line.lstrip()
+        if stripped.startswith('#'):
+            continue
+        if stripped.startswith('- ') and stripped[2:].strip():
+            return row, len(line) - len(stripped) + 2
+        separator = line.find(': ')
+        if separator != -1 and line[separator + 2 :].strip():
+            return row, separator + 2
+    return 0, 0
+
+
 @dataclass(frozen=True)
 class _FieldNodeData:
     """Payload attached to each structure-tree node: its dotted path and label pieces."""
@@ -145,7 +159,9 @@ class TopicsTab(InterfaceTab):
             self._populate_structure_tree()
             self.query_one('#topic-structure-tree', Tree).focus()
         else:
-            self.query_one('#editor', TextArea).focus()
+            editor = self.query_one('#editor', TextArea)
+            editor.focus()
+            editor.move_cursor(_first_value_location(editor.text))
 
     def _apply_mode_layout(self) -> None:
         right_pane = self.query_one('.right-pane')
