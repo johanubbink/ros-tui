@@ -38,6 +38,8 @@ class TopicModePopup(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Cancel', priority=True),
+        Binding('left', 'focus_publish', 'Focus publish', show=False),
+        Binding('right', 'focus_subscribe', 'Focus subscribe', show=False),
         Binding('p', 'choose_publish', 'Publish', show=False),
         Binding('s', 'choose_subscribe', 'Subscribe', show=False),
     ]
@@ -47,7 +49,18 @@ class TopicModePopup(ModalScreen[str | None]):
     TopicModePopup #topic-mode-box { width: 60; height: auto; border: round $primary; padding: 1 2; }
     TopicModePopup #topic-mode-box Static { height: 1; }
     TopicModePopup #topic-mode-buttons { height: 3; margin-top: 1; }
-    TopicModePopup #topic-mode-buttons Button { margin-right: 1; }
+    TopicModePopup #topic-mode-buttons Button {
+        margin-right: 1;
+        background: $surface;
+        color: $text;
+        border: round $primary;
+    }
+    TopicModePopup #topic-mode-buttons Button:focus {
+        background: $primary;
+        color: $text;
+        border: round $primary;
+        text-style: bold;
+    }
     """
 
     def __init__(self, entry: InterfaceEntry, counts_future):
@@ -61,11 +74,12 @@ class TopicModePopup(ModalScreen[str | None]):
             yield Static(self._entry.types[0] if self._entry.types else '', id='topic-mode-type')
             yield Static('publishers: … · subscribers: …', id='topic-mode-counts')
             with Horizontal(id='topic-mode-buttons'):
-                yield Button(_accel('Publish'), id='topic-mode-publish', variant='primary')
+                yield Button(_accel('Publish'), id='topic-mode-publish')
                 yield Button(_accel('Subscribe'), id='topic-mode-subscribe')
 
     def on_mount(self) -> None:
         self._counts_future.add_done_callback(self._post_counts)
+        self.query_one('#topic-mode-publish', Button).focus()
 
     def _post_counts(self, done) -> None:
         try:
@@ -84,6 +98,12 @@ class TopicModePopup(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def action_focus_publish(self) -> None:
+        self.query_one('#topic-mode-publish', Button).focus()
+
+    def action_focus_subscribe(self) -> None:
+        self.query_one('#topic-mode-subscribe', Button).focus()
 
     def action_choose_publish(self) -> None:
         self.dismiss('publish')

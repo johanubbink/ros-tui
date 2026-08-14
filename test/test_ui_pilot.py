@@ -506,6 +506,26 @@ async def test_topic_selection_shows_mode_popup_with_counts():
         assert 'subscribers: 2' in static_text(counts)
 
 
+async def test_topic_mode_popup_arrow_keys_move_focus_between_buttons():
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        tab.post_message(FilterableList.Selected(CHATTER_ENTRY))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        popup = app.screen
+        publish = popup.query_one('#topic-mode-publish', Button)
+        subscribe = popup.query_one('#topic-mode-subscribe', Button)
+
+        assert await wait_until(pilot, lambda: app.focused is publish)
+        await pilot.press('right')
+        assert await wait_until(pilot, lambda: app.focused is subscribe)
+        await pilot.press('left')
+        assert await wait_until(pilot, lambda: app.focused is publish)
+
+
 async def test_mode_popup_escape_leaves_view_unchanged():
     from ros_tui.ui.topic_mode_popup import TopicModePopup
 
