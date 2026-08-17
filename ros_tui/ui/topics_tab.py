@@ -43,18 +43,48 @@ from ros_tui.ui.topic_mode_popup import TopicModePopup
 _CHECKBOX = {'checked': '[x]', 'unchecked': '[ ]', 'partial': '[~]'}
 
 
-def _first_value_location(text: str) -> tuple[int, int]:
-    """Cursor position of the first fillable value in seed YAML (skips parent keys/comments)."""
+def _value_locations(text: str) -> list[tuple[int, int]]:
+    """Cursor positions of every fillable value in seed YAML (skips parent keys/comments)."""
+    locations: list[tuple[int, int]] = []
     for row, line in enumerate(text.splitlines()):
         stripped = line.lstrip()
         if stripped.startswith('#'):
             continue
         if stripped.startswith('- ') and stripped[2:].strip():
-            return row, len(line) - len(stripped) + 2
-        separator = line.find(': ')
-        if separator != -1 and line[separator + 2 :].strip():
-            return row, separator + 2
-    return 0, 0
+            locations.append((row, len(line) - len(stripped) + 2))
+        elif (separator := line.find(': ')) != -1 and line[separator + 2 :].strip():
+            locations.append((row, separator + 2))
+    return locations
+
+
+def _first_value_location(text: str) -> tuple[int, int]:
+    """Cursor position of the first fillable value in seed YAML, or the start if none."""
+    locations = _value_locations(text)
+    return locations[0] if locations else (0, 0)
+
+
+class MessageEditor(TextArea):
+    """YAML editor whose Tab / Shift+Tab jump between fillable values instead of indenting."""
+
+    async def _on_key(self, event) -> None:
+        if event.key in ('tab', 'shift+tab'):
+            event.stop()
+            event.prevent_default()
+            self._jump_to_value(forward=event.key == 'tab')
+            return
+        await super()._on_key(event)
+
+    def _jump_to_value(self, forward: bool) -> None:
+        locations = _value_locations(self.text)
+        if not locations:
+            return
+        cursor = self.cursor_location
+        if forward:
+            target = next((loc for loc in locations if loc > cursor), locations[0])
+        else:
+            earlier = [loc for loc in locations if loc < cursor]
+            target = earlier[-1] if earlier else locations[-1]
+        self.move_cursor(target)
 
 
 @dataclass(frozen=True)
@@ -103,7 +133,9 @@ class TopicsTab(InterfaceTab):
         self._topic_selection: dict[str, set[str]] = {}  # topic -> selected leaf paths
 
     def compose_editor_area(self):
-        yield TextArea(id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False)
+        yield MessageEditor(
+            id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
+        )
         yield Tree('message', id='topic-structure-tree')
 
     def compose_controls(self):

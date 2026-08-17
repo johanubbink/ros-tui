@@ -347,6 +347,41 @@ async def test_selecting_topic_focuses_editor():
         assert app.focused is tab.query_one('#editor', TextArea)
 
 
+async def test_selecting_topic_puts_cursor_at_first_value():
+    """The editor cursor lands on the first fillable value, not at the top-left corner."""
+    from ros_tui.ui.topics_tab import _value_locations
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        assert editor.cursor_location == _value_locations(editor.text)[0]
+
+
+async def test_tab_jumps_between_values_in_editor():
+    """Tab / Shift+Tab step through the fillable values instead of inserting indentation."""
+    from ros_tui.ui.topics_tab import _value_locations
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        before = editor.text
+        locations = _value_locations(editor.text)
+        assert editor.cursor_location == locations[0]
+        await pilot.press('tab')
+        assert editor.cursor_location == locations[1]
+        assert editor.text == before  # Tab moved the cursor, did not insert whitespace.
+        await pilot.press('shift+tab')
+        assert editor.cursor_location == locations[0]
+
+
 async def test_selecting_service_focuses_editor():
     """Selecting a service lands focus in the request editor, ready to edit and call."""
     app = RosTuiApp(FakeBridge())
