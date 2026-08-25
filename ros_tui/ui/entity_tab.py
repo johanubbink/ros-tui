@@ -87,5 +87,8 @@ class EntityTab(Horizontal):
     def reset_editor(self) -> None:
         """ctrl+r — reset the editor to the message defaults (no editor → no-op)."""
 
+    def wizard_action(self) -> None:
+        """ctrl+w — open a field wizard for the editor's cursor line (no editor → no-op)."""
+
     def clear_log(self) -> None:
         """ctrl+l — clear the tab's output/status region."""

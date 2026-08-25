@@ -37,6 +37,8 @@ ros_tui — ROS 2 interface workbench
   ctrl+s                     primary action: Send goal / Call / Publish once / Set param
   ctrl+k                     Cancel goal / Stop periodic publish / Refresh node
   ctrl+r                     reset the editor to the message defaults
+  ctrl+w                     open a fill-in wizard for the field on the cursor line
+                             (Topics publish mode; e.g. a Header stamp/frame_id helper)
   ctrl+l                     clear the output log of the current tab
   f2                         this help · esc closes it
   ctrl+q                     quit
@@ -127,6 +129,7 @@ class RosTuiApp(App):
         Binding('ctrl+s', 'primary_action', 'Send/Call/Pub', priority=True),
         Binding('ctrl+k', 'secondary_action', 'Cancel/Stop', priority=True),
         Binding('ctrl+r', 'reset_editor', 'Reset msg', priority=True),
+        Binding('ctrl+w', 'wizard', 'Fill field', priority=True),
         Binding('ctrl+l', 'clear_log', 'Clear log', priority=True),
         Binding('f2', 'help', 'Help'),
     ]
@@ -251,6 +254,11 @@ class RosTuiApp(App):
         tab = self._active_tab()
         if tab is not None:
             tab.reset_editor()
+
+    def action_wizard(self) -> None:
+        tab = self._active_tab()
+        if tab is not None:
+            tab.wizard_action()
 
     def action_clear_log(self) -> None:
         tab = self._active_tab()

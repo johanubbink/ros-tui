@@ -98,7 +98,7 @@ def default_yaml(kind: str, type_name: str) -> str:
     """Seed text for the editor: the default message as YAML plus a constants hint."""
     interface = import_type(kind, type_name)
     fillable = request_class(kind, interface)
-    plain = message_to_plain(fillable())
+    plain = message_to_plain(fillable(), seed=True)
     text = _dump_yaml(plain) if plain else '# (no fields)\n'
     constants = _constants_comment(fillable)
     return text + constants
@@ -144,9 +144,13 @@ def _slot_children(slot: Any, seen: frozenset) -> tuple['FieldNode', ...]:
     return _class_fields(nested, seen | {key})
 
 
-def message_to_plain(message: Any) -> dict:
-    """Convert a message to plain dict/list/scalar values (bytes rendered as ints)."""
-    return _plain_message(message, max_array=None, max_str=None)
+def message_to_plain(message: Any, seed: bool = False) -> dict:
+    """Convert a message to plain dict/list/scalar values (bytes rendered as ints).
+
+    ``seed=True`` collapses nested Header fields to the scalar ``'auto'`` so editor seeds
+    prefill the "stamp at send time" magic instead of an expanded zeroed header.
+    """
+    return _plain_message(message, max_array=None, max_str=None, seed=seed)
 
 
 def build_message(message_class: type, values: Any) -> tuple[Any, list[TimeSetter]]:
@@ -371,6 +375,7 @@ def _plain_message(
     max_str: int | None,
     selected: frozenset[str] | None = None,
     path: str = '',
+    seed: bool = False,
 ) -> dict:
     plain = {}
     for field_name, slot in zip(message.get_fields_and_field_types().keys(), message.SLOT_TYPES):
@@ -378,7 +383,7 @@ def _plain_message(
         if selected is not None and not _field_included(child_path, selected):
             continue
         plain[field_name] = _plain_value(
-            getattr(message, field_name), slot, max_array, max_str, selected, child_path
+            getattr(message, field_name), slot, max_array, max_str, selected, child_path, seed
         )
     return plain
 
@@ -394,6 +399,7 @@ def _plain_value(
     max_str: int | None,
     selected: frozenset[str] | None = None,
     path: str = '',
+    seed: bool = False,
 ) -> Any:
     if isinstance(slot, AbstractNestedType):
         total = len(value)
@@ -405,7 +411,7 @@ def _plain_value(
             # Sequence-of-message: reuse the same collapsed path for every element, so a
             # schema-level path like ``points.x`` filters each element uniformly.
             plain_items = [
-                _plain_value(item, slot.value_type, max_array, max_str, selected, path)
+                _plain_value(item, slot.value_type, max_array, max_str, selected, path, seed)
                 for item in items
             ]
         if truncated:
@@ -414,7 +420,10 @@ def _plain_value(
     if isinstance(slot, BasicType) and slot.typename == 'octet':
         return _byte_to_int(value)
     if hasattr(value, 'get_fields_and_field_types'):
-        return _plain_message(value, max_array, max_str, selected, path)
+        qualified = f'{type(value).__module__}.{type(value).__name__}'
+        if seed and qualified == _HEADER_CLASS:
+            return 'auto'  # Prefill the "stamp at send time" magic instead of a zeroed header.
+        return _plain_message(value, max_array, max_str, selected, path, seed)
     if isinstance(value, numpy.number):
         return value.item()
     if isinstance(value, str) and max_str is not None and len(value) > max_str:

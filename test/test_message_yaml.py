@@ -68,8 +68,20 @@ def test_default_seed_round_trips(kind, type_name):
     loaded = yaml.safe_load(seed)
     fillable = request_class(kind, import_type(kind, type_name))
     message, time_setters = build_message(fillable, loaded)
-    assert time_setters == []
-    assert message_to_plain(message) == (loaded or {})
+    if 'header: auto' in seed:
+        # A nested header seeds as the 'auto' magic value: it builds cleanly but leaves a
+        # deferred stamp setter, so it does not round-trip to the same plain dict.
+        assert time_setters
+    else:
+        assert time_setters == []
+        assert message_to_plain(message) == (loaded or {})
+
+
+def test_nested_header_seeds_as_auto():
+    seed = default_yaml('msg', 'geometry_msgs/msg/PoseStamped')
+    assert 'header: auto' in seed
+    # A top-level Header topic has no nested header field, so it stays expanded.
+    assert 'auto' not in default_yaml('msg', 'std_msgs/msg/Header')
 
 
 def test_unknown_type_raises_introspection_error():

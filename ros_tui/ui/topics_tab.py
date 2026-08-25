@@ -17,6 +17,7 @@
 
 from dataclasses import dataclass
 
+import yaml
 from rich.text import Text
 from textual import on
 from textual.widgets import Button, Input, Static, TextArea, Tree
@@ -35,6 +36,13 @@ from ros_tui.ros.message_yaml import (
     message_structure,
     to_filtered_yaml,
     to_truncated_yaml,
+)
+from ros_tui.ui.field_wizards import (
+    cursor_field_path,
+    field_block_range,
+    matched_wizard,
+    render_field_block,
+    replace_block,
 )
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import PublishCompleted
@@ -144,9 +152,10 @@ class TopicsTab(InterfaceTab):
         yield Button('Start rate', id='rate-button')
         yield Button('Echo', id='echo-button')
         yield Button('Pause', id='pause-button', disabled=True)
-        # Spacer pushes the mode toggle to the right edge: switching the tab's view is a
-        # distinct action from the buttons that operate on the topic itself.
+        # Spacer pushes the editor helper + mode toggle to the right edge: the wizard fills
+        # in a field and switching the view are distinct from the commands that act on the topic.
         yield Static('', classes='controls-spacer')
+        yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
         yield Button('→ Subscribe', id='mode-toggle-button')
 
     def compose_status(self):
@@ -202,7 +211,7 @@ class TopicsTab(InterfaceTab):
         is_publish = self._mode == 'publish'
         self.query_one('#editor', TextArea).display = is_publish
         self.query_one('#topic-structure-tree', Tree).display = not is_publish
-        for widget_id in ('#publish-button', '#rate-input', '#rate-button'):
+        for widget_id in ('#publish-button', '#rate-input', '#rate-button', '#wizard-button'):
             self.query_one(widget_id).display = is_publish
         for widget_id in ('#echo-button', '#pause-button'):
             self.query_one(widget_id).display = not is_publish
@@ -284,6 +293,57 @@ class TopicsTab(InterfaceTab):
     def _on_publish_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._publish_once()
+
+    # ------------------------------------------------------------------ field wizard
+
+    @on(Button.Pressed, '#wizard-button')
+    def _on_wizard_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.wizard_action()
+
+    def wizard_action(self) -> None:
+        """Open a fill-in wizard for the field on the editor's cursor line, if one is registered."""
+        if self._mode != 'publish' or self._current is None:
+            return
+        structure = self._extra_cache.get(self._current.name)
+        if not structure:
+            return
+        editor = self.query_one('#editor', TextArea)
+        text = editor.text
+        path = cursor_field_path(text, editor.cursor_location[0])
+        match = matched_wizard(structure, path)
+        if match is None:
+            self.write_log('no fill wizard for this field', 'dim')
+            return
+        matched_path, wizard_class = match
+        block = field_block_range(text, matched_path)
+        current_value = None
+        if block is not None:
+            start, end, indent = block
+            snippet = '\n'.join(line[indent:] for line in text.splitlines()[start:end])
+            try:
+                current_value = (yaml.safe_load(snippet) or {}).get(matched_path[-1])
+            except yaml.YAMLError:
+                current_value = None
+
+        def on_dismiss(value) -> None:
+            if value is None:
+                return
+            self._apply_wizard_value(matched_path, value)
+
+        self.app.push_screen(wizard_class(current_value), on_dismiss)
+
+    def _apply_wizard_value(self, matched_path: list[str], value) -> None:
+        editor = self.query_one('#editor', TextArea)
+        block = field_block_range(editor.text, matched_path)
+        if block is None:
+            return
+        start, end, indent = block
+        new_block = render_field_block(matched_path[-1], value, indent)
+        new_text, cursor_row = replace_block(editor.text, start, end, new_block)
+        editor.load_text(new_text)
+        editor.move_cursor((cursor_row, 0))
+        editor.focus()
 
     def primary_action(self) -> None:
         if self._mode == 'subscribe':

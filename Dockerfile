@@ -23,6 +23,7 @@ RUN apt-get update \
         ros-${ROS_DISTRO}-domain-coordinator \
         ros-${ROS_DISTRO}-test-msgs \
         ros-${ROS_DISTRO}-turtlesim \
+        ros-${ROS_DISTRO}-tf-transformations \
         python3-numpy \
         python3-yaml \
         python3-pip \

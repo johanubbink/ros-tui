@@ -382,6 +382,144 @@ async def test_tab_jumps_between_values_in_editor():
         assert editor.cursor_location == locations[0]
 
 
+async def _open_header_wizard(pilot, app):
+    """Select /pose in publish mode, park the cursor on the header line, open the wizard."""
+    from ros_tui.ui.field_wizards import HeaderWizardPopup
+
+    await show_tab(pilot, 'topics')
+    tab = app.query_one('#topics-tab')
+    await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+    await pilot.pause()
+    editor = tab.query_one('#editor', TextArea)
+    header_row = next(i for i, line in enumerate(editor.text.splitlines()) if 'header:' in line)
+    editor.move_cursor((header_row, 0))
+    await pilot.press('ctrl+w')
+    assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup)), (
+        'header wizard never appeared'
+    )
+    return tab
+
+
+async def test_seed_shows_header_auto():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        assert 'header: auto' in tab.query_one('#editor', TextArea).text
+
+
+async def test_wizard_auto_writes_header_auto():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        await click_button(pilot, '#header-wizard-apply')  # 'auto' is the default mode.
+        await pilot.pause()
+        assert 'header: auto' in tab.query_one('#editor', TextArea).text
+
+
+def _choose_mode(app, index):
+    """Press the RadioButton at ``index`` in the header wizard's RadioSet."""
+    from textual.widgets import RadioButton
+
+    buttons = list(app.screen.query('#header-wizard-mode').first().query(RadioButton))
+    buttons[index].value = True
+
+
+async def test_wizard_manual_expands_stamp_and_frame_id():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # 'manual' is the third radio.
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-sec', Input).value = '5'
+        app.screen.query_one('#header-wizard-nanosec', Input).value = '7'
+        app.screen.query_one('#header-wizard-frame', Input).value = 'map'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': {'sec': 5, 'nanosec': 7}, 'frame_id': 'map'}
+
+
+async def test_wizard_now_writes_stamp_now():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 1)  # 'now' is the second radio.
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-frame', Input).value = 'odom'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': 'now', 'frame_id': 'odom'}
+
+
+async def _open_quaternion_wizard(pilot, app):
+    """Select /pose in publish mode, park the cursor on the orientation line, open the wizard."""
+    from ros_tui.ui.field_wizards import QuaternionWizardPopup
+
+    await show_tab(pilot, 'topics')
+    tab = app.query_one('#topics-tab')
+    await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+    await pilot.pause()
+    editor = tab.query_one('#editor', TextArea)
+    orientation_row = next(i for i, line in enumerate(editor.text.splitlines()) if 'orientation:' in line)
+    editor.move_cursor((orientation_row, 0))
+    await pilot.press('ctrl+w')
+    assert await wait_until(pilot, lambda: isinstance(app.screen, QuaternionWizardPopup)), (
+        'quaternion wizard never appeared'
+    )
+    return tab
+
+
+async def test_quaternion_wizard_yaw_writes_normalized_quat():
+    from textual.widgets import RadioButton
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_quaternion_wizard(pilot, app)
+        modes = list(app.screen.query('#quat-wizard-mode').first().query(RadioButton))
+        modes[2].value = True  # 'yaw only' is the third mode; deg/rad toggle defaults to degrees.
+        await pilot.pause()
+        app.screen.query_one('#yaw-only', Input).value = '90'
+        await click_button(pilot, '#quat-wizard-apply')
+        await pilot.pause()
+        q = yaml.safe_load(tab.query_one('#editor', TextArea).text)['pose']['orientation']
+        assert (q['x'], q['y']) == (0.0, 0.0)
+        assert q['z'] == pytest.approx(0.707107, abs=1e-5)
+        assert q['w'] == pytest.approx(0.707107, abs=1e-5)
+
+
+async def test_wizard_on_plain_field_logs_hint_and_opens_nothing():
+    from ros_tui.ui.field_wizards import HeaderWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        # position.x is a plain double (Point has no wizard); orientation is now wizard-backed.
+        x_row = next(i for i, line in enumerate(editor.text.splitlines()) if line.strip().startswith('x:'))
+        editor.move_cursor((x_row, 0))
+        await pilot.press('ctrl+w')
+        await pilot.pause()
+        assert not isinstance(app.screen, HeaderWizardPopup)
+        assert 'no fill wizard for this field' in log_text(tab)
+
+
+async def test_wizard_button_hidden_in_subscribe_mode():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        assert not tab.query_one('#wizard-button', Button).display
+
+
 async def test_selecting_service_focuses_editor():
     """Selecting a service lands focus in the request editor, ready to edit and call."""
     app = RosTuiApp(FakeBridge())
@@ -1151,6 +1289,7 @@ async def test_navigate_to_non_interface_tab_is_noop():
     """
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()  # let mount-time focus (topics filter) settle before jumping.
         app.post_message(NavigateToEntity('nodes', CHATTER_ENTRY))
         await pilot.pause()
         assert app.query_one(TabbedContent).active == 'nodes'
