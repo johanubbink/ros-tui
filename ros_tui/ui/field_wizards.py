@@ -83,8 +83,14 @@ def field_type_at(structure: Any, path: list[str]) -> str | None:
 
 
 def matched_wizard(structure: Any, path: list[str]) -> tuple[list[str], type] | None:
-    """Outermost prefix of ``path`` whose field type has a registered wizard, with the class."""
-    for depth in range(1, len(path) + 1):
+    """Innermost prefix of ``path`` whose field type has a registered wizard, with the class.
+
+    Walking deepest-first opens the most specific popup for where the cursor sits: on a
+    ``header.stamp`` row the Time wizard wins, while on the ``header`` line (or a plain leaf
+    like ``header.frame_id`` that has no wizard of its own) it falls back outward to the
+    Header wizard. This generalises to any depth of nesting.
+    """
+    for depth in range(len(path), 0, -1):
         prefix = path[:depth]
         type_label = field_type_at(structure, prefix)
         if type_label in WIZARDS:
@@ -643,7 +649,8 @@ class TimeWizardPopup(ModalScreen[object]):
         self._mode, seconds = _parse_time(current_value)
         self._values = {
             'time-seconds': seconds,
-            'time-wallclock': '',
+            # Prefill the wall-clock field with the current local time so it's editable, not blank.
+            'time-wallclock': datetime.now().strftime(_WALLCLOCK_FORMAT),
             'time-offset': '0.0',
         }
 
@@ -749,10 +756,12 @@ class TimeWizardPopup(ModalScreen[object]):
 
 
 # The registry keyed by the type label from get_fields_and_field_types() (e.g. 'std_msgs/Header').
-# builtin_interfaces/Time is intentionally absent: the Time wizard is reached only as a nested
-# sub-wizard from the Header wizard (matched_wizard returns the outermost match, so a Time entry
-# here could never fire inside a header anyway). Point/etc. plug in here with no other changes.
+# matched_wizard() picks the innermost registered type on the cursor's path, so nested entries
+# resolve to the most specific popup: on a header.stamp row Time wins; on the header line the
+# Header wizard does. The Header wizard also opens Time as an in-popup sub-wizard once open.
+# Point/etc. plug in here with no other changes.
 WIZARDS: dict[str, type[ModalScreen]] = {
     'std_msgs/Header': HeaderWizardPopup,
     'geometry_msgs/Quaternion': QuaternionWizardPopup,
+    'builtin_interfaces/Time': TimeWizardPopup,
 }

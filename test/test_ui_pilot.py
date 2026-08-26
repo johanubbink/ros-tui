@@ -509,6 +509,23 @@ async def test_wizard_time_subwizard_now_writes_stamp_now():
         assert loaded['header'] == {'stamp': 'now', 'frame_id': 'map'}
 
 
+async def test_time_wizard_wallclock_prefilled_with_current_time():
+    from datetime import datetime
+
+    from ros_tui.ui.field_wizards import _WALLCLOCK_FORMAT
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='button')
+        _choose_time_mode(app, 2)  # 'wall-clock' is the third radio.
+        await pilot.pause()
+        value = app.screen.query_one('#time-wallclock', Input).value
+        datetime.strptime(value, _WALLCLOCK_FORMAT)  # editable current-time string, not blank
+
+
 async def test_wizard_stamp_typed_directly_without_fill():
     # Editor-consistent: the stamp is a real input you can type into, not only fill via wizard.
     app = RosTuiApp(FakeBridge())
@@ -536,6 +553,68 @@ async def test_wizard_ctrl_w_ignored_when_stamp_not_focused():
         await pilot.pause()
         await pilot.press('ctrl+w')
         await pilot.pause()
+        assert not isinstance(app.screen, TimeWizardPopup)
+
+
+# An expanded PoseStamped header (the seed collapses it to `header: auto`), so the editor has a
+# stamp row and a frame_id row to park the cursor on.
+_EXPANDED_POSE = (
+    "header:\n  stamp:\n    sec: 0\n    nanosec: 0\n  frame_id: ''\n"
+    'pose:\n  position:\n    x: 0.0\n    y: 0.0\n    z: 0.0\n'
+    '  orientation:\n    x: 0.0\n    y: 0.0\n    z: 0.0\n    w: 1.0\n'
+)
+
+
+async def _cursor_on_row(pilot, app, match):
+    """Select /pose publish, load the expanded header, park the cursor on the first row matching."""
+    await show_tab(pilot, 'topics')
+    tab = app.query_one('#topics-tab')
+    await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+    await pilot.pause()
+    editor = tab.query_one('#editor', TextArea)
+    editor.load_text(_EXPANDED_POSE)
+    row = next(i for i, line in enumerate(editor.text.splitlines()) if match(line))
+    editor.move_cursor((row, 0))
+    return tab
+
+
+async def test_editor_stamp_row_opens_time_wizard_directly():
+    from ros_tui.ui.field_wizards import TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _cursor_on_row(pilot, app, lambda line: line.strip() == 'stamp:')
+        await pilot.press('ctrl+w')
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup)), (
+            'time wizard did not open from the stamp row'
+        )
+        _choose_time_mode(app, 1)  # seconds
+        await pilot.pause()
+        app.screen.query_one('#time-seconds', Input).value = '2.5'
+        await click_button(pilot, '#time-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header']['stamp'] == {'sec': 2, 'nanosec': 500000000}
+
+
+async def test_editor_stamp_subfield_row_opens_time_wizard():
+    from ros_tui.ui.field_wizards import TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _cursor_on_row(pilot, app, lambda line: line.strip().startswith('nanosec:'))
+        await pilot.press('ctrl+w')  # innermost wizard along header.stamp.nanosec is Time
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup))
+
+
+async def test_editor_frame_id_row_opens_header_wizard():
+    from ros_tui.ui.field_wizards import HeaderWizardPopup, TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _cursor_on_row(pilot, app, lambda line: line.strip().startswith('frame_id:'))
+        await pilot.press('ctrl+w')  # frame_id has no wizard → falls back to the enclosing header
+        assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup))
         assert not isinstance(app.screen, TimeWizardPopup)
 
 

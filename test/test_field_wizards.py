@@ -23,6 +23,7 @@ from ros_tui.ros.message_yaml import FieldNode
 from ros_tui.ui.field_wizards import (
     HeaderWizardPopup,
     QuaternionWizardPopup,
+    TimeWizardPopup,
     _parse_header,
     _parse_time,
     clean_quat,
@@ -55,9 +56,18 @@ requires_tf = pytest.mark.skipif(not _HAS_TF, reason='tf_transformations not ins
 
 _SQRT_HALF = math.sqrt(0.5)  # ~0.70710678, the x/y/z/w magnitude for a 90-degree rotation.
 
-# A PoseStamped-shaped structure: header (std_msgs/Header) + pose.{position,orientation}.
+# A PoseStamped-shaped structure: header (std_msgs/Header, itself nesting a Time stamp) +
+# pose.{position,orientation}. The stamp child exercises innermost-wins wizard matching.
 POSE_STAMPED = (
-    FieldNode('header', 'std_msgs/Header', (FieldNode('frame_id', 'string'),)),
+    FieldNode(
+        'header',
+        'std_msgs/Header',
+        (
+            FieldNode('stamp', 'builtin_interfaces/Time',
+                      (FieldNode('sec', 'uint32'), FieldNode('nanosec', 'uint32'))),
+            FieldNode('frame_id', 'string'),
+        ),
+    ),
     FieldNode(
         'pose',
         'geometry_msgs/Pose',
@@ -104,11 +114,29 @@ def test_matched_wizard_none_for_plain_field():
     assert matched_wizard(POSE_STAMPED, ['pose', 'position', 'x']) is None
 
 
-def test_matched_wizard_returns_outermost():
-    # Cursor sits on header.frame_id; the header (outer) has the wizard, not frame_id.
+def test_matched_wizard_falls_back_outward_for_plain_leaf():
+    # Cursor sits on header.frame_id (a plain string, no wizard) → fall back to the header.
     match = matched_wizard(POSE_STAMPED, ['header', 'frame_id'])
     assert match is not None
     assert match[0] == ['header']
+    assert match[1] is HeaderWizardPopup
+
+
+def test_matched_wizard_returns_innermost_time():
+    # Cursor on the header.stamp row opens the Time wizard, not the enclosing Header wizard.
+    match = matched_wizard(POSE_STAMPED, ['header', 'stamp'])
+    assert match == (['header', 'stamp'], TimeWizardPopup)
+
+
+def test_matched_wizard_innermost_from_stamp_leaf():
+    # Even on a stamp sub-field (sec/nanosec have no wizard) it resolves outward to Time.
+    match = matched_wizard(POSE_STAMPED, ['header', 'stamp', 'sec'])
+    assert match == (['header', 'stamp'], TimeWizardPopup)
+
+
+def test_matched_wizard_header_line_still_opens_header():
+    match = matched_wizard(POSE_STAMPED, ['header'])
+    assert match == (['header'], HeaderWizardPopup)
 
 
 def test_field_block_range_scalar_header():
