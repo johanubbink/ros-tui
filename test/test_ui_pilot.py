@@ -385,7 +385,7 @@ async def test_tab_jumps_between_values_in_editor():
 
 async def _open_header_wizard(pilot, app):
     """Select /pose in publish mode, park the cursor on the header line, open the wizard."""
-    from ros_tui.ui.field_wizards import HeaderWizardPopup
+    from ros_tui.ui.wizards import HeaderWizardPopup
 
     await show_tab(pilot, 'topics')
     tab = app.query_one('#topics-tab')
@@ -442,7 +442,7 @@ async def _open_time_subwizard(pilot, app, *, via):
     ``via`` is 'button' (click Fill) or 'ctrl+w' (fires only while the stamp input is focused,
     mirroring the YAML editor's field-scoped ctrl+w).
     """
-    from ros_tui.ui.field_wizards import TimeWizardPopup
+    from ros_tui.ui.wizards import TimeWizardPopup
 
     if via == 'button':
         await click_button(pilot, '#header-wizard-stamp-fill')
@@ -456,7 +456,7 @@ async def _open_time_subwizard(pilot, app, *, via):
 
 
 async def test_wizard_manual_via_time_subwizard_writes_stamp():
-    from ros_tui.ui.field_wizards import HeaderWizardPopup
+    from ros_tui.ui.wizards import HeaderWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -478,7 +478,7 @@ async def test_wizard_manual_via_time_subwizard_writes_stamp():
 
 
 async def test_wizard_ctrl_w_opens_time_subwizard_not_second_header():
-    from ros_tui.ui.field_wizards import HeaderWizardPopup, TimeWizardPopup
+    from ros_tui.ui.wizards import HeaderWizardPopup, TimeWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -491,7 +491,7 @@ async def test_wizard_ctrl_w_opens_time_subwizard_not_second_header():
 
 
 async def test_wizard_time_subwizard_now_writes_stamp_now():
-    from ros_tui.ui.field_wizards import HeaderWizardPopup
+    from ros_tui.ui.wizards import HeaderWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -513,7 +513,7 @@ async def test_wizard_time_subwizard_now_writes_stamp_now():
 async def test_time_wizard_wallclock_prefilled_with_current_time():
     from datetime import datetime
 
-    from ros_tui.ui.field_wizards import _WALLCLOCK_FORMAT
+    from ros_tui.ui.wizards import _WALLCLOCK_FORMAT
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -543,7 +543,7 @@ async def test_wizard_stamp_typed_directly_without_fill():
 
 
 async def test_wizard_ctrl_w_ignored_when_stamp_not_focused():
-    from ros_tui.ui.field_wizards import TimeWizardPopup
+    from ros_tui.ui.wizards import TimeWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -580,7 +580,7 @@ async def _cursor_on_row(pilot, app, match):
 
 
 async def test_editor_stamp_row_opens_time_wizard_directly():
-    from ros_tui.ui.field_wizards import TimeWizardPopup
+    from ros_tui.ui.wizards import TimeWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -599,7 +599,7 @@ async def test_editor_stamp_row_opens_time_wizard_directly():
 
 
 async def test_editor_stamp_subfield_row_opens_time_wizard():
-    from ros_tui.ui.field_wizards import TimeWizardPopup
+    from ros_tui.ui.wizards import TimeWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -611,7 +611,7 @@ async def test_editor_stamp_subfield_row_opens_time_wizard():
 async def test_editor_enum_level_row_opens_enum_wizard():
     from textual.widgets import RadioButton
 
-    from ros_tui.ui.field_wizards import EnumWizardPopup
+    from ros_tui.ui.wizards import EnumWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -635,7 +635,7 @@ async def test_editor_enum_level_row_opens_enum_wizard():
 
 
 async def test_editor_frame_id_row_opens_header_wizard():
-    from ros_tui.ui.field_wizards import HeaderWizardPopup, TimeWizardPopup
+    from ros_tui.ui.wizards import HeaderWizardPopup, TimeWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -660,7 +660,7 @@ async def test_wizard_now_writes_stamp_now():
 
 async def _open_quaternion_wizard(pilot, app):
     """Select /pose in publish mode, park the cursor on the orientation line, open the wizard."""
-    from ros_tui.ui.field_wizards import QuaternionWizardPopup
+    from ros_tui.ui.wizards import QuaternionWizardPopup
 
     await show_tab(pilot, 'topics')
     tab = app.query_one('#topics-tab')
@@ -695,7 +695,7 @@ async def test_quaternion_wizard_yaw_writes_normalized_quat():
 
 
 async def test_wizard_on_plain_field_logs_hint_and_opens_nothing():
-    from ros_tui.ui.field_wizards import HeaderWizardPopup
+    from ros_tui.ui.wizards import HeaderWizardPopup
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:

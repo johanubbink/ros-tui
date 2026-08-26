@@ -93,7 +93,7 @@ class TopicModePopup(ModalScreen[str | None]):
         if message.error is None:
             text = f'publishers: {message.pub_count} · subscribers: {message.sub_count}'
         else:
-            text = 'publishers: ? · subscribers: ?'
+            text = f'endpoint counts unavailable: {message.error}'
         self.query_one('#topic-mode-counts', Static).update(text)
 
     def action_cancel(self) -> None:

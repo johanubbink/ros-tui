@@ -37,6 +37,13 @@ from ros_tui.ros.message_yaml import (
 from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import PrototypeReady
+from ros_tui.ui.wizards import (
+    cursor_field_path,
+    field_block_range,
+    matched_wizard,
+    render_field_block,
+    replace_block,
+)
 
 _KIND_SUFFIX = {'msg': '', 'srv': ' — Request', 'action': ' — Goal'}
 
@@ -194,6 +201,57 @@ class InterfaceTab(EntityTab):
         self._edit_cache.pop(self._current.name, None)
         self.query_one('#editor', TextArea).load_text(seed)
         self._set_editor_error('')
+
+    # ------------------------------------------------------------------ field wizard
+
+    def open_field_wizard(self) -> None:
+        """Open a fill-in wizard for the field on the editor's cursor line, if one is registered.
+
+        Reusable across editor tabs: reads the message structure a tab caches in ``_extra_cache``
+        by returning ``message_structure`` from ``_extra_prototype_data``. No-ops when no
+        structure is available, so tabs that don't opt in are unaffected.
+        """
+        if self._current is None:
+            return
+        structure = self._extra_cache.get(self._current.name)
+        if not structure:
+            return
+        editor = self.query_one('#editor', TextArea)
+        text = editor.text
+        path = cursor_field_path(text, editor.cursor_location[0])
+        match = matched_wizard(structure, path)
+        if match is None:
+            self.write_log('no fill wizard for this field', 'dim')
+            return
+        matched_path, wizard_class = match
+        block = field_block_range(text, matched_path)
+        current_value = None
+        if block is not None:
+            start, end, indent = block
+            snippet = '\n'.join(line[indent:] for line in text.splitlines()[start:end])
+            try:
+                current_value = (yaml.safe_load(snippet) or {}).get(matched_path[-1])
+            except yaml.YAMLError:
+                current_value = None
+
+        def on_dismiss(value) -> None:
+            if value is None:
+                return
+            self._apply_wizard_value(matched_path, value)
+
+        self.app.push_screen(wizard_class(current_value), on_dismiss)
+
+    def _apply_wizard_value(self, matched_path: list[str], value) -> None:
+        editor = self.query_one('#editor', TextArea)
+        block = field_block_range(editor.text, matched_path)
+        if block is None:
+            return
+        start, end, indent = block
+        new_block = render_field_block(matched_path[-1], value, indent)
+        new_text, cursor_row = replace_block(editor.text, start, end, new_block)
+        editor.load_text(new_text)
+        editor.move_cursor((cursor_row, 0))
+        editor.focus()
 
     # ------------------------------------------------------------------ editor parsing
 

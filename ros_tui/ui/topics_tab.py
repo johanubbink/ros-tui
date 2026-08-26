@@ -17,7 +17,6 @@
 
 from dataclasses import dataclass
 
-import yaml
 from rich.text import Text
 from textual import on
 from textual.widgets import Button, Input, Static, TextArea, Tree
@@ -32,17 +31,10 @@ from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ros.message_yaml import (
     FieldNode,
-    field_path,
     message_structure,
+    schema_path,
     to_filtered_yaml,
     to_truncated_yaml,
-)
-from ros_tui.ui.field_wizards import (
-    cursor_field_path,
-    field_block_range,
-    matched_wizard,
-    render_field_block,
-    replace_block,
 )
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import PublishCompleted
@@ -115,8 +107,11 @@ def _leaf_paths_under(node) -> list[str]:
 
 def _node_state(node, selected: set[str] | None) -> str:
     """Tri-state of a node's checkbox, derived from how many of its leaves are selected."""
+    # Empty set and None are deliberately equivalent: both mean "no filter -> show
+    # everything", so every box reads as checked. There is no all-unchecked state --
+    # unchecking the last field empties the set and wraps back to showing everything.
     if not selected:
-        return 'checked'  # No selection means "show everything".
+        return 'checked'
     leaves = _leaf_paths_under(node)
     count = sum(1 for leaf in leaves if leaf in selected)
     if count == len(leaves):
@@ -204,6 +199,13 @@ class TopicsTab(InterfaceTab):
             editor.focus()
             editor.move_cursor(_first_value_location(editor.text))
 
+    def focus_content(self) -> None:
+        """Re-entering the tab lands on the widget the active mode actually shows."""
+        if self._mode == 'subscribe':
+            self.query_one('#topic-structure-tree', Tree).focus()
+        else:
+            self.query_one('#editor', TextArea).focus()
+
     def _apply_mode_layout(self) -> None:
         right_pane = self.query_one('.right-pane')
         right_pane.remove_class('mode-publish', 'mode-subscribe')
@@ -240,7 +242,7 @@ class TopicsTab(InterfaceTab):
             self._add_field_node(tree.root, field, '', selected)
 
     def _add_field_node(self, parent, field: FieldNode, path_prefix: str, selected) -> None:
-        path = field_path(path_prefix, field.name)
+        path = schema_path(path_prefix, field.name)
         data = _FieldNodeData(path, field.name, field.type_label)
         if field.children:
             node = parent.add(Text(''), data=data, expand=False)
@@ -274,7 +276,9 @@ class TopicsTab(InterfaceTab):
         if any(leaf not in selected for leaf in leaves):
             selected.update(leaves)  # Partial/unchecked -> select the whole subtree.
         else:
-            selected.difference_update(leaves)  # Fully selected -> clear it.
+            # Fully selected -> clear it. Clearing the last subtree empties the set, which
+            # _node_state reads as "show everything" (all boxes checked) -- by design.
+            selected.difference_update(leaves)
         for child in tree.root.children:
             self._refresh_labels(child, selected)
 
@@ -302,48 +306,10 @@ class TopicsTab(InterfaceTab):
         self.wizard_action()
 
     def wizard_action(self) -> None:
-        """Open a fill-in wizard for the field on the editor's cursor line, if one is registered."""
+        """Open a fill-in wizard for the field on the cursor line (publish mode only)."""
         if self._mode != 'publish' or self._current is None:
             return
-        structure = self._extra_cache.get(self._current.name)
-        if not structure:
-            return
-        editor = self.query_one('#editor', TextArea)
-        text = editor.text
-        path = cursor_field_path(text, editor.cursor_location[0])
-        match = matched_wizard(structure, path)
-        if match is None:
-            self.write_log('no fill wizard for this field', 'dim')
-            return
-        matched_path, wizard_class = match
-        block = field_block_range(text, matched_path)
-        current_value = None
-        if block is not None:
-            start, end, indent = block
-            snippet = '\n'.join(line[indent:] for line in text.splitlines()[start:end])
-            try:
-                current_value = (yaml.safe_load(snippet) or {}).get(matched_path[-1])
-            except yaml.YAMLError:
-                current_value = None
-
-        def on_dismiss(value) -> None:
-            if value is None:
-                return
-            self._apply_wizard_value(matched_path, value)
-
-        self.app.push_screen(wizard_class(current_value), on_dismiss)
-
-    def _apply_wizard_value(self, matched_path: list[str], value) -> None:
-        editor = self.query_one('#editor', TextArea)
-        block = field_block_range(editor.text, matched_path)
-        if block is None:
-            return
-        start, end, indent = block
-        new_block = render_field_block(matched_path[-1], value, indent)
-        new_text, cursor_row = replace_block(editor.text, start, end, new_block)
-        editor.load_text(new_text)
-        editor.move_cursor((cursor_row, 0))
-        editor.focus()
+        self.open_field_wizard()
 
     def primary_action(self) -> None:
         if self._mode == 'subscribe':
@@ -495,7 +461,7 @@ class TopicsTab(InterfaceTab):
         selected = self._topic_selection.get(self._echo_topic)
         for received_message in messages:
             self.write_log(f'─── {self._echo_topic}', style='dim')
-            if selected:
+            if selected:  # Empty/absent selection means no filter -> echo the whole message.
                 self.write_log(to_filtered_yaml(received_message, selected))
             else:
                 self.write_log(to_truncated_yaml(received_message))

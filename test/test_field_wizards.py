@@ -20,7 +20,7 @@ import math
 import pytest
 
 from ros_tui.ros.message_yaml import FieldNode
-from ros_tui.ui.field_wizards import (
+from ros_tui.ui.wizards import (
     EnumWizardPopup,
     HeaderWizardPopup,
     QuaternionWizardPopup,

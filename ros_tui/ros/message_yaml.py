@@ -104,7 +104,7 @@ def default_yaml(kind: str, type_name: str) -> str:
     return text + constants
 
 
-def field_path(parent_path: str, name: str) -> str:
+def schema_path(parent_path: str, name: str) -> str:
     """Dotted field path used by the structure tree and to_filtered_yaml (indices collapsed)."""
     return f'{parent_path}.{name}' if parent_path else name
 
@@ -439,7 +439,7 @@ def _plain_message(
 ) -> dict:
     plain = {}
     for field_name, slot in zip(message.get_fields_and_field_types().keys(), message.SLOT_TYPES):
-        child_path = field_path(path, field_name)
+        child_path = schema_path(path, field_name)
         if selected is not None and not _field_included(child_path, selected):
             continue
         plain[field_name] = _plain_value(
