@@ -427,19 +427,83 @@ def _choose_mode(app, index):
     buttons[index].value = True
 
 
-async def test_wizard_manual_expands_stamp_and_frame_id():
+def _choose_time_mode(app, index):
+    """Press the RadioButton at ``index`` in the time (sub-)wizard's RadioSet."""
+    from textual.widgets import RadioButton
+
+    buttons = list(app.screen.query('#time-wizard-mode').first().query(RadioButton))
+    buttons[index].value = True
+
+
+async def _open_time_subwizard(pilot, app, *, via):
+    """From an open header wizard in manual mode, open the nested Time wizard.
+
+    ``via`` is 'button' (click Set time…) or 'ctrl+w' (context-aware app binding).
+    """
+    from ros_tui.ui.field_wizards import TimeWizardPopup
+
+    if via == 'button':
+        await click_button(pilot, '#header-wizard-set-time')
+    else:
+        await pilot.press('ctrl+w')
+    assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup)), (
+        'time sub-wizard never appeared'
+    )
+
+
+async def test_wizard_manual_via_time_subwizard_writes_stamp():
+    from ros_tui.ui.field_wizards import HeaderWizardPopup
+
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
         tab = await _open_header_wizard(pilot, app)
         _choose_mode(app, 2)  # 'manual' is the third radio.
         await pilot.pause()
-        app.screen.query_one('#header-wizard-sec', Input).value = '5'
-        app.screen.query_one('#header-wizard-nanosec', Input).value = '7'
+        await _open_time_subwizard(pilot, app, via='button')
+        _choose_time_mode(app, 1)  # 'seconds' is the second radio.
+        await pilot.pause()
+        app.screen.query_one('#time-seconds', Input).value = '2.5'
+        await click_button(pilot, '#time-wizard-apply')
+        # Back in the header wizard with its own state preserved.
+        assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup))
         app.screen.query_one('#header-wizard-frame', Input).value = 'map'
         await click_button(pilot, '#header-wizard-apply')
         await pilot.pause()
         loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
-        assert loaded['header'] == {'stamp': {'sec': 5, 'nanosec': 7}, 'frame_id': 'map'}
+        assert loaded['header'] == {'stamp': {'sec': 2, 'nanosec': 500000000}, 'frame_id': 'map'}
+
+
+async def test_wizard_ctrl_w_opens_time_subwizard_not_second_header():
+    from ros_tui.ui.field_wizards import HeaderWizardPopup, TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='ctrl+w')
+        assert isinstance(app.screen, TimeWizardPopup)
+        assert not isinstance(app.screen, HeaderWizardPopup)
+
+
+async def test_wizard_time_subwizard_now_writes_stamp_now():
+    from ros_tui.ui.field_wizards import HeaderWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='button')
+        _choose_time_mode(app, 0)  # 'now' is the first radio.
+        await pilot.pause()
+        await click_button(pilot, '#time-wizard-apply')
+        assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup))
+        app.screen.query_one('#header-wizard-frame', Input).value = 'map'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': 'now', 'frame_id': 'map'}
 
 
 async def test_wizard_now_writes_stamp_now():

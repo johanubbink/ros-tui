@@ -23,16 +23,22 @@ from ros_tui.ros.message_yaml import FieldNode
 from ros_tui.ui.field_wizards import (
     HeaderWizardPopup,
     QuaternionWizardPopup,
+    _parse_header,
+    _parse_time,
     clean_quat,
     cursor_field_path,
+    epoch_to_stamp,
     field_block_range,
     field_type_at,
     matched_wizard,
     normalize_quat,
+    parse_wallclock,
     quat_about_axis,
     quat_from_euler,
     render_field_block,
     replace_block,
+    seconds_str_to_stamp,
+    stamp_to_seconds_str,
 )
 
 try:
@@ -200,3 +206,62 @@ def test_quat_from_euler_known_triple():
     assert quat_from_euler(0.5, 0.2, -0.3) == pytest.approx(
         (0.25786, 0.05886, -0.16849, 0.94956), abs=1e-5
     )
+
+
+# --------------------------------------------------------------------------- time wizard helpers
+
+
+def test_seconds_str_to_stamp_decimal():
+    assert seconds_str_to_stamp('2.5') == {'sec': 2, 'nanosec': 500000000}
+
+
+def test_seconds_str_to_stamp_integer_and_fraction_only():
+    assert seconds_str_to_stamp('7') == {'sec': 7, 'nanosec': 0}
+    assert seconds_str_to_stamp('.25') == {'sec': 0, 'nanosec': 250000000}
+
+
+def test_seconds_str_to_stamp_truncates_beyond_nanoseconds():
+    # More than 9 fractional digits: extra precision is dropped, not rounded.
+    assert seconds_str_to_stamp('1.0000000009') == {'sec': 1, 'nanosec': 0}
+
+
+def test_seconds_str_to_stamp_rejects_negative_and_junk():
+    with pytest.raises(ValueError):
+        seconds_str_to_stamp('-1')
+    with pytest.raises(ValueError):
+        seconds_str_to_stamp('abc')
+
+
+def test_epoch_to_stamp_fractional_and_carry():
+    assert epoch_to_stamp(10.25) == {'sec': 10, 'nanosec': 250000000}
+    assert epoch_to_stamp(5.0) == {'sec': 5, 'nanosec': 0}
+    assert epoch_to_stamp(-3.0) == {'sec': 0, 'nanosec': 0}  # clamped at zero
+
+
+def test_parse_wallclock_round_trips_through_epoch_to_stamp():
+    # Deterministic: a fixed local wall-clock string maps back to whole seconds (no fraction).
+    stamp = epoch_to_stamp(parse_wallclock('2026-01-02 03:04:05'))
+    assert stamp['nanosec'] == 0
+    assert stamp['sec'] > 0
+
+
+def test_stamp_to_seconds_str_trims():
+    assert stamp_to_seconds_str({'sec': 2, 'nanosec': 500000000}) == '2.5'
+    assert stamp_to_seconds_str({'sec': 7, 'nanosec': 0}) == '7'
+    assert stamp_to_seconds_str({'sec': 2, 'nanosec': 7}) == '2.000000007'
+
+
+def test_parse_time_prefill():
+    assert _parse_time('now') == ('now', '0.0')
+    assert _parse_time({'sec': 2, 'nanosec': 500000000}) == ('seconds', '2.5')
+    assert _parse_time(None) == ('now', '0.0')
+
+
+def test_parse_header_returns_stamp_dict_for_manual():
+    assert _parse_header({'stamp': {'sec': 5, 'nanosec': 7}, 'frame_id': 'map'}) == (
+        'manual',
+        'map',
+        {'sec': 5, 'nanosec': 7},
+    )
+    assert _parse_header({'stamp': 'now', 'frame_id': 'odom'}) == ('now', 'odom', None)
+    assert _parse_header('auto') == ('auto', '', None)

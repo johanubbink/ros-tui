@@ -256,6 +256,14 @@ class RosTuiApp(App):
             tab.reset_editor()
 
     def action_wizard(self) -> None:
+        # A wizard popup may host its own nested sub-wizard (e.g. Header → Time); route ctrl+w to
+        # it while it's on top, and never fall through to a tab underneath an open modal.
+        screen = self.screen
+        if isinstance(screen, ModalScreen):
+            action = getattr(screen, 'wizard_action', None)
+            if callable(action):
+                action()
+            return
         tab = self._active_tab()
         if tab is not None:
             tab.wizard_action()
