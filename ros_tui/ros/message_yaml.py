@@ -111,11 +111,17 @@ def field_path(parent_path: str, name: str) -> str:
 
 @dataclass(frozen=True)
 class FieldNode:
-    """A field in a message's static structure: its name, type label, and nested fields."""
+    """A field in a message's static structure: its name, type label, and nested fields.
+
+    ``constants`` holds the enum choices ``(name, int_value)`` that apply to this field, when
+    the field is an integer enum backed by message constants (see :func:`_field_enum_choices`);
+    empty otherwise. The enum field wizard renders these as a single-choice list.
+    """
 
     name: str
     type_label: str
     children: tuple['FieldNode', ...] = field(default_factory=tuple)
+    constants: tuple[tuple[str, int], ...] = ()
 
 
 @functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
@@ -127,10 +133,64 @@ def message_structure(kind: str, type_name: str) -> tuple[FieldNode, ...]:
 
 def _class_fields(message_class: type, seen: frozenset) -> tuple[FieldNode, ...]:
     types = message_class.get_fields_and_field_types()
+    enum_choices = _field_enum_choices(message_class)
     return tuple(
-        FieldNode(name, types[name], _slot_children(slot, seen))
+        FieldNode(name, types[name], _slot_children(slot, seen), enum_choices.get(name, ()))
         for name, slot in zip(types, message_class.SLOT_TYPES)
     )
+
+
+_INTEGER_SCALAR_TYPES = frozenset(
+    {'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64',
+     'byte', 'char', 'octet'}
+)
+
+
+def _message_constants(message_class: type) -> list[tuple[str, int]]:
+    """Integer enum constants declared on ``message_class`` as ``(name, value)``.
+
+    IDL constants surface as upper-case class attributes; ``int`` ones (e.g. Marker's ``ARROW``)
+    are taken as-is, while ``byte``/``octet`` ones (e.g. DiagnosticStatus's ``OK``) arrive as a
+    single ``bytes`` and are decoded to their integer value. Booleans and generated internals
+    (``_TYPE_SUPPORT``, ``<FIELD>__DEFAULT``) are skipped.
+    """
+    constants = []
+    for name in dir(message_class):
+        if not name.isupper() or name.startswith('_') or '__' in name:
+            continue
+        value = getattr(message_class, name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            constants.append((name, value))
+        elif isinstance(value, bytes) and len(value) == 1:
+            constants.append((name, value[0]))
+    constants.sort(key=lambda item: item[1])  # by value: natural enum order, not dir()'s alpha.
+    return constants
+
+
+def _field_enum_choices(message_class: type) -> dict[str, tuple[tuple[str, int], ...]]:
+    """Map each integer field to the enum constants that apply to it.
+
+    Association heuristic: a field takes constants whose names share its upper-case prefix
+    (e.g. ``power_supply_status`` -> ``POWER_SUPPLY_STATUS_*``); failing that, if the message has
+    exactly one integer field it takes all the constants (the DiagnosticStatus ``level`` case).
+    Otherwise it gets none -- so un-prefixed multi-enum messages (e.g. Marker) are left alone
+    rather than mis-attributing every constant to every integer field.
+    """
+    constants = _message_constants(message_class)
+    if not constants:
+        return {}
+    types = message_class.get_fields_and_field_types()
+    int_fields = [name for name, label in types.items() if label in _INTEGER_SCALAR_TYPES]
+    choices = {}
+    for name in int_fields:
+        prefixed = tuple((n, v) for n, v in constants if n.startswith(name.upper() + '_'))
+        if prefixed:
+            choices[name] = prefixed
+        elif len(int_fields) == 1:
+            choices[name] = tuple(constants)
+    return choices
 
 
 def _slot_children(slot: Any, seen: frozenset) -> tuple['FieldNode', ...]:

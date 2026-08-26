@@ -21,6 +21,7 @@ import pytest
 
 from ros_tui.ros.message_yaml import FieldNode
 from ros_tui.ui.field_wizards import (
+    EnumWizardPopup,
     HeaderWizardPopup,
     QuaternionWizardPopup,
     TimeWizardPopup,
@@ -137,6 +138,26 @@ def test_matched_wizard_innermost_from_stamp_leaf():
 def test_matched_wizard_header_line_still_opens_header():
     match = matched_wizard(POSE_STAMPED, ['header'])
     assert match == (['header'], HeaderWizardPopup)
+
+
+# A DiagnosticStatus-shaped structure: an integer `level` field carrying enum constants.
+DIAGNOSTIC = (
+    FieldNode('level', 'octet', (), (('OK', 0), ('WARN', 1), ('ERROR', 2), ('STALE', 3))),
+    FieldNode('name', 'string'),
+)
+
+
+def test_matched_wizard_enum_field_binds_choices_into_factory():
+    match = matched_wizard(DIAGNOSTIC, ['level'])
+    assert match is not None
+    prefix, factory = match
+    assert prefix == ['level']
+    assert factory.func is EnumWizardPopup
+    assert factory.keywords['choices'] == (('OK', 0), ('WARN', 1), ('ERROR', 2), ('STALE', 3))
+
+
+def test_matched_wizard_none_for_plain_string_field():
+    assert matched_wizard(DIAGNOSTIC, ['name']) is None
 
 
 def test_field_block_range_scalar_header():

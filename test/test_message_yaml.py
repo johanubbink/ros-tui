@@ -314,3 +314,19 @@ def test_message_structure_walks_into_array_element_type():
     points = fields['points']  # geometry_msgs/Point32[]
     assert points.children  # walks into the array's element message, not treated as scalar.
     assert any(child.name == 'x' for child in points.children)
+
+
+def test_message_structure_enum_constants_sole_integer_field():
+    # DiagnosticStatus: un-prefixed byte constants attach to the only integer field, `level`,
+    # in value order (not dir()'s alphabetical order), decoded from bytes to int.
+    fields = {node.name: node for node in message_structure('msg', 'diagnostic_msgs/msg/DiagnosticStatus')}
+    assert fields['level'].constants == (('OK', 0), ('WARN', 1), ('ERROR', 2), ('STALE', 3))
+    assert fields['name'].constants == ()  # a string field carries no enum choices.
+
+
+def test_message_structure_enum_constants_prefix_grouped():
+    # BatteryState: each integer field gets only its own POWER_SUPPLY_<FIELD>_* prefix group.
+    fields = {node.name: node for node in message_structure('msg', 'sensor_msgs/msg/BatteryState')}
+    status = dict(fields['power_supply_status'].constants)
+    assert status and all(name.startswith('POWER_SUPPLY_STATUS_') for name in status)
+    assert not any(name.startswith('POWER_SUPPLY_HEALTH_') for name in status)

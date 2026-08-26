@@ -46,13 +46,14 @@ FIBONACCI_ENTRY = InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibon
 ADD_TWO_INTS_ENTRY = InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',))
 CHATTER_ENTRY = InterfaceEntry('/chatter', ('std_msgs/msg/String',))
 POSE_ENTRY = InterfaceEntry('/pose', ('geometry_msgs/msg/PoseStamped',))
+DIAG_ENTRY = InterfaceEntry('/diag', ('diagnostic_msgs/msg/DiagnosticStatus',))
 TALKER_NODE = InterfaceEntry('/talker', ('/',))  # nodes store their namespace in types[0].
 
 SNAPSHOT = GraphSnapshot(
     version=1,
     actions=(FIBONACCI_ENTRY,),
     services=(ADD_TWO_INTS_ENTRY, InterfaceEntry('/set_bool', ('std_srvs/srv/SetBool',))),
-    topics=(CHATTER_ENTRY, POSE_ENTRY),
+    topics=(CHATTER_ENTRY, POSE_ENTRY, DIAG_ENTRY),
     nodes=(TALKER_NODE,),
 )
 
@@ -256,7 +257,7 @@ async def test_tabs_show_entity_lists():
         # Every tab's list populates from the graph regardless of which pane is active.
         assert app.query_one('#actions-tab FilterableList OptionList', OptionList).option_count == 1
         assert app.query_one('#services-tab FilterableList OptionList', OptionList).option_count == 2
-        assert app.query_one('#topics-tab FilterableList OptionList', OptionList).option_count == 2
+        assert app.query_one('#topics-tab FilterableList OptionList', OptionList).option_count == 3
         assert app.query_one('#nodes-tab FilterableList OptionList', OptionList).option_count == 1
 
 
@@ -294,7 +295,7 @@ async def test_filter_arrows_move_highlight_while_input_focused():
         await pilot.press('ctrl+f')
         assert app.focused.id == 'filter-input'
         option_list = app.query_one('#topics-tab #entity-list', OptionList)
-        assert await wait_until(pilot, lambda: option_list.option_count == 2)
+        assert await wait_until(pilot, lambda: option_list.option_count == 3)
         assert option_list.highlighted == 0
         await pilot.press('down')
         assert await wait_until(pilot, lambda: option_list.highlighted == 1)
@@ -605,6 +606,32 @@ async def test_editor_stamp_subfield_row_opens_time_wizard():
         await _cursor_on_row(pilot, app, lambda line: line.strip().startswith('nanosec:'))
         await pilot.press('ctrl+w')  # innermost wizard along header.stamp.nanosec is Time
         assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup))
+
+
+async def test_editor_enum_level_row_opens_enum_wizard():
+    from textual.widgets import RadioButton
+
+    from ros_tui.ui.field_wizards import EnumWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, DIAG_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        level_row = next(i for i, line in enumerate(editor.text.splitlines()) if line.startswith('level:'))
+        editor.move_cursor((level_row, 0))
+        await pilot.press('ctrl+w')
+        assert await wait_until(pilot, lambda: isinstance(app.screen, EnumWizardPopup)), (
+            'enum wizard did not open on the level row'
+        )
+        buttons = list(app.screen.query('#enum-wizard-choices').first().query(RadioButton))
+        buttons[1].value = True  # WARN = 1 is the second choice.
+        await pilot.pause()
+        await click_button(pilot, '#enum-wizard-apply')
+        await pilot.pause()
+        assert yaml.safe_load(tab.query_one('#editor', TextArea).text)['level'] == 1
 
 
 async def test_editor_frame_id_row_opens_header_wizard():

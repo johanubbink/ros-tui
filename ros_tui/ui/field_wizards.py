@@ -23,6 +23,7 @@ The pure text helpers below (cursor path, block range, block render/replace) hol
 dependency so they can be unit-tested without a running app.
 """
 
+import functools
 import math
 import time
 from datetime import datetime
@@ -70,8 +71,8 @@ def cursor_field_path(text: str, row: int) -> list[str]:
     return [key for _, key in stack]
 
 
-def field_type_at(structure: Any, path: list[str]) -> str | None:
-    """Type label of the field at ``path`` in a ``FieldNode`` tuple, or None if absent."""
+def field_node_at(structure: Any, path: list[str]) -> Any:
+    """The ``FieldNode`` at ``path`` in a ``FieldNode`` tuple, or None if absent."""
     nodes = structure
     node = None
     for name in path:
@@ -79,22 +80,36 @@ def field_type_at(structure: Any, path: list[str]) -> str | None:
         if node is None:
             return None
         nodes = node.children
+    return node
+
+
+def field_type_at(structure: Any, path: list[str]) -> str | None:
+    """Type label of the field at ``path`` in a ``FieldNode`` tuple, or None if absent."""
+    node = field_node_at(structure, path)
     return node.type_label if node is not None else None
 
 
-def matched_wizard(structure: Any, path: list[str]) -> tuple[list[str], type] | None:
-    """Innermost prefix of ``path`` whose field type has a registered wizard, with the class.
+def matched_wizard(structure: Any, path: list[str]) -> tuple[list[str], Any] | None:
+    """Innermost prefix of ``path`` that has a wizard, with a callable ``(current_value)`` factory.
 
     Walking deepest-first opens the most specific popup for where the cursor sits: on a
     ``header.stamp`` row the Time wizard wins, while on the ``header`` line (or a plain leaf
     like ``header.frame_id`` that has no wizard of its own) it falls back outward to the
     Header wizard. This generalises to any depth of nesting.
+
+    A field matches either because its type is in ``WIZARDS`` (the factory is that class) or
+    because it is an integer enum carrying ``constants`` (the factory is an ``EnumWizardPopup``
+    pre-bound to those choices). Either way the caller just calls ``factory(current_value)``.
     """
     for depth in range(len(path), 0, -1):
         prefix = path[:depth]
-        type_label = field_type_at(structure, prefix)
-        if type_label in WIZARDS:
-            return prefix, WIZARDS[type_label]
+        node = field_node_at(structure, prefix)
+        if node is None:
+            continue
+        if node.type_label in WIZARDS:
+            return prefix, WIZARDS[node.type_label]
+        if node.constants:
+            return prefix, functools.partial(EnumWizardPopup, choices=node.constants)
     return None
 
 
@@ -753,6 +768,74 @@ class TimeWizardPopup(ModalScreen[object]):
 
     def _set_error(self, text: str) -> None:
         self.query_one('#time-wizard-error', Static).update(text)
+
+
+# --------------------------------------------------------------------------- enum wizard
+
+
+class EnumWizardPopup(ModalScreen[object]):
+    """Pick an integer enum value from a field's constants. Dismisses with the int, or None.
+
+    The constants ``(name, value)`` are single-choice options rendered ``NAME = value`` in a
+    RadioSet -- the same selection primitive the other wizards use, so all values (and their
+    underlying integers) are visible at once and it scales to large enums. Unlike the other
+    wizards it is not keyed by type label: ``matched_wizard`` binds the field's ``constants`` into
+    the factory, so this popup is reached for any integer field that carries enum constants.
+    """
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Cancel', priority=True),
+    ]
+
+    DEFAULT_CSS = """
+    EnumWizardPopup { align: center middle; }
+    EnumWizardPopup #enum-wizard-box {
+        width: 60; height: auto; max-height: 80%; border: round $primary; padding: 1 2;
+    }
+    EnumWizardPopup Static { height: 1; }
+    EnumWizardPopup RadioSet { height: auto; max-height: 20; margin-bottom: 1; }
+    EnumWizardPopup #enum-wizard-buttons { height: 3; margin-top: 1; }
+    EnumWizardPopup #enum-wizard-buttons Button {
+        margin-right: 1; background: $surface; color: $text; border: round $primary;
+    }
+    EnumWizardPopup #enum-wizard-buttons Button:focus {
+        background: $primary; color: $text; border: round $primary; text-style: bold;
+    }
+    """
+
+    def __init__(self, current_value: Any = None, *, choices: tuple[tuple[str, int], ...]):
+        super().__init__()
+        self._choices = tuple(choices)
+        # Preselect the constant matching the current value, else the first.
+        self._selected = next(
+            (index for index, (_, value) in enumerate(self._choices) if value == current_value),
+            0,
+        )
+
+    def compose(self):
+        with Vertical(id='enum-wizard-box'):
+            yield Static('Select a value')
+            with RadioSet(id='enum-wizard-choices'):
+                for index, (name, value) in enumerate(self._choices):
+                    yield RadioButton(f'{name} = {value}', value=index == self._selected)
+            with Horizontal(id='enum-wizard-buttons'):
+                yield Button('Apply', id='enum-wizard-apply')
+                yield Button('Cancel', id='enum-wizard-cancel')
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, '#enum-wizard-cancel')
+    def _cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, '#enum-wizard-apply')
+    def _apply_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        index = self.query_one('#enum-wizard-choices', RadioSet).pressed_index
+        if 0 <= index < len(self._choices):
+            self.dismiss(self._choices[index][1])
 
 
 # The registry keyed by the type label from get_fields_and_field_types() (e.g. 'std_msgs/Header').

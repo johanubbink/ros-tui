@@ -44,6 +44,7 @@ All four tabs populate from the demo node ([`launch/demo.launch.py`](launch/demo
 | Topics   | `/chatter` (~1 Hz)       | `Echo` a calm `std_msgs/String` stream.                   |
 | Topics   | `/counter` (~50 Hz)      | `Echo` to watch the Hz / drop counters move.              |
 | Topics   | `/inbox`                 | `Publish` `data: hello` — it's logged by the demo node.   |
+| Topics   | `/diagnostic_status`     | `Publish` — put the cursor on `level` and `ctrl+w` for the enum picker (OK/WARN/ERROR/STALE). |
 | Nodes    | `/ros_tui_demo_servers`  | Browse its interfaces (jump to one); view / `Set` a param. |
 
 ### With turtlesim (GUI)

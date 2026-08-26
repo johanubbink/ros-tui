@@ -24,8 +24,10 @@ Brings up, on one node, one entity for each tab:
 - Topics   — ``/chatter`` (``std_msgs/String`` @ ~1 Hz) for a calm echo, ``/counter``
   (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, ``/localisation_pose``
   (``geometry_msgs/PoseWithCovarianceStamped`` @ ~2 Hz) as a richer, nested message type to
-  browse and edit, and ``/inbox`` (``std_msgs/String`` subscriber) as a target for the Publish
-  demo — what arrives is logged so you can see your published message land.
+  browse and edit, ``/diagnostic_status`` (``diagnostic_msgs/DiagnosticStatus`` @ ~1 Hz, its
+  ``level`` cycling through the OK/WARN/ERROR/STALE enum) as a target for the enum field wizard,
+  and ``/inbox`` (``std_msgs/String`` subscriber) as a target for the Publish demo — what
+  arrives is logged so you can see your published message land.
 
 This mirrors the in-process ``FixtureServers`` used by the test suite
 (``test/conftest.py``), but as an installable node with public-looking names.
@@ -35,6 +37,7 @@ import math
 import time
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticStatus
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -49,12 +52,23 @@ ADD_TWO_INTS_SERVICE = '/add_two_ints'
 CHATTER_TOPIC = '/chatter'
 COUNTER_TOPIC = '/counter'
 LOCALISATION_POSE_TOPIC = '/localisation_pose'
+DIAGNOSTIC_STATUS_TOPIC = '/diagnostic_status'
 INBOX_TOPIC = '/inbox'
 
 CHATTER_PERIOD_S = 1.0
 COUNTER_PERIOD_S = 0.02  # ~50 Hz, fast enough to exercise the echo Hz/drop counters.
 LOCALISATION_POSE_PERIOD_S = 0.5  # ~2 Hz, a nested message type to browse and edit.
+DIAGNOSTIC_STATUS_PERIOD_S = 1.0  # ~1 Hz; cycles the `level` enum for the enum field wizard.
 FIBONACCI_FEEDBACK_PERIOD_S = 0.3  # Slow enough to watch the feedback stream in the UI.
+
+# (level constant, label) cycled by the /diagnostic_status publisher. `level` is an octet enum
+# field; its constants (OK/WARN/ERROR/STALE) are what the enum field wizard offers.
+DIAGNOSTIC_LEVELS = (
+    (DiagnosticStatus.OK, 'OK'),
+    (DiagnosticStatus.WARN, 'WARN'),
+    (DiagnosticStatus.ERROR, 'ERROR'),
+    (DiagnosticStatus.STALE, 'STALE'),
+)
 
 
 class DemoServers(Node):
@@ -92,18 +106,27 @@ class DemoServers(Node):
             LOCALISATION_POSE_PERIOD_S, self._publish_localisation_pose, callback_group=callback_group
         )
 
+        self._diagnostic_publisher = self.create_publisher(
+            DiagnosticStatus, DIAGNOSTIC_STATUS_TOPIC, 10
+        )
+        self._diagnostic_step = 0
+        self.create_timer(
+            DIAGNOSTIC_STATUS_PERIOD_S, self._publish_diagnostic_status, callback_group=callback_group
+        )
+
         self.create_subscription(
             String, INBOX_TOPIC, self._on_inbox, 10, callback_group=callback_group
         )
 
         self.get_logger().info(
-            'Demo servers ready: action %s, service %s, topics %s, %s, %s, sub %s'
+            'Demo servers ready: action %s, service %s, topics %s, %s, %s, %s, sub %s'
             % (
                 FIBONACCI_ACTION,
                 ADD_TWO_INTS_SERVICE,
                 CHATTER_TOPIC,
                 COUNTER_TOPIC,
                 LOCALISATION_POSE_TOPIC,
+                DIAGNOSTIC_STATUS_TOPIC,
                 INBOX_TOPIC,
             )
         )
@@ -132,6 +155,16 @@ class DemoServers(Node):
         message.pose.covariance[7] = 0.05  # y
         message.pose.covariance[35] = 0.02  # yaw
         self._localisation_pose_publisher.publish(message)
+
+    def _publish_diagnostic_status(self):
+        level, label = DIAGNOSTIC_LEVELS[self._diagnostic_step % len(DIAGNOSTIC_LEVELS)]
+        self._diagnostic_step += 1
+        self._diagnostic_publisher.publish(
+            DiagnosticStatus(
+                level=level, name='demo_check', message=f'cycling level: {label}',
+                hardware_id='demo-0',
+            )
+        )
 
     def _on_inbox(self, message):
         self.get_logger().info(f'/inbox received: {message.data!r}')
