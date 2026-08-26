@@ -438,13 +438,16 @@ def _choose_time_mode(app, index):
 async def _open_time_subwizard(pilot, app, *, via):
     """From an open header wizard in manual mode, open the nested Time wizard.
 
-    ``via`` is 'button' (click Set time…) or 'ctrl+w' (context-aware app binding).
+    ``via`` is 'button' (click Fill) or 'ctrl+w' (fires only while the stamp input is focused,
+    mirroring the YAML editor's field-scoped ctrl+w).
     """
     from ros_tui.ui.field_wizards import TimeWizardPopup
 
     if via == 'button':
-        await click_button(pilot, '#header-wizard-set-time')
+        await click_button(pilot, '#header-wizard-stamp-fill')
     else:
+        app.screen.query_one('#header-wizard-stamp', Input).focus()
+        await pilot.pause()
         await pilot.press('ctrl+w')
     assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup)), (
         'time sub-wizard never appeared'
@@ -504,6 +507,36 @@ async def test_wizard_time_subwizard_now_writes_stamp_now():
         await pilot.pause()
         loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
         assert loaded['header'] == {'stamp': 'now', 'frame_id': 'map'}
+
+
+async def test_wizard_stamp_typed_directly_without_fill():
+    # Editor-consistent: the stamp is a real input you can type into, not only fill via wizard.
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-stamp', Input).value = '3.25'
+        app.screen.query_one('#header-wizard-frame', Input).value = 'map'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': {'sec': 3, 'nanosec': 250000000}, 'frame_id': 'map'}
+
+
+async def test_wizard_ctrl_w_ignored_when_stamp_not_focused():
+    from ros_tui.ui.field_wizards import TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-frame', Input).focus()  # not the stamp input
+        await pilot.pause()
+        await pilot.press('ctrl+w')
+        await pilot.pause()
+        assert not isinstance(app.screen, TimeWizardPopup)
 
 
 async def test_wizard_now_writes_stamp_now():

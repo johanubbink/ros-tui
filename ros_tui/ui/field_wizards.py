@@ -161,10 +161,9 @@ class HeaderWizardPopup(ModalScreen[object]):
     HeaderWizardPopup Static { height: 1; }
     HeaderWizardPopup RadioSet { height: auto; margin-bottom: 1; }
     HeaderWizardPopup .field-row { height: 3; width: 1fr; }
-    HeaderWizardPopup .field-row Static { width: 10; content-align: left middle; height: 3; }
+    HeaderWizardPopup .field-row Static { width: 20; content-align: left middle; height: 3; }
     HeaderWizardPopup .field-row Input { width: 1fr; }
-    HeaderWizardPopup #header-wizard-stamp-summary { width: 1fr; content-align: left middle; }
-    HeaderWizardPopup #header-wizard-time-row { height: 3; }
+    HeaderWizardPopup #header-wizard-stamp-fill { width: auto; margin-left: 1; }
     HeaderWizardPopup #header-wizard-error { color: $error; text-style: bold; }
     HeaderWizardPopup Button {
         margin-right: 1; background: $surface; color: $text; border: round $primary;
@@ -194,10 +193,9 @@ class HeaderWizardPopup(ModalScreen[object]):
                 yield Static('frame_id')
                 yield Input(value=self._frame_id, id='header-wizard-frame')
             with Horizontal(classes='field-row', id='header-wizard-stamp-row'):
-                yield Static('stamp')
-                yield Static(self._stamp_summary(), id='header-wizard-stamp-summary')
-            with Horizontal(id='header-wizard-time-row'):
-                yield Button('Set time… (ctrl+w)', id='header-wizard-set-time')
+                yield Static('stamp [sec. (dec)]', id='header-wizard-stamp-label')
+                yield Input(value=self._stamp_text(), id='header-wizard-stamp')
+                yield Button('Fill', id='header-wizard-stamp-fill')
             yield Static('', id='header-wizard-error')
             with Horizontal(id='header-wizard-buttons'):
                 yield Button('Apply', id='header-wizard-apply')
@@ -219,34 +217,41 @@ class HeaderWizardPopup(ModalScreen[object]):
         mode = self._current_mode()
         self.query_one('#header-wizard-frame-row').display = mode in ('now', 'manual')
         self.query_one('#header-wizard-stamp-row').display = mode == 'manual'
-        self.query_one('#header-wizard-time-row').display = mode == 'manual'
 
-    def _stamp_summary(self) -> str:
-        if self._stamp_value == 'now':
-            return 'now (stamped at send)'
-        return (
-            f"{stamp_to_seconds_str(self._stamp_value)} s  "
-            f"(sec {self._stamp_value['sec']}, nanosec {self._stamp_value['nanosec']})"
-        )
+    def _stamp_text(self) -> str:
+        """Initial text for the stamp input: 'now' or trimmed decimal seconds."""
+        return 'now' if self._stamp_value == 'now' else stamp_to_seconds_str(self._stamp_value)
+
+    def _stamp_from_input(self) -> Any:
+        """Parse the stamp input as 'now' or a {sec, nanosec} dict; None if it can't be parsed."""
+        text = self.query_one('#header-wizard-stamp', Input).value.strip()
+        if text == 'now':
+            return 'now'
+        try:
+            return seconds_str_to_stamp(text)
+        except ValueError:
+            return None
 
     def wizard_action(self) -> None:
-        """ctrl+w inside the header wizard opens the nested Time wizard (manual mode only)."""
-        if self._current_mode() == 'manual':
+        """ctrl+w opens the Time fill assist when the stamp input is focused (like the editor)."""
+        if self._current_mode() == 'manual' and (
+            self.app.focused is self.query_one('#header-wizard-stamp', Input)
+        ):
             self._open_time_wizard()
 
-    @on(Button.Pressed, '#header-wizard-set-time')
-    def _set_time_pressed(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, '#header-wizard-stamp-fill')
+    def _fill_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._open_time_wizard()
 
     def _open_time_wizard(self) -> None:
-        self.app.push_screen(TimeWizardPopup(self._stamp_value), self._on_time_picked)
+        self.app.push_screen(TimeWizardPopup(self._stamp_from_input()), self._on_time_picked)
 
     def _on_time_picked(self, value: Any) -> None:
         if value is None:
             return
-        self._stamp_value = value
-        self.query_one('#header-wizard-stamp-summary', Static).update(self._stamp_summary())
+        text = 'now' if value == 'now' else stamp_to_seconds_str(value)
+        self.query_one('#header-wizard-stamp', Input).value = text
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -270,7 +275,11 @@ class HeaderWizardPopup(ModalScreen[object]):
         frame_id = self.query_one('#header-wizard-frame', Input).value
         if mode == 'now':
             return {'stamp': 'now', 'frame_id': frame_id}
-        return {'stamp': self._stamp_value, 'frame_id': frame_id}
+        stamp = self._stamp_from_input()
+        if stamp is None:
+            self._set_error('stamp: enter seconds (e.g. 2.5) or "now" — or use Fill')
+            return None
+        return {'stamp': stamp, 'frame_id': frame_id}
 
     def _set_error(self, text: str) -> None:
         self.query_one('#header-wizard-error', Static).update(text)
