@@ -18,7 +18,7 @@
 import time
 
 from textual import on
-from textual.widgets import Button, TextArea
+from textual.widgets import Button, Static, TextArea
 
 from ros_tui.ros.message_yaml import to_truncated_yaml
 from ros_tui.ui.interface_tab import InterfaceTab
@@ -36,6 +36,15 @@ class ServicesTab(InterfaceTab):
 
     def compose_controls(self):
         yield Button('Call', id='call-button', variant='primary')
+        # Spacer pushes the editor helper to the right edge: filling in a field is distinct
+        # from the command that acts on the service.
+        yield Static('', classes='controls-spacer')
+        yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
+
+    @on(Button.Pressed, '#wizard-button')
+    def _on_wizard_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.wizard_action()
 
     def on_selection_changed(self) -> None:
         # Land in the editor so the request is ready to edit and call straight after

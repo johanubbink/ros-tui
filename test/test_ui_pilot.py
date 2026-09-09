@@ -350,7 +350,7 @@ async def test_selecting_topic_focuses_editor():
 
 async def test_selecting_topic_puts_cursor_at_first_value():
     """The editor cursor lands on the first fillable value, not at the top-left corner."""
-    from ros_tui.ui.topics_tab import _value_locations
+    from ros_tui.ui.message_editor import _value_locations
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
@@ -364,7 +364,7 @@ async def test_selecting_topic_puts_cursor_at_first_value():
 
 async def test_tab_jumps_between_values_in_editor():
     """Tab / Shift+Tab step through the fillable values instead of inserting indentation."""
-    from ros_tui.ui.topics_tab import _value_locations
+    from ros_tui.ui.message_editor import _value_locations
 
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:

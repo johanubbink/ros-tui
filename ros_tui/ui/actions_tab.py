@@ -55,6 +55,15 @@ class ActionsTab(InterfaceTab):
     def compose_controls(self):
         yield Button('Send goal', id='send-button', variant='primary')
         yield Button('Cancel', id='cancel-button', disabled=True)
+        # Spacer pushes the editor helper to the right edge: filling in a field is distinct
+        # from the commands that act on the goal.
+        yield Static('', classes='controls-spacer')
+        yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
+
+    @on(Button.Pressed, '#wizard-button')
+    def _on_wizard_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.wizard_action()
 
     def compose_status(self):
         yield Static('no goal sent yet', id='goal-status')
