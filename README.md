@@ -9,9 +9,9 @@ one-liners.
 ros2 run ros_tui ros_tui
 ```
 
-Each tab: filterable entity list on the left · type + YAML editor + controls on the
-right · output log at the bottom. The graph refreshes automatically (1 s poll, only
-re-renders on change).
+Each tab opens on a full-width filterable entity list; selecting an entry swaps to its
+detail view (type + YAML editor + controls, output log at the bottom). `ctrl+f` takes you
+back to the list. The graph refreshes automatically (1 s poll, only re-renders on change).
 
 ## Try it in Docker
 
@@ -44,6 +44,7 @@ All four tabs populate from the demo node ([`launch/demo.launch.py`](launch/demo
 | Topics   | `/chatter` (~1 Hz)       | `Echo` a calm `std_msgs/String` stream.                   |
 | Topics   | `/counter` (~50 Hz)      | `Echo` to watch the Hz / drop counters move.              |
 | Topics   | `/inbox`                 | `Publish` `data: hello` — it's logged by the demo node.   |
+| Topics   | `/diagnostic_status`     | `Publish` — put the cursor on `level` and `ctrl+w` for the enum picker (OK/WARN/ERROR/STALE). |
 | Nodes    | `/ros_tui_demo_servers`  | Browse its interfaces (jump to one); view / `Set` a param. |
 
 ### With turtlesim (GUI)
@@ -127,7 +128,7 @@ prefilled with the message defaults. Extras:
 | Key | Action |
 | --- | --- |
 | `ctrl+t` | Cycle tabs (Topics → Services → Actions → Nodes) |
-| `ctrl+f` | Focus filter input in the current tab |
+| `ctrl+f` | Back to the entity list (filter focused) from the detail view |
 | `↑` / `↓` | Move through matches while the filter is focused (first match is auto-selected) |
 | `enter` | Select the highlighted match |
 | `ctrl+s` | Primary action (Send goal / Call / Publish once / Set param) |

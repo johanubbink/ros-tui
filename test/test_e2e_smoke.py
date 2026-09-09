@@ -47,6 +47,7 @@ from test_ui_pilot import (
     click_button,
     log_text,
     select_entry,
+    select_topic,
     show_tab,
     static_text,
     wait_until,
@@ -109,7 +110,7 @@ async def test_topic_echo_and_publish_through_ui(bridge, fixture_servers):
         tab = app.query_one('#topics-tab')
 
         chatter = await wait_for_entry(pilot, bridge, 'topics', CHATTER_TOPIC)
-        await select_entry(pilot, tab, chatter)
+        await select_topic(pilot, tab, chatter, 'subscribe')
         await click_button(pilot, '#echo-button')
         status = tab.query_one('#topics-status', Static)
         assert await wait_until(
@@ -120,7 +121,7 @@ async def test_topic_echo_and_publish_through_ui(bridge, fixture_servers):
         await click_button(pilot, '#echo-button')  # Stop so the log quiets down.
 
         inbox = await wait_for_entry(pilot, bridge, 'topics', INBOX_TOPIC)
-        await select_entry(pilot, tab, inbox)
+        await select_topic(pilot, tab, inbox, 'publish')
         tab.query_one('#editor', TextArea).load_text('data: from_the_tui')
         deadline = time.monotonic() + 10.0
         while 'from_the_tui' not in fixture_servers.inbox_messages:

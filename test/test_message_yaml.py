@@ -26,6 +26,7 @@ from ros_tui.ros.message_yaml import (
     default_yaml,
     import_type,
     interface_label,
+    message_structure,
     message_to_plain,
     request_class,
 )
@@ -67,8 +68,20 @@ def test_default_seed_round_trips(kind, type_name):
     loaded = yaml.safe_load(seed)
     fillable = request_class(kind, import_type(kind, type_name))
     message, time_setters = build_message(fillable, loaded)
-    assert time_setters == []
-    assert message_to_plain(message) == (loaded or {})
+    if 'header: auto' in seed:
+        # A nested header seeds as the 'auto' magic value: it builds cleanly but leaves a
+        # deferred stamp setter, so it does not round-trip to the same plain dict.
+        assert time_setters
+    else:
+        assert time_setters == []
+        assert message_to_plain(message) == (loaded or {})
+
+
+def test_nested_header_seeds_as_auto():
+    seed = default_yaml('msg', 'geometry_msgs/msg/PoseStamped')
+    assert 'header: auto' in seed
+    # A top-level Header topic has no nested header field, so it stays expanded.
+    assert 'auto' not in default_yaml('msg', 'std_msgs/msg/Header')
 
 
 def test_unknown_type_raises_introspection_error():
@@ -274,3 +287,46 @@ def test_build_from_none_returns_defaults():
     message, time_setters = build_message(string_class, None)
     assert message == string_class()
     assert time_setters == []
+
+
+def test_message_structure_scalar_leaf():
+    fields = message_structure('msg', 'std_msgs/msg/String')
+    assert len(fields) == 1
+    assert fields[0].name == 'data'
+    assert fields[0].type_label == 'string'
+    assert fields[0].children == ()
+
+
+def test_message_structure_nested_and_labels():
+    fields = {node.name: node for node in message_structure('msg', 'geometry_msgs/msg/PoseStamped')}
+    assert fields['header'].children  # std_msgs/Header expands.
+    pose = fields['pose']
+    child_names = [child.name for child in pose.children]
+    assert child_names == ['position', 'orientation']
+    # Leaf type labels match the raw get_fields_and_field_types() strings.
+    position = next(child for child in pose.children if child.name == 'position')
+    x_field = next(child for child in position.children if child.name == 'x')
+    assert x_field.type_label == 'double'
+
+
+def test_message_structure_walks_into_array_element_type():
+    fields = {node.name: node for node in message_structure('msg', 'geometry_msgs/msg/Polygon')}
+    points = fields['points']  # geometry_msgs/Point32[]
+    assert points.children  # walks into the array's element message, not treated as scalar.
+    assert any(child.name == 'x' for child in points.children)
+
+
+def test_message_structure_enum_constants_sole_integer_field():
+    # DiagnosticStatus: un-prefixed byte constants attach to the only integer field, `level`,
+    # in value order (not dir()'s alphabetical order), decoded from bytes to int.
+    fields = {node.name: node for node in message_structure('msg', 'diagnostic_msgs/msg/DiagnosticStatus')}
+    assert fields['level'].constants == (('OK', 0), ('WARN', 1), ('ERROR', 2), ('STALE', 3))
+    assert fields['name'].constants == ()  # a string field carries no enum choices.
+
+
+def test_message_structure_enum_constants_prefix_grouped():
+    # BatteryState: each integer field gets only its own POWER_SUPPLY_<FIELD>_* prefix group.
+    fields = {node.name: node for node in message_structure('msg', 'sensor_msgs/msg/BatteryState')}
+    status = dict(fields['power_supply_status'].constants)
+    assert status and all(name.startswith('POWER_SUPPLY_STATUS_') for name in status)
+    assert not any(name.startswith('POWER_SUPPLY_HEALTH_') for name in status)

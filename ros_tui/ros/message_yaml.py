@@ -27,6 +27,7 @@ dotted/indexed path (``pose.position.x``, ``points[1].x``).
 import array
 import functools
 import math
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy
@@ -97,15 +98,119 @@ def default_yaml(kind: str, type_name: str) -> str:
     """Seed text for the editor: the default message as YAML plus a constants hint."""
     interface = import_type(kind, type_name)
     fillable = request_class(kind, interface)
-    plain = message_to_plain(fillable())
+    plain = message_to_plain(fillable(), seed=True)
     text = _dump_yaml(plain) if plain else '# (no fields)\n'
     constants = _constants_comment(fillable)
     return text + constants
 
 
-def message_to_plain(message: Any) -> dict:
-    """Convert a message to plain dict/list/scalar values (bytes rendered as ints)."""
-    return _plain_message(message, max_array=None, max_str=None)
+def schema_path(parent_path: str, name: str) -> str:
+    """Dotted field path used by the structure tree and to_filtered_yaml (indices collapsed)."""
+    return f'{parent_path}.{name}' if parent_path else name
+
+
+@dataclass(frozen=True)
+class FieldNode:
+    """A field in a message's static structure: its name, type label, and nested fields.
+
+    ``constants`` holds the enum choices ``(name, int_value)`` that apply to this field, when
+    the field is an integer enum backed by message constants (see :func:`_field_enum_choices`);
+    empty otherwise. The enum field wizard renders these as a single-choice list.
+    """
+
+    name: str
+    type_label: str
+    children: tuple['FieldNode', ...] = field(default_factory=tuple)
+    constants: tuple[tuple[str, int], ...] = ()
+
+
+@functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
+def message_structure(kind: str, type_name: str) -> tuple[FieldNode, ...]:
+    """Static field tree for ``kind``/``type_name`` (introspected from the class, no instance)."""
+    fillable = request_class(kind, import_type(kind, type_name))
+    return _class_fields(fillable, frozenset())
+
+
+def _class_fields(message_class: type, seen: frozenset) -> tuple[FieldNode, ...]:
+    types = message_class.get_fields_and_field_types()
+    enum_choices = _field_enum_choices(message_class)
+    return tuple(
+        FieldNode(name, types[name], _slot_children(slot, seen), enum_choices.get(name, ()))
+        for name, slot in zip(types, message_class.SLOT_TYPES)
+    )
+
+
+_INTEGER_SCALAR_TYPES = frozenset(
+    {'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64',
+     'byte', 'char', 'octet'}
+)
+
+
+def _message_constants(message_class: type) -> list[tuple[str, int]]:
+    """Integer enum constants declared on ``message_class`` as ``(name, value)``.
+
+    IDL constants surface as upper-case class attributes; ``int`` ones (e.g. Marker's ``ARROW``)
+    are taken as-is, while ``byte``/``octet`` ones (e.g. DiagnosticStatus's ``OK``) arrive as a
+    single ``bytes`` and are decoded to their integer value. Booleans and generated internals
+    (``_TYPE_SUPPORT``, ``<FIELD>__DEFAULT``) are skipped.
+    """
+    constants = []
+    for name in dir(message_class):
+        if not name.isupper() or name.startswith('_') or '__' in name:
+            continue
+        value = getattr(message_class, name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            constants.append((name, value))
+        elif isinstance(value, bytes) and len(value) == 1:
+            constants.append((name, value[0]))
+    constants.sort(key=lambda item: item[1])  # by value: natural enum order, not dir()'s alpha.
+    return constants
+
+
+def _field_enum_choices(message_class: type) -> dict[str, tuple[tuple[str, int], ...]]:
+    """Map each integer field to the enum constants that apply to it.
+
+    Association heuristic: a field takes constants whose names share its upper-case prefix
+    (e.g. ``power_supply_status`` -> ``POWER_SUPPLY_STATUS_*``); failing that, if the message has
+    exactly one integer field it takes all the constants (the DiagnosticStatus ``level`` case).
+    Otherwise it gets none -- so un-prefixed multi-enum messages (e.g. Marker) are left alone
+    rather than mis-attributing every constant to every integer field.
+    """
+    constants = _message_constants(message_class)
+    if not constants:
+        return {}
+    types = message_class.get_fields_and_field_types()
+    int_fields = [name for name, label in types.items() if label in _INTEGER_SCALAR_TYPES]
+    choices = {}
+    for name in int_fields:
+        prefixed = tuple((n, v) for n, v in constants if n.startswith(name.upper() + '_'))
+        if prefixed:
+            choices[name] = prefixed
+        elif len(int_fields) == 1:
+            choices[name] = tuple(constants)
+    return choices
+
+
+def _slot_children(slot: Any, seen: frozenset) -> tuple['FieldNode', ...]:
+    value_type = slot.value_type if isinstance(slot, AbstractNestedType) else slot
+    if not isinstance(value_type, NamespacedType):
+        return ()
+    nested = import_message_from_namespaced_type(value_type)
+    key = f'{nested.__module__}.{nested.__name__}'
+    if key in seen:
+        return ()  # Defensive: ROS IDL messages are not normally cyclic.
+    return _class_fields(nested, seen | {key})
+
+
+def message_to_plain(message: Any, seed: bool = False) -> dict:
+    """Convert a message to plain dict/list/scalar values (bytes rendered as ints).
+
+    ``seed=True`` collapses nested Header fields to the scalar ``'auto'`` so editor seeds
+    prefill the "stamp at send time" magic instead of an expanded zeroed header.
+    """
+    return _plain_message(message, max_array=None, max_str=None, seed=seed)
 
 
 def build_message(message_class: type, values: Any) -> tuple[Any, list[TimeSetter]]:
@@ -130,7 +235,25 @@ def to_truncated_yaml(
 ) -> str:
     """Render a message as display YAML, truncating long arrays/strings and capping lines."""
     plain = _plain_message(message, max_array=max_array, max_str=TRUNCATE_STRING_CHARS)
-    text = _dump_yaml(plain) if plain else '(no fields)'
+    return _render_yaml_text(plain, max_lines, '(no fields)')
+
+
+def to_filtered_yaml(
+    message: Any,
+    selected_paths: Any,
+    max_array: int = TRUNCATE_ARRAY_ELEMENTS,
+    max_lines: int = TRUNCATE_RENDER_LINES,
+) -> str:
+    """Like to_truncated_yaml, but only includes fields whose dotted path is in ``selected_paths``
+    (or has a selected descendant, for nested/sequence-of-message fields)."""
+    plain = _plain_message(
+        message, max_array, TRUNCATE_STRING_CHARS, frozenset(selected_paths), ''
+    )
+    return _render_yaml_text(plain, max_lines, '(no fields)')
+
+
+def _render_yaml_text(plain: dict, max_lines: int, empty_text: str) -> str:
+    text = _dump_yaml(plain) if plain else empty_text
     lines = text.splitlines()
     if len(lines) > max_lines:
         hidden_count = len(lines) - max_lines
@@ -306,14 +429,38 @@ def _byte_value(value: Any, path: str) -> bytes:
     raise FieldError(path, f'byte field must be an integer in [0, 255], got {value!r}')
 
 
-def _plain_message(message: Any, max_array: int | None, max_str: int | None) -> dict:
+def _plain_message(
+    message: Any,
+    max_array: int | None,
+    max_str: int | None,
+    selected: frozenset[str] | None = None,
+    path: str = '',
+    seed: bool = False,
+) -> dict:
     plain = {}
     for field_name, slot in zip(message.get_fields_and_field_types().keys(), message.SLOT_TYPES):
-        plain[field_name] = _plain_value(getattr(message, field_name), slot, max_array, max_str)
+        child_path = schema_path(path, field_name)
+        if selected is not None and not _field_included(child_path, selected):
+            continue
+        plain[field_name] = _plain_value(
+            getattr(message, field_name), slot, max_array, max_str, selected, child_path, seed
+        )
     return plain
 
 
-def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | None) -> Any:
+def _field_included(path: str, selected: frozenset[str]) -> bool:
+    return path in selected or any(candidate.startswith(f'{path}.') for candidate in selected)
+
+
+def _plain_value(
+    value: Any,
+    slot: Any,
+    max_array: int | None,
+    max_str: int | None,
+    selected: frozenset[str] | None = None,
+    path: str = '',
+    seed: bool = False,
+) -> Any:
     if isinstance(slot, AbstractNestedType):
         total = len(value)
         truncated = max_array is not None and total > max_array
@@ -321,8 +468,11 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
         if isinstance(slot.value_type, BasicType) and slot.value_type.typename == 'octet':
             plain_items = [_byte_to_int(item) for item in items]
         else:
+            # Sequence-of-message: reuse the same collapsed path for every element, so a
+            # schema-level path like ``points.x`` filters each element uniformly.
             plain_items = [
-                _plain_value(item, slot.value_type, max_array, max_str) for item in items
+                _plain_value(item, slot.value_type, max_array, max_str, selected, path, seed)
+                for item in items
             ]
         if truncated:
             plain_items.append(f'… ({total} total)')
@@ -330,7 +480,10 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
     if isinstance(slot, BasicType) and slot.typename == 'octet':
         return _byte_to_int(value)
     if hasattr(value, 'get_fields_and_field_types'):
-        return _plain_message(value, max_array, max_str)
+        qualified = f'{type(value).__module__}.{type(value).__name__}'
+        if seed and qualified == _HEADER_CLASS:
+            return 'auto'  # Prefill the "stamp at send time" magic instead of a zeroed header.
+        return _plain_message(value, max_array, max_str, selected, path, seed)
     if isinstance(value, numpy.number):
         return value.item()
     if isinstance(value, str) and max_str is not None and len(value) > max_str:

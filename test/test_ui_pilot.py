@@ -46,13 +46,14 @@ FIBONACCI_ENTRY = InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibon
 ADD_TWO_INTS_ENTRY = InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',))
 CHATTER_ENTRY = InterfaceEntry('/chatter', ('std_msgs/msg/String',))
 POSE_ENTRY = InterfaceEntry('/pose', ('geometry_msgs/msg/PoseStamped',))
+DIAG_ENTRY = InterfaceEntry('/diag', ('diagnostic_msgs/msg/DiagnosticStatus',))
 TALKER_NODE = InterfaceEntry('/talker', ('/',))  # nodes store their namespace in types[0].
 
 SNAPSHOT = GraphSnapshot(
     version=1,
     actions=(FIBONACCI_ENTRY,),
     services=(ADD_TWO_INTS_ENTRY, InterfaceEntry('/set_bool', ('std_srvs/srv/SetBool',))),
-    topics=(CHATTER_ENTRY, POSE_ENTRY),
+    topics=(CHATTER_ENTRY, POSE_ENTRY, DIAG_ENTRY),
     nodes=(TALKER_NODE,),
 )
 
@@ -88,6 +89,7 @@ class FakeBridge:
         self.periodic_started = []
         self.periodic_stopped = []
         self.subscriptions = {}
+        self.topic_counts_requests = []
         self.node_info_requests = []
         self.param_list_requests = []
         self.set_param_calls = []
@@ -139,6 +141,10 @@ class FakeBridge:
         self.subscriptions.pop(name, None)
         return completed_future()
 
+    def topic_endpoint_counts(self, name):
+        self.topic_counts_requests.append(name)
+        return completed_future((1, 2))
+
     def shutdown(self):
         pass
 
@@ -161,7 +167,12 @@ async def click_button(pilot, selector):
 async def show_tab(pilot, tab_id):
     """Make a tab's pane active so it gets laid out; a hidden pane is sized 0×0,
     which silently drops RichLog writes. Tabs are switched via ctrl+t cycling, so
-    set the active pane directly rather than pressing a numbered shortcut."""
+    set the active pane directly rather than pressing a numbered shortcut.
+
+    Drop focus first, like the real ctrl+t path (action_cycle_tab): once a pane's
+    filter input is focused on activation, TabbedContent silently reverts a direct
+    `active` change while that descendant holds focus."""
+    pilot.app.set_focus(None)
     pilot.app.query_one(TabbedContent).active = tab_id
     await pilot.pause()
 
@@ -170,6 +181,20 @@ async def select_entry(pilot, tab, entry):
     tab.post_message(FilterableList.Selected(entry))
     # Wait for PrototypeReady to land (seed cached), not just for editor text: a late
     # prototype would overwrite any text the test loads into the editor afterwards.
+    assert await wait_until(pilot, lambda: entry.name in tab._seed_cache), (
+        f'prototype never loaded for {entry.name}'
+    )
+
+
+async def select_topic(pilot, tab, entry, mode='publish'):
+    """Select a topic and choose a mode in the popup ('publish' -> p, 'subscribe' -> s)."""
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    tab.post_message(FilterableList.Selected(entry))
+    assert await wait_until(pilot, lambda: isinstance(pilot.app.screen, TopicModePopup)), (
+        'mode popup never appeared'
+    )
+    await pilot.press('p' if mode == 'publish' else 's')
     assert await wait_until(pilot, lambda: entry.name in tab._seed_cache), (
         f'prototype never loaded for {entry.name}'
     )
@@ -232,7 +257,7 @@ async def test_tabs_show_entity_lists():
         # Every tab's list populates from the graph regardless of which pane is active.
         assert app.query_one('#actions-tab FilterableList OptionList', OptionList).option_count == 1
         assert app.query_one('#services-tab FilterableList OptionList', OptionList).option_count == 2
-        assert app.query_one('#topics-tab FilterableList OptionList', OptionList).option_count == 2
+        assert app.query_one('#topics-tab FilterableList OptionList', OptionList).option_count == 3
         assert app.query_one('#nodes-tab FilterableList OptionList', OptionList).option_count == 1
 
 
@@ -270,7 +295,7 @@ async def test_filter_arrows_move_highlight_while_input_focused():
         await pilot.press('ctrl+f')
         assert app.focused.id == 'filter-input'
         option_list = app.query_one('#topics-tab #entity-list', OptionList)
-        assert await wait_until(pilot, lambda: option_list.option_count == 2)
+        assert await wait_until(pilot, lambda: option_list.option_count == 3)
         assert option_list.highlighted == 0
         await pilot.press('down')
         assert await wait_until(pilot, lambda: option_list.highlighted == 1)
@@ -290,6 +315,11 @@ async def test_filter_enter_selects_highlighted_match():
         option_list = tab.query_one('#entity-list', OptionList)
         assert await wait_until(pilot, lambda: option_list.option_count == 1)
         await pilot.press('enter')
+        # Selecting a topic pops the mode chooser; pick publish to commit the selection.
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         assert await wait_until(
             pilot,
             lambda: tab.current_entry is not None and tab.current_entry.name == '/pose',
@@ -301,10 +331,407 @@ async def test_selecting_topic_seeds_editor_with_defaults():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, POSE_ENTRY)
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
         editor_text = tab.query_one('#editor', TextArea).text
         assert 'orientation:' in editor_text
         assert 'w: 1.0' in editor_text
+
+
+async def test_selecting_topic_focuses_editor():
+    """Selecting a topic lands focus in the message editor, ready to edit and publish."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        assert app.focused is tab.query_one('#editor', TextArea)
+
+
+async def test_selecting_topic_puts_cursor_at_first_value():
+    """The editor cursor lands on the first fillable value, not at the top-left corner."""
+    from ros_tui.ui.topics_tab import _value_locations
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        assert editor.cursor_location == _value_locations(editor.text)[0]
+
+
+async def test_tab_jumps_between_values_in_editor():
+    """Tab / Shift+Tab step through the fillable values instead of inserting indentation."""
+    from ros_tui.ui.topics_tab import _value_locations
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        before = editor.text
+        locations = _value_locations(editor.text)
+        assert editor.cursor_location == locations[0]
+        await pilot.press('tab')
+        assert editor.cursor_location == locations[1]
+        assert editor.text == before  # Tab moved the cursor, did not insert whitespace.
+        await pilot.press('shift+tab')
+        assert editor.cursor_location == locations[0]
+
+
+async def _open_header_wizard(pilot, app):
+    """Select /pose in publish mode, park the cursor on the header line, open the wizard."""
+    from ros_tui.ui.wizards import HeaderWizardPopup
+
+    await show_tab(pilot, 'topics')
+    tab = app.query_one('#topics-tab')
+    await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+    await pilot.pause()
+    editor = tab.query_one('#editor', TextArea)
+    header_row = next(i for i, line in enumerate(editor.text.splitlines()) if 'header:' in line)
+    editor.move_cursor((header_row, 0))
+    await pilot.press('ctrl+w')
+    assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup)), (
+        'header wizard never appeared'
+    )
+    return tab
+
+
+async def test_seed_shows_header_auto():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        assert 'header: auto' in tab.query_one('#editor', TextArea).text
+
+
+async def test_wizard_auto_writes_header_auto():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        await click_button(pilot, '#header-wizard-apply')  # 'auto' is the default mode.
+        await pilot.pause()
+        assert 'header: auto' in tab.query_one('#editor', TextArea).text
+
+
+def _choose_mode(app, index):
+    """Press the RadioButton at ``index`` in the header wizard's RadioSet."""
+    from textual.widgets import RadioButton
+
+    buttons = list(app.screen.query('#header-wizard-mode').first().query(RadioButton))
+    buttons[index].value = True
+
+
+def _choose_time_mode(app, index):
+    """Press the RadioButton at ``index`` in the time (sub-)wizard's RadioSet."""
+    from textual.widgets import RadioButton
+
+    buttons = list(app.screen.query('#time-wizard-mode').first().query(RadioButton))
+    buttons[index].value = True
+
+
+async def _open_time_subwizard(pilot, app, *, via):
+    """From an open header wizard in manual mode, open the nested Time wizard.
+
+    ``via`` is 'button' (click Fill) or 'ctrl+w' (fires only while the stamp input is focused,
+    mirroring the YAML editor's field-scoped ctrl+w).
+    """
+    from ros_tui.ui.wizards import TimeWizardPopup
+
+    if via == 'button':
+        await click_button(pilot, '#header-wizard-stamp-fill')
+    else:
+        app.screen.query_one('#header-wizard-stamp', Input).focus()
+        await pilot.pause()
+        await pilot.press('ctrl+w')
+    assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup)), (
+        'time sub-wizard never appeared'
+    )
+
+
+async def test_wizard_manual_via_time_subwizard_writes_stamp():
+    from ros_tui.ui.wizards import HeaderWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # 'manual' is the third radio.
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='button')
+        _choose_time_mode(app, 1)  # 'seconds' is the second radio.
+        await pilot.pause()
+        app.screen.query_one('#time-seconds', Input).value = '2.5'
+        await click_button(pilot, '#time-wizard-apply')
+        # Back in the header wizard with its own state preserved.
+        assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup))
+        app.screen.query_one('#header-wizard-frame', Input).value = 'map'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': {'sec': 2, 'nanosec': 500000000}, 'frame_id': 'map'}
+
+
+async def test_wizard_ctrl_w_opens_time_subwizard_not_second_header():
+    from ros_tui.ui.wizards import HeaderWizardPopup, TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='ctrl+w')
+        assert isinstance(app.screen, TimeWizardPopup)
+        assert not isinstance(app.screen, HeaderWizardPopup)
+
+
+async def test_wizard_time_subwizard_now_writes_stamp_now():
+    from ros_tui.ui.wizards import HeaderWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='button')
+        _choose_time_mode(app, 0)  # 'now' is the first radio.
+        await pilot.pause()
+        await click_button(pilot, '#time-wizard-apply')
+        assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup))
+        app.screen.query_one('#header-wizard-frame', Input).value = 'map'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': 'now', 'frame_id': 'map'}
+
+
+async def test_time_wizard_wallclock_prefilled_with_current_time():
+    from datetime import datetime
+
+    from ros_tui.ui.wizards import _WALLCLOCK_FORMAT
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        await _open_time_subwizard(pilot, app, via='button')
+        _choose_time_mode(app, 2)  # 'wall-clock' is the third radio.
+        await pilot.pause()
+        value = app.screen.query_one('#time-wallclock', Input).value
+        datetime.strptime(value, _WALLCLOCK_FORMAT)  # editable current-time string, not blank
+
+
+async def test_wizard_stamp_typed_directly_without_fill():
+    # Editor-consistent: the stamp is a real input you can type into, not only fill via wizard.
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-stamp', Input).value = '3.25'
+        app.screen.query_one('#header-wizard-frame', Input).value = 'map'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': {'sec': 3, 'nanosec': 250000000}, 'frame_id': 'map'}
+
+
+async def test_wizard_ctrl_w_ignored_when_stamp_not_focused():
+    from ros_tui.ui.wizards import TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _open_header_wizard(pilot, app)
+        _choose_mode(app, 2)  # manual
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-frame', Input).focus()  # not the stamp input
+        await pilot.pause()
+        await pilot.press('ctrl+w')
+        await pilot.pause()
+        assert not isinstance(app.screen, TimeWizardPopup)
+
+
+# An expanded PoseStamped header (the seed collapses it to `header: auto`), so the editor has a
+# stamp row and a frame_id row to park the cursor on.
+_EXPANDED_POSE = (
+    "header:\n  stamp:\n    sec: 0\n    nanosec: 0\n  frame_id: ''\n"
+    'pose:\n  position:\n    x: 0.0\n    y: 0.0\n    z: 0.0\n'
+    '  orientation:\n    x: 0.0\n    y: 0.0\n    z: 0.0\n    w: 1.0\n'
+)
+
+
+async def _cursor_on_row(pilot, app, match):
+    """Select /pose publish, load the expanded header, park the cursor on the first row matching."""
+    await show_tab(pilot, 'topics')
+    tab = app.query_one('#topics-tab')
+    await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+    await pilot.pause()
+    editor = tab.query_one('#editor', TextArea)
+    editor.load_text(_EXPANDED_POSE)
+    row = next(i for i, line in enumerate(editor.text.splitlines()) if match(line))
+    editor.move_cursor((row, 0))
+    return tab
+
+
+async def test_editor_stamp_row_opens_time_wizard_directly():
+    from ros_tui.ui.wizards import TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _cursor_on_row(pilot, app, lambda line: line.strip() == 'stamp:')
+        await pilot.press('ctrl+w')
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup)), (
+            'time wizard did not open from the stamp row'
+        )
+        _choose_time_mode(app, 1)  # seconds
+        await pilot.pause()
+        app.screen.query_one('#time-seconds', Input).value = '2.5'
+        await click_button(pilot, '#time-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header']['stamp'] == {'sec': 2, 'nanosec': 500000000}
+
+
+async def test_editor_stamp_subfield_row_opens_time_wizard():
+    from ros_tui.ui.wizards import TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _cursor_on_row(pilot, app, lambda line: line.strip().startswith('nanosec:'))
+        await pilot.press('ctrl+w')  # innermost wizard along header.stamp.nanosec is Time
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TimeWizardPopup))
+
+
+async def test_editor_enum_level_row_opens_enum_wizard():
+    from textual.widgets import RadioButton
+
+    from ros_tui.ui.wizards import EnumWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, DIAG_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        level_row = next(i for i, line in enumerate(editor.text.splitlines()) if line.startswith('level:'))
+        editor.move_cursor((level_row, 0))
+        await pilot.press('ctrl+w')
+        assert await wait_until(pilot, lambda: isinstance(app.screen, EnumWizardPopup)), (
+            'enum wizard did not open on the level row'
+        )
+        buttons = list(app.screen.query('#enum-wizard-choices').first().query(RadioButton))
+        buttons[1].value = True  # WARN = 1 is the second choice.
+        await pilot.pause()
+        await click_button(pilot, '#enum-wizard-apply')
+        await pilot.pause()
+        assert yaml.safe_load(tab.query_one('#editor', TextArea).text)['level'] == 1
+
+
+async def test_editor_frame_id_row_opens_header_wizard():
+    from ros_tui.ui.wizards import HeaderWizardPopup, TimeWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _cursor_on_row(pilot, app, lambda line: line.strip().startswith('frame_id:'))
+        await pilot.press('ctrl+w')  # frame_id has no wizard → falls back to the enclosing header
+        assert await wait_until(pilot, lambda: isinstance(app.screen, HeaderWizardPopup))
+        assert not isinstance(app.screen, TimeWizardPopup)
+
+
+async def test_wizard_now_writes_stamp_now():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_header_wizard(pilot, app)
+        _choose_mode(app, 1)  # 'now' is the second radio.
+        await pilot.pause()
+        app.screen.query_one('#header-wizard-frame', Input).value = 'odom'
+        await click_button(pilot, '#header-wizard-apply')
+        await pilot.pause()
+        loaded = yaml.safe_load(tab.query_one('#editor', TextArea).text)
+        assert loaded['header'] == {'stamp': 'now', 'frame_id': 'odom'}
+
+
+async def _open_quaternion_wizard(pilot, app):
+    """Select /pose in publish mode, park the cursor on the orientation line, open the wizard."""
+    from ros_tui.ui.wizards import QuaternionWizardPopup
+
+    await show_tab(pilot, 'topics')
+    tab = app.query_one('#topics-tab')
+    await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+    await pilot.pause()
+    editor = tab.query_one('#editor', TextArea)
+    orientation_row = next(i for i, line in enumerate(editor.text.splitlines()) if 'orientation:' in line)
+    editor.move_cursor((orientation_row, 0))
+    await pilot.press('ctrl+w')
+    assert await wait_until(pilot, lambda: isinstance(app.screen, QuaternionWizardPopup)), (
+        'quaternion wizard never appeared'
+    )
+    return tab
+
+
+async def test_quaternion_wizard_yaw_writes_normalized_quat():
+    from textual.widgets import RadioButton
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await _open_quaternion_wizard(pilot, app)
+        modes = list(app.screen.query('#quat-wizard-mode').first().query(RadioButton))
+        modes[2].value = True  # 'yaw only' is the third mode; deg/rad toggle defaults to degrees.
+        await pilot.pause()
+        app.screen.query_one('#yaw-only', Input).value = '90'
+        await click_button(pilot, '#quat-wizard-apply')
+        await pilot.pause()
+        q = yaml.safe_load(tab.query_one('#editor', TextArea).text)['pose']['orientation']
+        assert (q['x'], q['y']) == (0.0, 0.0)
+        assert q['z'] == pytest.approx(0.707107, abs=1e-5)
+        assert q['w'] == pytest.approx(0.707107, abs=1e-5)
+
+
+async def test_wizard_on_plain_field_logs_hint_and_opens_nothing():
+    from ros_tui.ui.wizards import HeaderWizardPopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        editor = tab.query_one('#editor', TextArea)
+        # position.x is a plain double (Point has no wizard); orientation is now wizard-backed.
+        x_row = next(i for i, line in enumerate(editor.text.splitlines()) if line.strip().startswith('x:'))
+        editor.move_cursor((x_row, 0))
+        await pilot.press('ctrl+w')
+        await pilot.pause()
+        assert not isinstance(app.screen, HeaderWizardPopup)
+        assert 'no fill wizard for this field' in log_text(tab)
+
+
+async def test_wizard_button_hidden_in_subscribe_mode():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        assert not tab.query_one('#wizard-button', Button).display
+
+
+async def test_selecting_service_focuses_editor():
+    """Selecting a service lands focus in the request editor, ready to edit and call."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'services')
+        tab = app.query_one('#services-tab')
+        await select_entry(pilot, tab, ADD_TWO_INTS_ENTRY)
+        await pilot.pause()
+        assert app.focused is tab.query_one('#editor', TextArea)
 
 
 async def test_invalid_yaml_blocks_call_with_inline_error():
@@ -345,6 +772,17 @@ async def test_call_sends_request_and_renders_response():
         assert await wait_until(pilot, lambda: not tab.query_one('#call-button', Button).disabled)
         assert 'response in' in log_text(tab)
         assert 'sum: 5' in log_text(tab)
+
+
+async def test_selecting_action_focuses_editor():
+    """Selecting an action lands focus in the goal editor, ready to edit and send."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'actions')
+        tab = app.query_one('#actions-tab')
+        await select_entry(pilot, tab, FIBONACCI_ENTRY)
+        await pilot.pause()
+        assert app.focused is tab.query_one('#editor', TextArea)
 
 
 async def test_action_goal_feedback_result_render():
@@ -394,7 +832,7 @@ async def test_rate_validation_and_start_stop():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'publish')
         tab.query_one('#rate-input', Input).value = '99999'
         await click_button(pilot, '#rate-button')
         assert fake.periodic_started == []
@@ -414,7 +852,7 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
     async with app.run_test(size=(120, 40)) as pilot:
         await show_tab(pilot, 'topics')
         tab = app.query_one('#topics-tab')
-        await select_entry(pilot, tab, CHATTER_ENTRY)
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'subscribe')
         await click_button(pilot, '#echo-button')
         assert '/chatter' in fake.subscriptions
         from std_msgs.msg import String
@@ -423,6 +861,225 @@ async def test_echo_toggle_subscribes_and_unsubscribes():
         assert await wait_until(pilot, lambda: 'hello there' in log_text(tab))
         await click_button(pilot, '#echo-button')
         assert '/chatter' not in fake.subscriptions
+
+
+async def test_topic_selection_shows_mode_popup_with_counts():
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        tab.post_message(FilterableList.Selected(CHATTER_ENTRY))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        assert fake.topic_counts_requests == ['/chatter']
+        popup = app.screen
+        assert '/chatter' in static_text(popup.query_one('#topic-mode-name', Static))
+        # The stubbed future resolves to (1, 2) publishers/subscribers.
+        counts = popup.query_one('#topic-mode-counts', Static)
+        assert await wait_until(pilot, lambda: 'publishers: 1' in static_text(counts))
+        assert 'subscribers: 2' in static_text(counts)
+
+
+async def test_topic_mode_popup_arrow_keys_move_focus_between_buttons():
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        tab.post_message(FilterableList.Selected(CHATTER_ENTRY))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        popup = app.screen
+        publish = popup.query_one('#topic-mode-publish', Button)
+        subscribe = popup.query_one('#topic-mode-subscribe', Button)
+
+        assert await wait_until(pilot, lambda: app.focused is publish)
+        await pilot.press('right')
+        assert await wait_until(pilot, lambda: app.focused is subscribe)
+        await pilot.press('left')
+        assert await wait_until(pilot, lambda: app.focused is publish)
+
+
+async def test_mode_popup_escape_leaves_view_unchanged():
+    from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        tab.post_message(FilterableList.Selected(CHATTER_ENTRY))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('escape')
+        await pilot.pause()
+        assert not isinstance(app.screen, TopicModePopup)
+        assert tab.current_entry is None  # Nothing was selected before; stays blank.
+
+
+async def test_publish_mode_shows_publish_controls_only():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'publish')
+        await pilot.pause()
+        assert tab.query_one('#editor', TextArea).display
+        assert not tab.query_one('#topic-structure-tree', Tree).display
+        assert tab.query_one('#publish-button', Button).display
+        assert tab.query_one('#rate-button', Button).display
+        assert not tab.query_one('#echo-button', Button).display
+        assert not tab.query_one('#pause-button', Button).display
+        assert str(tab.query_one('#mode-toggle-button', Button).label) == '→ Subscribe'
+
+
+async def test_subscribe_mode_shows_structure_tree_and_echo_controls():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        assert tree.display
+        assert not tab.query_one('#editor', TextArea).display
+        assert tab.query_one('#echo-button', Button).display
+        assert not tab.query_one('#publish-button', Button).display
+        assert str(tab.query_one('#mode-toggle-button', Button).label) == '→ Publish'
+        # PoseStamped: header + pose branches, collapsed, with nested children.
+        # Labels carry a checkbox prefix ('[x] header: ...'), default all selected.
+        labels = [str(node.label) for node in tree.root.children]
+        assert any('header:' in label for label in labels)
+        pose = next(node for node in tree.root.children if 'pose:' in str(node.label))
+        assert not pose.is_expanded
+        assert any('position:' in str(child.label) for child in pose.children)
+
+
+def structure_node(tree, path):
+    """Find a node in the structure tree by its dotted path (stored on node.data)."""
+
+    def walk(node):
+        for child in node.children:
+            if child.data is not None and child.data.path == path:
+                return child
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+
+    return walk(tree.root)
+
+
+async def test_toggling_branch_off_filters_echo():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        header = structure_node(tree, 'header')
+        assert str(header.label).startswith('[x] ')
+        tab.on_tree_node_selected(Tree.NodeSelected(header))
+        await pilot.pause()
+        assert str(header.label).startswith('[ ] ')
+
+        await click_button(pilot, '#echo-button')
+        from geometry_msgs.msg import PoseStamped
+
+        fake.subscriptions['/pose'].push(PoseStamped())
+        assert await wait_until(pilot, lambda: 'pose:' in log_text(tab))
+        assert 'header:' not in log_text(tab)
+
+
+async def test_toggling_deep_leaf_marks_ancestors_partial():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        leaf = structure_node(tree, 'pose.position.x')
+        tab.on_tree_node_selected(Tree.NodeSelected(leaf))
+        await pilot.pause()
+        assert str(leaf.label).startswith('[ ] ')
+        assert str(structure_node(tree, 'pose.position').label).startswith('[~] ')
+        assert str(structure_node(tree, 'pose').label).startswith('[~] ')
+        assert str(structure_node(tree, 'pose.orientation').label).startswith('[x] ')
+
+
+async def test_enter_toggles_checkbox_without_expanding_branch():
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        tree.focus()
+        header = structure_node(tree, 'header')
+        tree.move_cursor(header)
+        await pilot.pause()
+        assert not header.is_expanded
+        await pilot.press('enter')
+        await pilot.pause()
+        assert not header.is_expanded  # enter toggles the checkbox, not expand/collapse
+        assert str(header.label).startswith('[ ] ')
+
+
+async def test_reset_clears_field_selection():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, POSE_ENTRY, 'subscribe')
+        await pilot.pause()
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        tab.on_tree_node_selected(Tree.NodeSelected(structure_node(tree, 'header')))
+        await pilot.pause()
+        assert '/pose' in tab._topic_selection
+        await pilot.press('ctrl+r')
+        await pilot.pause()
+        assert '/pose' not in tab._topic_selection
+        tree = tab.query_one('#topic-structure-tree', Tree)
+        assert str(structure_node(tree, 'header').label).startswith('[x] ')
+
+
+async def test_mode_toggle_flips_and_stops_running_echo():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'subscribe')
+        await click_button(pilot, '#echo-button')
+        assert '/chatter' in fake.subscriptions
+        # Toggling to publish stops the live echo and swaps the layout.
+        await click_button(pilot, '#mode-toggle-button')
+        assert '/chatter' not in fake.subscriptions
+        assert tab.query_one('#editor', TextArea).display
+        assert tab.current_entry.name == '/chatter'  # topic preserved across the switch.
+
+
+async def test_ctrl_s_publishes_in_publish_mode_and_echoes_in_subscribe_mode():
+    fake = FakeBridge()
+    app = RosTuiApp(fake)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, CHATTER_ENTRY, 'publish')
+        tab.query_one('#editor', TextArea).load_text('data: hi')
+        await pilot.press('ctrl+s')
+        await pilot.pause()
+        assert len(fake.published) == 1
+
+        await click_button(pilot, '#mode-toggle-button')  # -> subscribe
+        await pilot.press('ctrl+s')  # primary action now toggles echo
+        await pilot.pause()
+        assert '/chatter' in fake.subscriptions
 
 
 async def test_nodes_tab_present_and_labeled():
@@ -457,6 +1114,72 @@ async def test_selecting_node_shows_interfaces_and_params():
         assert rows == ['use_sim_time', 'rate']
 
 
+async def test_selecting_node_focuses_interfaces_tree():
+    """Selecting a node lands focus on the interfaces tree, ready for keyboard navigation."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        assert app.focused is tab.query_one('#node-interfaces', Tree)
+
+
+async def test_interfaces_tree_prehighlights_first_interface():
+    """The first interface leaf is pre-highlighted so the focused tree obviously shows
+    where the cursor sits; enter jumps straight away without any arrow keys first."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tree = tab.query_one('#node-interfaces', Tree)
+        # Highlighted (cursor on the first leaf), not selected — no jump has happened yet.
+        assert await wait_until(
+            pilot,
+            lambda: tree.cursor_node is not None and 'chatter' in str(tree.cursor_node.label),
+        )
+        assert app.query_one(TabbedContent).active == 'nodes'
+        # Enter on the pre-highlighted leaf jumps immediately.
+        await pilot.press('enter')
+        assert app.query_one(TabbedContent).active == 'topics'
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+        )
+
+
+async def test_interfaces_tree_keyboard_navigation_jumps():
+    """From the focused tree, arrow keys move the cursor and enter jumps to the target tab."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        tree = tab.query_one('#node-interfaces', Tree)
+        assert app.focused is tree
+        # Cursor starts on the /chatter leaf; move down to the /pose subscriber leaf.
+        assert await wait_until(
+            pilot,
+            lambda: tree.cursor_node is not None and 'chatter' in str(tree.cursor_node.label),
+        )
+        await pilot.press('down')  # onto the Subscribers branch
+        await pilot.press('down')  # onto its /pose leaf
+        assert await wait_until(
+            pilot,
+            lambda: tree.cursor_node is not None and 'pose' in str(tree.cursor_node.label),
+        )
+        await pilot.press('enter')
+        assert app.query_one(TabbedContent).active == 'topics'
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/pose',
+        )
+
+
 async def _jump(pilot, app, leaf_substr):
     tab = await select_node(pilot, app)
     tree = tab.query_one('#node-interfaces', Tree)
@@ -473,6 +1196,11 @@ async def test_publisher_leaf_jumps_to_topics_tab():
         leaf = await _jump(pilot, app, '/chatter')
         assert leaf.data[0] == 'topics'
         assert app.query_one(TabbedContent).active == 'topics'
+        # A jump to a topic pops the mode chooser too; pick publish to land on the topic.
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
         topics = app.query_one('#topics-tab')
         assert await wait_until(
             pilot,
@@ -764,6 +1492,7 @@ async def test_navigate_to_non_interface_tab_is_noop():
     """
     app = RosTuiApp(FakeBridge())
     async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()  # let mount-time focus (topics filter) settle before jumping.
         app.post_message(NavigateToEntity('nodes', CHATTER_ENTRY))
         await pilot.pause()
         assert app.query_one(TabbedContent).active == 'nodes'
@@ -875,3 +1604,101 @@ async def test_parameter_block_is_40_percent_and_scrolls():
         )
         # The empty result log takes no space at all until a Set writes to it.
         assert log.region.height == 0, f'empty log should take no space, was {log.region.height}'
+
+
+def _is_maximized(tab):
+    """Maximized = the entity list is shown and the right pane is hidden."""
+    return tab.query_one(FilterableList).display and not tab.query_one('.right-pane').display
+
+
+async def test_list_minimizes_on_select_and_maximizes_on_filter_and_cycle():
+    """The list fills the tab while browsing; a selection swaps to the right pane; ctrl+f
+    and ctrl+t bring the list back."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        # Startup: maximized (list only, no right pane).
+        assert _is_maximized(tab)
+
+        # Selecting an entry minimizes — right pane takes over, list hides.
+        await select_topic(pilot, tab, CHATTER_ENTRY)
+        assert not _is_maximized(tab)
+
+        # ctrl+f re-maximizes and focuses the filter.
+        await pilot.press('ctrl+f')
+        await pilot.pause()
+        assert _is_maximized(tab)
+        assert app.focused is not None and app.focused.id == 'filter-input'
+
+        # Minimize again, then ctrl+t maximizes the destination tab.
+        await select_topic(pilot, tab, CHATTER_ENTRY)
+        await pilot.pause()
+        assert not _is_maximized(tab)
+        await pilot.press('ctrl+t')
+        await pilot.pause()
+        assert _is_maximized(app._active_tab())
+
+
+async def test_returning_to_tab_with_selection_restores_detail_view():
+    """Switching away from a tab with a selection and back restores that item's detail
+    view (minimized), not the list — the selection is not forgotten. A subsequent ctrl+f
+    returns to the list."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await show_tab(pilot, 'topics')
+        tab = app.query_one('#topics-tab')
+        await select_topic(pilot, tab, CHATTER_ENTRY)
+        await pilot.pause()
+        assert not _is_maximized(tab)  # detail view showing.
+
+        # Cycle all the way around back to topics (topics→services→actions→nodes→topics).
+        for _ in range(4):
+            await pilot.press('ctrl+t')
+            await pilot.pause()
+        assert app._active_tab() is tab
+        # The selection survived, so topics reopens on its detail view, not the list.
+        assert tab.current_entry is not None and tab.current_entry.name == '/chatter'
+        assert not _is_maximized(tab)
+        # Focus lands in the editor, ready to edit the message without a detour via the list.
+        assert app.focused is tab.query_one('#editor', TextArea)
+
+        # ctrl+f still returns to the list from there.
+        await pilot.press('ctrl+f')
+        await pilot.pause()
+        assert _is_maximized(tab)
+
+
+async def test_returning_to_nodes_tab_with_selection_focuses_tree():
+    """Re-entering the Nodes tab with a node already selected lands focus on the
+    interfaces tree, ready to navigate — the counterpart to the editor focus on the
+    interface tabs."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tab = await select_node(pilot, app)
+        assert not _is_maximized(tab)
+
+        # Cycle away and all the way back to the Nodes tab.
+        for _ in range(4):
+            await pilot.press('ctrl+t')
+            await pilot.pause()
+        assert app._active_tab() is tab
+        assert not _is_maximized(tab)
+        assert app.focused is tab.query_one('#node-interfaces', Tree)
+
+
+async def test_cross_tab_jump_opens_destination_minimized():
+    """Jumping from the Nodes tree lands on the destination tab already minimized."""
+    app = RosTuiApp(FakeBridge())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _jump(pilot, app, '/chatter')
+        from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+        assert await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup))
+        await pilot.press('p')
+        topics = app.query_one('#topics-tab')
+        assert await wait_until(
+            pilot,
+            lambda: topics.current_entry is not None and topics.current_entry.name == '/chatter',
+        )
+        assert not _is_maximized(topics)

@@ -40,7 +40,35 @@ class EntityTab(Horizontal):
         self.query_one(FilterableList).set_entries(entries)
 
     def focus_filter(self) -> None:
+        self.maximize_list()
         self.query_one(FilterableList).focus_filter()
+
+    def has_selection(self) -> bool:
+        """True if this tab has a selected entity, i.e. its detail view holds content.
+
+        The app uses this to decide, on tab activation, whether to land in browse mode
+        (list focused) or restore the previously selected item's detail view. A tab that
+        never populates a detail view keeps the default of no selection.
+        """
+        return False
+
+    def maximize_list(self) -> None:
+        """Browse mode: the entity list fills the tab; the right pane is hidden."""
+        self.query_one(FilterableList).display = True
+        self.query_one('.right-pane').display = False
+
+    def minimize_list(self) -> None:
+        """Work mode: the right pane fills the tab; the entity list is hidden."""
+        self.query_one(FilterableList).display = False
+        self.query_one('.right-pane').display = True
+
+    def focus_content(self) -> None:
+        """Move focus onto the detail pane's primary widget (editor / interfaces tree).
+
+        Called when re-entering a tab that already has a selection, so the content is
+        ready to edit or navigate without a detour through the list. A tab with no such
+        widget inherits this no-op.
+        """
 
     def select_entity(self, entry: InterfaceEntry) -> None:
         """Programmatically select ``entry`` (cross-tab jump target).
@@ -58,6 +86,9 @@ class EntityTab(Horizontal):
 
     def reset_editor(self) -> None:
         """ctrl+r — reset the editor to the message defaults (no editor → no-op)."""
+
+    def wizard_action(self) -> None:
+        """ctrl+w — open a field wizard for the editor's cursor line (no editor → no-op)."""
 
     def clear_log(self) -> None:
         """ctrl+l — clear the tab's output/status region."""

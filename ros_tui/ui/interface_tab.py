@@ -37,6 +37,13 @@ from ros_tui.ros.message_yaml import (
 from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import PrototypeReady
+from ros_tui.ui.wizards import (
+    cursor_field_path,
+    field_block_range,
+    matched_wizard,
+    render_field_block,
+    replace_block,
+)
 
 _KIND_SUFFIX = {'msg': '', 'srv': ' — Request', 'action': ' — Goal'}
 
@@ -46,12 +53,14 @@ class InterfaceTab(EntityTab):
 
     kind = 'msg'
     list_placeholder = 'filter…'
+    entity_label = 'Entry'
 
     def __init__(self, bridge: Any, **kwargs):
         super().__init__(bridge, **kwargs)
         self._current: InterfaceEntry | None = None
         self._seed_cache: dict[str, str] = {}
         self._edit_cache: dict[str, str] = {}
+        self._extra_cache: dict[str, Any] = {}
         self._parse_timer = None
         self._editor_error_text = ''
 
@@ -60,10 +69,9 @@ class InterfaceTab(EntityTab):
     def compose(self):
         yield FilterableList(placeholder=self.list_placeholder, classes='entity-list')
         with Vertical(classes='right-pane'):
+            yield Static('', id='detail-title')
             yield Static('— select an entry on the left —', id='detail-line')
-            yield TextArea(
-                id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
-            )
+            yield from self.compose_editor_area()
             yield Static('', id='editor-error')
             with Horizontal(classes='controls'):
                 yield from self.compose_controls()
@@ -76,6 +84,9 @@ class InterfaceTab(EntityTab):
                 highlight=False,
             )
 
+    def compose_editor_area(self) -> Iterable[Widget]:
+        yield TextArea(id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False)
+
     def compose_controls(self) -> Iterable[Widget]:
         return ()
 
@@ -87,11 +98,18 @@ class InterfaceTab(EntityTab):
     def on_selection_changed(self) -> None:
         """Refresh subclass control state after a new entry loads (override hook)."""
 
+    def focus_content(self) -> None:
+        """Re-entering the tab lands in the editor, ready to edit the message."""
+        self.query_one('#editor', TextArea).focus()
+
     # ------------------------------------------------------------------ entries & selection
 
     def select_entity(self, entry: InterfaceEntry) -> None:
         """Programmatically select ``entry`` (e.g. a cross-tab jump from the Nodes tab)."""
         self.query_one(FilterableList).select_entry(entry)
+
+    def has_selection(self) -> bool:
+        return self._current is not None
 
     @property
     def current_entry(self) -> InterfaceEntry | None:
@@ -100,9 +118,20 @@ class InterfaceTab(EntityTab):
     @on(FilterableList.Selected)
     def _on_entry_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
+        if self._defer_selection(message.entry):
+            return
+        self._apply_selection(message.entry)
+
+    def _defer_selection(self, entry: InterfaceEntry) -> bool:
+        """Override to intercept a selection (e.g. a mode-choice popup). True = deferred."""
+        return False
+
+    def _apply_selection(self, entry: InterfaceEntry) -> None:
+        self.minimize_list()
         self._store_current_edit()
-        self._current = message.entry
-        type_name = message.entry.types[0] if message.entry.types else ''
+        self._current = entry
+        self.query_one('#detail-title', Static).update(f'{self.entity_label}: {entry.name}')
+        type_name = entry.types[0] if entry.types else ''
         detail = self.query_one('#detail-line', Static)
         if not type_name:
             # A leaf jumped from the Nodes tab can carry no type; degrade instead of crashing.
@@ -110,7 +139,11 @@ class InterfaceTab(EntityTab):
             self.query_one('#editor', TextArea).load_text('')
             return
         detail.update(Text(f'loading {type_name} …', style='dim'))
-        self._load_prototype(message.entry)
+        self._load_prototype(entry)
+
+    def _extra_prototype_data(self, kind: str, type_name: str) -> Any:
+        """Extra data computed alongside the YAML seed in the worker (override hook)."""
+        return None
 
     def _load_prototype(self, entry: InterfaceEntry) -> None:
         kind, entry_name = self.kind, entry.name
@@ -119,10 +152,11 @@ class InterfaceTab(EntityTab):
         def load() -> None:
             try:
                 seed_text = default_yaml(kind, type_name)
+                extra = self._extra_prototype_data(kind, type_name)
                 error = ''
             except IntrospectionError as introspection_error:
-                seed_text, error = '', str(introspection_error)
-            self.post_message(PrototypeReady(entry_name, type_name, seed_text, error))
+                seed_text, extra, error = '', None, str(introspection_error)
+            self.post_message(PrototypeReady(entry_name, type_name, seed_text, error, extra))
 
         self.run_worker(load, thread=True, exclusive=True, group='type-load')
 
@@ -137,12 +171,11 @@ class InterfaceTab(EntityTab):
             editor.load_text('')
             return
         self._seed_cache[message.entry_name] = message.seed_text
+        self._extra_cache[message.entry_name] = message.extra
         types_note = ''
         if len(self._current.types) > 1:
             types_note = f'  (+{len(self._current.types) - 1} more types)'
-        detail.update(
-            Text(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}', style='bold')
-        )
+        detail.update(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}')
         editor.load_text(self._edit_cache.get(message.entry_name, message.seed_text))
         self._set_editor_error('')
         self.on_selection_changed()
@@ -168,6 +201,57 @@ class InterfaceTab(EntityTab):
         self._edit_cache.pop(self._current.name, None)
         self.query_one('#editor', TextArea).load_text(seed)
         self._set_editor_error('')
+
+    # ------------------------------------------------------------------ field wizard
+
+    def open_field_wizard(self) -> None:
+        """Open a fill-in wizard for the field on the editor's cursor line, if one is registered.
+
+        Reusable across editor tabs: reads the message structure a tab caches in ``_extra_cache``
+        by returning ``message_structure`` from ``_extra_prototype_data``. No-ops when no
+        structure is available, so tabs that don't opt in are unaffected.
+        """
+        if self._current is None:
+            return
+        structure = self._extra_cache.get(self._current.name)
+        if not structure:
+            return
+        editor = self.query_one('#editor', TextArea)
+        text = editor.text
+        path = cursor_field_path(text, editor.cursor_location[0])
+        match = matched_wizard(structure, path)
+        if match is None:
+            self.write_log('no fill wizard for this field', 'dim')
+            return
+        matched_path, wizard_class = match
+        block = field_block_range(text, matched_path)
+        current_value = None
+        if block is not None:
+            start, end, indent = block
+            snippet = '\n'.join(line[indent:] for line in text.splitlines()[start:end])
+            try:
+                current_value = (yaml.safe_load(snippet) or {}).get(matched_path[-1])
+            except yaml.YAMLError:
+                current_value = None
+
+        def on_dismiss(value) -> None:
+            if value is None:
+                return
+            self._apply_wizard_value(matched_path, value)
+
+        self.app.push_screen(wizard_class(current_value), on_dismiss)
+
+    def _apply_wizard_value(self, matched_path: list[str], value) -> None:
+        editor = self.query_one('#editor', TextArea)
+        block = field_block_range(editor.text, matched_path)
+        if block is None:
+            return
+        start, end, indent = block
+        new_block = render_field_block(matched_path[-1], value, indent)
+        new_text, cursor_row = replace_block(editor.text, start, end, new_block)
+        editor.load_text(new_text)
+        editor.move_cursor((cursor_row, 0))
+        editor.focus()
 
     # ------------------------------------------------------------------ editor parsing
 

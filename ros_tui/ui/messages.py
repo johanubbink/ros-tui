@@ -36,11 +36,24 @@ class GraphUpdated(Message):
 class PrototypeReady(Message):
     """A type was imported and its default YAML seeded (or failed) in a thread worker."""
 
-    def __init__(self, entry_name: str, type_name: str, seed_text: str, error: str):
+    def __init__(
+        self, entry_name: str, type_name: str, seed_text: str, error: str, extra: Any = None
+    ):
         super().__init__()
         self.entry_name = entry_name
         self.type_name = type_name
         self.seed_text = seed_text
+        self.error = error
+        self.extra = extra  # Optional subclass payload computed in the same worker.
+
+
+class TopicCountsReady(Message):
+    """Publisher/subscriber counts for a topic, fetched for the mode-choice popup."""
+
+    def __init__(self, pub_count: int | None, sub_count: int | None, error: str | None):
+        super().__init__()
+        self.pub_count = pub_count
+        self.sub_count = sub_count
         self.error = error
 
 

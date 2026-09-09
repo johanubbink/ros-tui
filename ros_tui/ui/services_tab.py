@@ -18,7 +18,7 @@
 import time
 
 from textual import on
-from textual.widgets import Button
+from textual.widgets import Button, TextArea
 
 from ros_tui.ros.message_yaml import to_truncated_yaml
 from ros_tui.ui.interface_tab import InterfaceTab
@@ -28,6 +28,7 @@ from ros_tui.ui.messages import ServiceCompleted
 class ServicesTab(InterfaceTab):
     kind = 'srv'
     list_placeholder = 'filter services…'
+    entity_label = 'Service'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)
@@ -35,6 +36,11 @@ class ServicesTab(InterfaceTab):
 
     def compose_controls(self):
         yield Button('Call', id='call-button', variant='primary')
+
+    def on_selection_changed(self) -> None:
+        # Land in the editor so the request is ready to edit and call straight after
+        # picking a service — the whole point of selecting one here is to call it.
+        self.query_one('#editor', TextArea).focus()
 
     @on(Button.Pressed, '#call-button')
     def _on_call_pressed(self, event: Button.Pressed) -> None:

@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Topics tab: publish once or at a fixed rate, and echo a topic with stats."""
+"""Topics tab: publish or subscribe to a topic, chosen per topic via a mode popup."""
+
+from dataclasses import dataclass
 
 from rich.text import Text
 from textual import on
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea, Tree
 
 from ros_tui.constants import (
     ECHO_MAX_RENDER_PER_TICK,
@@ -26,21 +28,118 @@ from ros_tui.constants import (
     PUBLISH_RATE_MIN_HZ,
 )
 from ros_tui.ros.echo import EchoBuffer
-from ros_tui.ros.message_yaml import to_truncated_yaml
+from ros_tui.ros.graph import InterfaceEntry
+from ros_tui.ros.message_yaml import (
+    FieldNode,
+    message_structure,
+    schema_path,
+    to_filtered_yaml,
+    to_truncated_yaml,
+)
 from ros_tui.ui.interface_tab import InterfaceTab
 from ros_tui.ui.messages import PublishCompleted
+from ros_tui.ui.topic_mode_popup import TopicModePopup
+
+_CHECKBOX = {'checked': '[x]', 'unchecked': '[ ]', 'partial': '[~]'}
+
+
+def _value_locations(text: str) -> list[tuple[int, int]]:
+    """Cursor positions of every fillable value in seed YAML (skips parent keys/comments)."""
+    locations: list[tuple[int, int]] = []
+    for row, line in enumerate(text.splitlines()):
+        stripped = line.lstrip()
+        if stripped.startswith('#'):
+            continue
+        if stripped.startswith('- ') and stripped[2:].strip():
+            locations.append((row, len(line) - len(stripped) + 2))
+        elif (separator := line.find(': ')) != -1 and line[separator + 2 :].strip():
+            locations.append((row, separator + 2))
+    return locations
+
+
+def _first_value_location(text: str) -> tuple[int, int]:
+    """Cursor position of the first fillable value in seed YAML, or the start if none."""
+    locations = _value_locations(text)
+    return locations[0] if locations else (0, 0)
+
+
+class MessageEditor(TextArea):
+    """YAML editor whose Tab / Shift+Tab jump between fillable values instead of indenting."""
+
+    async def _on_key(self, event) -> None:
+        if event.key in ('tab', 'shift+tab'):
+            event.stop()
+            event.prevent_default()
+            self._jump_to_value(forward=event.key == 'tab')
+            return
+        await super()._on_key(event)
+
+    def _jump_to_value(self, forward: bool) -> None:
+        locations = _value_locations(self.text)
+        if not locations:
+            return
+        cursor = self.cursor_location
+        if forward:
+            target = next((loc for loc in locations if loc > cursor), locations[0])
+        else:
+            earlier = [loc for loc in locations if loc < cursor]
+            target = earlier[-1] if earlier else locations[-1]
+        self.move_cursor(target)
+
+
+@dataclass(frozen=True)
+class _FieldNodeData:
+    """Payload attached to each structure-tree node: its dotted path and label pieces."""
+
+    path: str
+    name: str
+    type_label: str
+
+
+def _leaf_paths_under(node) -> list[str]:
+    """Every leaf field path at or below ``node`` (the tree root carries no data)."""
+    if node.data is None:
+        return [path for child in node.children for path in _leaf_paths_under(child)]
+    if not node.children:
+        return [node.data.path]
+    return [path for child in node.children for path in _leaf_paths_under(child)]
+
+
+def _node_state(node, selected: set[str] | None) -> str:
+    """Tri-state of a node's checkbox, derived from how many of its leaves are selected."""
+    # Empty set and None are deliberately equivalent: both mean "no filter -> show
+    # everything", so every box reads as checked. There is no all-unchecked state --
+    # unchecking the last field empties the set and wraps back to showing everything.
+    if not selected:
+        return 'checked'
+    leaves = _leaf_paths_under(node)
+    count = sum(1 for leaf in leaves if leaf in selected)
+    if count == len(leaves):
+        return 'checked'
+    if count == 0:
+        return 'unchecked'
+    return 'partial'
 
 
 class TopicsTab(InterfaceTab):
     kind = 'msg'
     list_placeholder = 'filter topics…'
+    entity_label = 'Topic'
 
     def __init__(self, bridge, **kwargs):
         super().__init__(bridge, **kwargs)
+        self._mode = 'publish'  # 'publish' | 'subscribe'
         self._rate_topics: dict[str, float] = {}
         self._echo_topic: str | None = None
         self._echo_buffer: EchoBuffer | None = None
         self._echo_paused = False
+        self._topic_selection: dict[str, set[str]] = {}  # topic -> selected leaf paths
+
+    def compose_editor_area(self):
+        yield MessageEditor(
+            id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
+        )
+        yield Tree('message', id='topic-structure-tree')
 
     def compose_controls(self):
         yield Button('Publish', id='publish-button', variant='primary')
@@ -48,24 +147,177 @@ class TopicsTab(InterfaceTab):
         yield Button('Start rate', id='rate-button')
         yield Button('Echo', id='echo-button')
         yield Button('Pause', id='pause-button', disabled=True)
+        # Spacer pushes the editor helper + mode toggle to the right edge: the wizard fills
+        # in a field and switching the view are distinct from the commands that act on the topic.
+        yield Static('', classes='controls-spacer')
+        yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
+        yield Button('→ Subscribe', id='mode-toggle-button')
 
     def compose_status(self):
         yield Static('', id='topics-status')
 
     def on_mount(self) -> None:
+        tree = self.query_one('#topic-structure-tree', Tree)
+        tree.show_root = False
+        # Selecting a branch toggles its checkbox; keep it from also expand/collapsing
+        # (Tree's built-in auto_expand runs on NodeSelected before our handler).
+        tree.auto_expand = False
         self.set_interval(ECHO_RENDER_PERIOD_S, self._drain_echo)
+        self._apply_mode_layout()
+
+    # ------------------------------------------------------------------ mode selection
+
+    def _defer_selection(self, entry: InterfaceEntry) -> bool:
+        if not entry.types:
+            return False  # No type info; let the base "no type" path handle it.
+        counts_future = self._bridge.topic_endpoint_counts(entry.name)
+
+        def on_dismiss(mode: str | None) -> None:
+            if mode is None:
+                return  # Escape: leave the previous topic/mode view untouched.
+            self._mode = mode
+            self._apply_selection(entry)
+
+        self.app.push_screen(TopicModePopup(entry, counts_future), on_dismiss)
+        return True
+
+    def _extra_prototype_data(self, kind: str, type_name: str):
+        return message_structure(kind, type_name)
 
     def on_selection_changed(self) -> None:
         self._update_controls()
+        self._enter_mode(self._mode)
+
+    def _enter_mode(self, mode: str) -> None:
+        self._mode = mode
+        self._apply_mode_layout()
+        if mode == 'subscribe':
+            self._populate_structure_tree()
+            self.query_one('#topic-structure-tree', Tree).focus()
+        else:
+            editor = self.query_one('#editor', TextArea)
+            editor.focus()
+            editor.move_cursor(_first_value_location(editor.text))
+
+    def focus_content(self) -> None:
+        """Re-entering the tab lands on the widget the active mode actually shows."""
+        if self._mode == 'subscribe':
+            self.query_one('#topic-structure-tree', Tree).focus()
+        else:
+            self.query_one('#editor', TextArea).focus()
+
+    def _apply_mode_layout(self) -> None:
+        right_pane = self.query_one('.right-pane')
+        right_pane.remove_class('mode-publish', 'mode-subscribe')
+        right_pane.add_class(f'mode-{self._mode}')
+        is_publish = self._mode == 'publish'
+        self.query_one('#editor', TextArea).display = is_publish
+        self.query_one('#topic-structure-tree', Tree).display = not is_publish
+        for widget_id in ('#publish-button', '#rate-input', '#rate-button', '#wizard-button'):
+            self.query_one(widget_id).display = is_publish
+        for widget_id in ('#echo-button', '#pause-button'):
+            self.query_one(widget_id).display = not is_publish
+        self.query_one('#mode-toggle-button', Button).label = (
+            '→ Subscribe' if is_publish else '→ Publish'
+        )
+
+    @on(Button.Pressed, '#mode-toggle-button')
+    def _on_mode_toggle_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        # Switching out of a mode stops that mode's live operation.
+        if self._mode == 'subscribe':
+            self._stop_echo()
+            self._enter_mode('publish')
+        else:
+            if self._current is not None and self._current.name in self._rate_topics:
+                self._stop_rate(self._current.name)
+            self._enter_mode('subscribe')
+
+    def _populate_structure_tree(self) -> None:
+        tree = self.query_one('#topic-structure-tree', Tree)
+        tree.clear()
+        fields = self._extra_cache.get(self._current.name) if self._current else None
+        selected = self._topic_selection.get(self._current.name) if self._current else None
+        for field in fields or ():
+            self._add_field_node(tree.root, field, '', selected)
+
+    def _add_field_node(self, parent, field: FieldNode, path_prefix: str, selected) -> None:
+        path = schema_path(path_prefix, field.name)
+        data = _FieldNodeData(path, field.name, field.type_label)
+        if field.children:
+            node = parent.add(Text(''), data=data, expand=False)
+            for child in field.children:
+                self._add_field_node(node, child, path, selected)
+        else:
+            node = parent.add_leaf(Text(''), data=data)
+        self._relabel(node, selected)
+
+    def _relabel(self, node, selected) -> None:
+        state = _node_state(node, selected)
+        node.set_label(Text(f'{_CHECKBOX[state]} {node.data.name}: {node.data.type_label}'))
+
+    def _refresh_labels(self, node, selected) -> None:
+        self._relabel(node, selected)
+        for child in node.children:
+            self._refresh_labels(child, selected)
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        event.stop()
+        node = event.node
+        if node.data is None or self._current is None:
+            return
+        tree = self.query_one('#topic-structure-tree', Tree)
+        name = self._current.name
+        selected = self._topic_selection.get(name)
+        if not selected:  # Absent or empty: materialize "all selected", then toggle from there.
+            selected = set(_leaf_paths_under(tree.root))
+            self._topic_selection[name] = selected
+        leaves = _leaf_paths_under(node)
+        if any(leaf not in selected for leaf in leaves):
+            selected.update(leaves)  # Partial/unchecked -> select the whole subtree.
+        else:
+            # Fully selected -> clear it. Clearing the last subtree empties the set, which
+            # _node_state reads as "show everything" (all boxes checked) -- by design.
+            selected.difference_update(leaves)
+        for child in tree.root.children:
+            self._refresh_labels(child, selected)
+
+    def reset_editor(self) -> None:
+        """ctrl+r: in subscribe mode clear the field selection (echo everything again)."""
+        if self._mode == 'subscribe':
+            if self._current is not None:
+                self._topic_selection.pop(self._current.name, None)
+                self._populate_structure_tree()
+            return
+        super().reset_editor()
 
     # ------------------------------------------------------------------ publishing
 
     @on(Button.Pressed, '#publish-button')
     def _on_publish_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.primary_action()
+        self._publish_once()
+
+    # ------------------------------------------------------------------ field wizard
+
+    @on(Button.Pressed, '#wizard-button')
+    def _on_wizard_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.wizard_action()
+
+    def wizard_action(self) -> None:
+        """Open a fill-in wizard for the field on the cursor line (publish mode only)."""
+        if self._mode != 'publish' or self._current is None:
+            return
+        self.open_field_wizard()
 
     def primary_action(self) -> None:
+        if self._mode == 'subscribe':
+            self._toggle_echo()
+        else:
+            self._publish_once()
+
+    def _publish_once(self) -> None:
         built = self.build_from_editor()
         if built is None:
             return
@@ -87,8 +339,10 @@ class TopicsTab(InterfaceTab):
             self._start_rate(name)
 
     def secondary_action(self) -> None:
-        """ctrl+k stops the selected topic's periodic publisher (if any)."""
-        if self._current is not None and self._current.name in self._rate_topics:
+        """ctrl+k: pause/resume the echo (subscribe) or stop the periodic publisher (publish)."""
+        if self._mode == 'subscribe':
+            self._toggle_pause()
+        elif self._current is not None and self._current.name in self._rate_topics:
             self._stop_rate(self._current.name)
 
     def _start_rate(self, name: str) -> None:
@@ -147,6 +401,14 @@ class TopicsTab(InterfaceTab):
     @on(Button.Pressed, '#echo-button')
     def _on_echo_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        self._toggle_echo()
+
+    @on(Button.Pressed, '#pause-button')
+    def _on_pause_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._toggle_pause()
+
+    def _toggle_echo(self) -> None:
         if self._current is None:
             self._set_editor_error('select a topic on the left first')
             return
@@ -155,9 +417,7 @@ class TopicsTab(InterfaceTab):
         else:
             self._start_echo(self._current.name, self._current.types[0])
 
-    @on(Button.Pressed, '#pause-button')
-    def _on_pause_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
+    def _toggle_pause(self) -> None:
         self._echo_paused = not self._echo_paused
         self.query_one('#pause-button', Button).label = 'Resume' if self._echo_paused else 'Pause'
 
@@ -198,9 +458,13 @@ class TopicsTab(InterfaceTab):
             hidden = len(messages) - ECHO_MAX_RENDER_PER_TICK
             self.write_log(f'(+{hidden} messages not shown)', style='dim')
             messages = messages[-ECHO_MAX_RENDER_PER_TICK:]
+        selected = self._topic_selection.get(self._echo_topic)
         for received_message in messages:
             self.write_log(f'─── {self._echo_topic}', style='dim')
-            self.write_log(to_truncated_yaml(received_message))
+            if selected:  # Empty/absent selection means no filter -> echo the whole message.
+                self.write_log(to_filtered_yaml(received_message, selected))
+            else:
+                self.write_log(to_truncated_yaml(received_message))
 
     # ------------------------------------------------------------------ status & controls
 

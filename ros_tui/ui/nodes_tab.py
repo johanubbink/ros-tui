@@ -63,6 +63,7 @@ class NodesTab(EntityTab):
     def compose(self):
         yield FilterableList(placeholder='filter nodes…', classes='entity-list')
         with Vertical(classes='right-pane'):
+            yield Static('', id='node-title')
             yield Static(_PLACEHOLDER, id='node-header')
             yield Tree('Interfaces', id='node-interfaces')
             with Vertical(id='node-params-group'):
@@ -96,9 +97,20 @@ class NodesTab(EntityTab):
 
     # ---------------------------------------------------------------- selection
 
+    def has_selection(self) -> bool:
+        return self._current_node is not None
+
+    def focus_content(self) -> None:
+        """Re-entering the tab lands on the interfaces tree, ready to navigate."""
+        self.query_one('#node-interfaces', Tree).focus()
+
     @on(FilterableList.Selected)
     def _on_node_selected(self, message: FilterableList.Selected) -> None:
         message.stop()
+        self.minimize_list()
+        # Land on the interfaces tree so its entries are navigable straight away:
+        # up/down move the cursor, enter jumps to the highlighted interface's tab.
+        self.query_one('#node-interfaces', Tree).focus()
         if message.entry.name == self._current_node:
             return  # Already showing this node; keep cached info/params (Refresh re-fetches).
         self._current_node = message.entry.name
@@ -189,12 +201,22 @@ class NodesTab(EntityTab):
     def _populate_tree(self, info) -> None:
         tree = self.query_one('#node-interfaces', Tree)
         tree.clear()
+        first_leaf = None
         for label, attr, tab_id, expand in _BRANCHES:
             items = getattr(info, attr)
             branch = tree.root.add(f'{label} ({len(items)})', expand=expand)
             for entry in items:
                 type_name = entry.types[0] if entry.types else ''
-                branch.add_leaf(f'{entry.name}    {type_name}', data=(tab_id, entry))
+                leaf = branch.add_leaf(f'{entry.name}    {type_name}', data=(tab_id, entry))
+                # Only expanded branches show their leaves, so only they can hold a
+                # visible cursor to pre-highlight.
+                if first_leaf is None and expand:
+                    first_leaf = leaf
+        # Pre-highlight the first interface so a focused tree obviously shows where the
+        # cursor sits and enter jumps straight away — highlighted, not selected (no jump).
+        # Deferred: leaf line numbers are only computed once the tree has refreshed.
+        if first_leaf is not None:
+            self.call_after_refresh(tree.move_cursor, first_leaf)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         event.stop()
@@ -262,11 +284,14 @@ class NodesTab(EntityTab):
     # ---------------------------------------------------------------- helpers
 
     def _refresh_header(self) -> None:
+        title = self.query_one('#node-title', Static)
         header = self.query_one('#node-header', Static)
         if self._current_node is None:
+            title.update('')
             header.update(_PLACEHOLDER)
             return
-        parts = [f'[bold]{self._current_node}[/bold]']
+        title.update(f'Node: {self._current_node}')
+        parts = []
         if self._info is not None:
             i = self._info
             parts.append(

@@ -22,19 +22,25 @@ Brings up, on one node, one entity for each tab:
   EXECUTING → SUCCEEDED/CANCELED.
 - Services — ``example_interfaces/AddTwoInts`` on ``/add_two_ints``.
 - Topics   — ``/chatter`` (``std_msgs/String`` @ ~1 Hz) for a calm echo, ``/counter``
-  (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, and ``/inbox``
-  (``std_msgs/String`` subscriber) as a target for the Publish demo — what arrives is
-  logged so you can see your published message land.
+  (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, ``/localisation_pose``
+  (``geometry_msgs/PoseWithCovarianceStamped`` @ ~2 Hz) as a richer, nested message type to
+  browse and edit, ``/diagnostic_status`` (``diagnostic_msgs/DiagnosticStatus`` @ ~1 Hz, its
+  ``level`` cycling through the OK/WARN/ERROR/STALE enum) as a target for the enum field wizard,
+  and ``/inbox`` (``std_msgs/String`` subscriber) as a target for the Publish demo — what
+  arrives is logged so you can see your published message land.
 
 This mirrors the in-process ``FixtureServers`` used by the test suite
 (``test/conftest.py``), but as an installable node with public-looking names.
 """
 
+import math
 import time
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticStatus
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
@@ -45,11 +51,24 @@ FIBONACCI_ACTION = '/fibonacci'
 ADD_TWO_INTS_SERVICE = '/add_two_ints'
 CHATTER_TOPIC = '/chatter'
 COUNTER_TOPIC = '/counter'
+LOCALISATION_POSE_TOPIC = '/localisation_pose'
+DIAGNOSTIC_STATUS_TOPIC = '/diagnostic_status'
 INBOX_TOPIC = '/inbox'
 
 CHATTER_PERIOD_S = 1.0
 COUNTER_PERIOD_S = 0.02  # ~50 Hz, fast enough to exercise the echo Hz/drop counters.
+LOCALISATION_POSE_PERIOD_S = 0.5  # ~2 Hz, a nested message type to browse and edit.
+DIAGNOSTIC_STATUS_PERIOD_S = 1.0  # ~1 Hz; cycles the `level` enum for the enum field wizard.
 FIBONACCI_FEEDBACK_PERIOD_S = 0.3  # Slow enough to watch the feedback stream in the UI.
+
+# (level constant, label) cycled by the /diagnostic_status publisher. `level` is an octet enum
+# field; its constants (OK/WARN/ERROR/STALE) are what the enum field wizard offers.
+DIAGNOSTIC_LEVELS = (
+    (DiagnosticStatus.OK, 'OK'),
+    (DiagnosticStatus.WARN, 'WARN'),
+    (DiagnosticStatus.ERROR, 'ERROR'),
+    (DiagnosticStatus.STALE, 'STALE'),
+)
 
 
 class DemoServers(Node):
@@ -79,13 +98,37 @@ class DemoServers(Node):
         self._counter = 0
         self.create_timer(COUNTER_PERIOD_S, self._publish_counter, callback_group=callback_group)
 
+        self._localisation_pose_publisher = self.create_publisher(
+            PoseWithCovarianceStamped, LOCALISATION_POSE_TOPIC, 10
+        )
+        self._localisation_step = 0
+        self.create_timer(
+            LOCALISATION_POSE_PERIOD_S, self._publish_localisation_pose, callback_group=callback_group
+        )
+
+        self._diagnostic_publisher = self.create_publisher(
+            DiagnosticStatus, DIAGNOSTIC_STATUS_TOPIC, 10
+        )
+        self._diagnostic_step = 0
+        self.create_timer(
+            DIAGNOSTIC_STATUS_PERIOD_S, self._publish_diagnostic_status, callback_group=callback_group
+        )
+
         self.create_subscription(
             String, INBOX_TOPIC, self._on_inbox, 10, callback_group=callback_group
         )
 
         self.get_logger().info(
-            'Demo servers ready: action %s, service %s, topics %s, %s, sub %s'
-            % (FIBONACCI_ACTION, ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, COUNTER_TOPIC, INBOX_TOPIC)
+            'Demo servers ready: action %s, service %s, topics %s, %s, %s, %s, sub %s'
+            % (
+                FIBONACCI_ACTION,
+                ADD_TWO_INTS_SERVICE,
+                CHATTER_TOPIC,
+                COUNTER_TOPIC,
+                LOCALISATION_POSE_TOPIC,
+                DIAGNOSTIC_STATUS_TOPIC,
+                INBOX_TOPIC,
+            )
         )
 
     def _publish_chatter(self):
@@ -95,6 +138,33 @@ class DemoServers(Node):
     def _publish_counter(self):
         self._counter += 1
         self._counter_publisher.publish(Int32(data=self._counter))
+
+    def _publish_localisation_pose(self):
+        self._localisation_step += 1
+        angle = self._localisation_step * LOCALISATION_POSE_PERIOD_S  # radians, ~1 rad/s.
+        message = PoseWithCovarianceStamped()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = 'map'
+        pose = message.pose.pose
+        pose.position.x = 2.0 * math.cos(angle)
+        pose.position.y = 2.0 * math.sin(angle)
+        pose.orientation.z = math.sin(angle / 2.0)
+        pose.orientation.w = math.cos(angle / 2.0)
+        # 6x6 row-major covariance; small variance on x/y/yaw, the rest left at zero.
+        message.pose.covariance[0] = 0.05  # x
+        message.pose.covariance[7] = 0.05  # y
+        message.pose.covariance[35] = 0.02  # yaw
+        self._localisation_pose_publisher.publish(message)
+
+    def _publish_diagnostic_status(self):
+        level, label = DIAGNOSTIC_LEVELS[self._diagnostic_step % len(DIAGNOSTIC_LEVELS)]
+        self._diagnostic_step += 1
+        self._diagnostic_publisher.publish(
+            DiagnosticStatus(
+                level=level, name='demo_check', message=f'cycling level: {label}',
+                hardware_id='demo-0',
+            )
+        )
 
     def _on_inbox(self, message):
         self.get_logger().info(f'/inbox received: {message.data!r}')
