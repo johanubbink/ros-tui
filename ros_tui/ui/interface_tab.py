@@ -87,9 +87,7 @@ class InterfaceTab(EntityTab):
             )
 
     def compose_editor_area(self) -> Iterable[Widget]:
-        yield MessageEditor(
-            id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
-        )
+        yield MessageEditor(id='editor', show_line_numbers=True, soft_wrap=False)
 
     def compose_controls(self) -> Iterable[Widget]:
         return ()

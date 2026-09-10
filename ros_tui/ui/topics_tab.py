@@ -95,9 +95,7 @@ class TopicsTab(InterfaceTab):
         # Two widgets share this slot, swapped by _apply_mode_layout: the MessageEditor
         # (same as the base class) is shown in publish mode for editing the outgoing
         # message; the Tree is shown in subscribe mode to pick which fields to echo.
-        yield MessageEditor(
-            id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
-        )
+        yield MessageEditor(id='editor', show_line_numbers=True, soft_wrap=False)
         yield Tree('message', id='topic-structure-tree')
 
     def compose_controls(self):
@@ -106,8 +104,6 @@ class TopicsTab(InterfaceTab):
         yield Button('Start rate', id='rate-button')
         yield Button('Echo', id='echo-button')
         yield Button('Pause', id='pause-button', disabled=True)
-        # Spacer pushes the editor helper + mode toggle to the right edge: the wizard fills
-        # in a field and switching the view are distinct from the commands that act on the topic.
         yield Static('', classes='controls-spacer')
         yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
         yield Button('→ Subscribe', id='mode-toggle-button')

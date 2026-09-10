@@ -36,8 +36,6 @@ class ServicesTab(InterfaceTab):
 
     def compose_controls(self):
         yield Button('Call', id='call-button', variant='primary')
-        # Spacer pushes the editor helper to the right edge: filling in a field is distinct
-        # from the command that acts on the service.
         yield Static('', classes='controls-spacer')
         yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
 
