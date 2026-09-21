@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 Johan Ubbink
+# Copyright 2026 Jonas Vervoort 
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,10 +32,12 @@ from ros_tui.ros.message_yaml import (
     build_message,
     default_yaml,
     import_type,
+    message_structure,
     request_class,
 )
 from ros_tui.ui.entity_tab import EntityTab
 from ros_tui.ui.filterable_list import FilterableList
+from ros_tui.ui.message_editor import MessageEditor, first_value_location
 from ros_tui.ui.messages import PrototypeReady
 from ros_tui.ui.wizards import (
     cursor_field_path,
@@ -85,7 +87,7 @@ class InterfaceTab(EntityTab):
             )
 
     def compose_editor_area(self) -> Iterable[Widget]:
-        yield TextArea(id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False)
+        yield MessageEditor(id='editor', show_line_numbers=True, soft_wrap=False)
 
     def compose_controls(self) -> Iterable[Widget]:
         return ()
@@ -142,8 +144,11 @@ class InterfaceTab(EntityTab):
         self._load_prototype(entry)
 
     def _extra_prototype_data(self, kind: str, type_name: str) -> Any:
-        """Extra data computed alongside the YAML seed in the worker (override hook)."""
-        return None
+        """Message structure computed alongside the YAML seed in the worker.
+
+        Feeds the field wizards (``open_field_wizard``); override to attach more per-tab data.
+        """
+        return message_structure(kind, type_name)
 
     def _load_prototype(self, entry: InterfaceEntry) -> None:
         kind, entry_name = self.kind, entry.name
@@ -177,6 +182,7 @@ class InterfaceTab(EntityTab):
             types_note = f'  (+{len(self._current.types) - 1} more types)'
         detail.update(f'{message.type_name}{_KIND_SUFFIX[self.kind]}{types_note}')
         editor.load_text(self._edit_cache.get(message.entry_name, message.seed_text))
+        editor.move_cursor(first_value_location(editor.text))
         self._set_editor_error('')
         self.on_selection_changed()
 
@@ -203,6 +209,10 @@ class InterfaceTab(EntityTab):
         self._set_editor_error('')
 
     # ------------------------------------------------------------------ field wizard
+
+    def wizard_action(self) -> None:
+        """ctrl+w — fill the field on the cursor line via a wizard; override to gate per-tab."""
+        self.open_field_wizard()
 
     def open_field_wizard(self) -> None:
         """Open a fill-in wizard for the field on the editor's cursor line, if one is registered.

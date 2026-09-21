@@ -31,60 +31,16 @@ from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ros.message_yaml import (
     FieldNode,
-    message_structure,
     schema_path,
     to_filtered_yaml,
     to_truncated_yaml,
 )
 from ros_tui.ui.interface_tab import InterfaceTab
+from ros_tui.ui.message_editor import MessageEditor, first_value_location
 from ros_tui.ui.messages import PublishCompleted
 from ros_tui.ui.topic_mode_popup import TopicModePopup
 
 _CHECKBOX = {'checked': '[x]', 'unchecked': '[ ]', 'partial': '[~]'}
-
-
-def _value_locations(text: str) -> list[tuple[int, int]]:
-    """Cursor positions of every fillable value in seed YAML (skips parent keys/comments)."""
-    locations: list[tuple[int, int]] = []
-    for row, line in enumerate(text.splitlines()):
-        stripped = line.lstrip()
-        if stripped.startswith('#'):
-            continue
-        if stripped.startswith('- ') and stripped[2:].strip():
-            locations.append((row, len(line) - len(stripped) + 2))
-        elif (separator := line.find(': ')) != -1 and line[separator + 2 :].strip():
-            locations.append((row, separator + 2))
-    return locations
-
-
-def _first_value_location(text: str) -> tuple[int, int]:
-    """Cursor position of the first fillable value in seed YAML, or the start if none."""
-    locations = _value_locations(text)
-    return locations[0] if locations else (0, 0)
-
-
-class MessageEditor(TextArea):
-    """YAML editor whose Tab / Shift+Tab jump between fillable values instead of indenting."""
-
-    async def _on_key(self, event) -> None:
-        if event.key in ('tab', 'shift+tab'):
-            event.stop()
-            event.prevent_default()
-            self._jump_to_value(forward=event.key == 'tab')
-            return
-        await super()._on_key(event)
-
-    def _jump_to_value(self, forward: bool) -> None:
-        locations = _value_locations(self.text)
-        if not locations:
-            return
-        cursor = self.cursor_location
-        if forward:
-            target = next((loc for loc in locations if loc > cursor), locations[0])
-        else:
-            earlier = [loc for loc in locations if loc < cursor]
-            target = earlier[-1] if earlier else locations[-1]
-        self.move_cursor(target)
 
 
 @dataclass(frozen=True)
@@ -136,9 +92,10 @@ class TopicsTab(InterfaceTab):
         self._topic_selection: dict[str, set[str]] = {}  # topic -> selected leaf paths
 
     def compose_editor_area(self):
-        yield MessageEditor(
-            id='editor', tab_behavior='indent', show_line_numbers=True, soft_wrap=False
-        )
+        # Two widgets share this slot, swapped by _apply_mode_layout: the MessageEditor
+        # (same as the base class) is shown in publish mode for editing the outgoing
+        # message; the Tree is shown in subscribe mode to pick which fields to echo.
+        yield MessageEditor(id='editor', show_line_numbers=True, soft_wrap=False)
         yield Tree('message', id='topic-structure-tree')
 
     def compose_controls(self):
@@ -147,8 +104,6 @@ class TopicsTab(InterfaceTab):
         yield Button('Start rate', id='rate-button')
         yield Button('Echo', id='echo-button')
         yield Button('Pause', id='pause-button', disabled=True)
-        # Spacer pushes the editor helper + mode toggle to the right edge: the wizard fills
-        # in a field and switching the view are distinct from the commands that act on the topic.
         yield Static('', classes='controls-spacer')
         yield Button('Fill…', id='wizard-button', tooltip='fill the field on the cursor line')
         yield Button('→ Subscribe', id='mode-toggle-button')
@@ -181,9 +136,6 @@ class TopicsTab(InterfaceTab):
         self.app.push_screen(TopicModePopup(entry, counts_future), on_dismiss)
         return True
 
-    def _extra_prototype_data(self, kind: str, type_name: str):
-        return message_structure(kind, type_name)
-
     def on_selection_changed(self) -> None:
         self._update_controls()
         self._enter_mode(self._mode)
@@ -197,7 +149,7 @@ class TopicsTab(InterfaceTab):
         else:
             editor = self.query_one('#editor', TextArea)
             editor.focus()
-            editor.move_cursor(_first_value_location(editor.text))
+            editor.move_cursor(first_value_location(editor.text))
 
     def focus_content(self) -> None:
         """Re-entering the tab lands on the widget the active mode actually shows."""
