@@ -1,13 +1,13 @@
-# Docker playground for ros_tui. See README.md "Try it in Docker".
+# Docker playground for ros_tui. See docs/docker.md.
 #
-#   ./create_dot_env            # one-time: capture your UID/GID into .env
-#   docker compose up --build   # build the workspace + launch the demo servers
-#   docker compose exec ros_tui bash   # in a 2nd terminal, then: ros2 run ros_tui ros_tui
+#   docker/create_dot_env            # one-time: capture your UID/GID into .env
+#   docker compose up --build        # build the workspace + launch the demo servers
+#   docker compose exec ros_tui bash # in a 2nd terminal, then: ros2 run ros_tui ros_tui
 services:
   ros_tui:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
       args:
         ROS_DISTRO: ${ROS_DISTRO:-jazzy}
         USER_ID: ${USER_ID:-1000}

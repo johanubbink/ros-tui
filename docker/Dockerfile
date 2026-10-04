@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # A lean ROS 2 environment for trying out ros_tui against a set of example servers.
-# Headless (no X11) — see docker-compose.yml / README.md "Try it in Docker".
+# Headless (no X11) — built by compose.yaml at the repo root; see docs/docker.md.
 ARG ROS_DISTRO=jazzy
 FROM ros:${ROS_DISTRO}-ros-base
 
@@ -33,7 +33,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # textual (and a recent rich) are not reliably packaged for apt at the versions the
-# app needs; CI installs them via pip too (see .github/workflows/python-package.yml).
+# app needs; CI installs them via pip too (see .github/workflows/ci.yml).
 # --ignore-installed: install textual's dep tree into /usr/local (which shadows the
 # apt copies) rather than trying to uninstall Debian-managed packages like Pygments.
 RUN pip install --no-cache-dir --break-system-packages --ignore-installed textual rich

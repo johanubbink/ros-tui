@@ -21,7 +21,7 @@ package_name = 'ros_tui'
 
 setup(
     name=package_name,
-    version='0.0.1',
+    version='0.1.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -31,8 +31,8 @@ setup(
     install_requires=['setuptools', 'textual', 'rich'],
     zip_safe=True,
     maintainer='Johan Ubbink',
-    maintainer_email='johan.ubbink@gmail.com',
-    description='Terminal UI for exploring and exercising ROS 2 actions, services and topics',
+    maintainer_email='johanubbink@users.noreply.github.com',
+    description='Terminal UI for exploring and exercising ROS 2 topics, services, actions and nodes',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

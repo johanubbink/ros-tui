@@ -2,6 +2,8 @@
 # Capture the current user's UID/GID (and ROS distro) into .env so the container
 # builds a matching non-root user — files written to the bind-mounted source then
 # belong to you on the host, not to root. Run once before `docker compose up`.
+# Writes .env at the repo root (where compose.yaml reads it), from any cwd.
+cd "$(dirname "$0")/.."
 {
   echo "ROS_DISTRO=jazzy"
   echo "USER_ID=$(id -u)"

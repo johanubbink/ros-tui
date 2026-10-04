@@ -20,7 +20,7 @@ The automated tests below drive the real app against the in-process fixture serv
 (``test/conftest.py``), which mirror the demo node in ``ros_tui/demo/demo_servers.py``.
 
 Manual checklist against the Docker demo playground (run in two shells inside the dev
-container — see the README "Try it in Docker"):
+container — see docs/docker.md):
 
     ros2 launch ros_tui demo.launch.py turtlesim:=true   # demo servers + turtlesim
     ros2 run ros_tui ros_tui

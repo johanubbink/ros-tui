@@ -2,10 +2,11 @@
 # host display and launches turtlesim alongside the headless demo servers.
 #
 #   xhost +local:                                                   # once per login
-#   docker compose -f docker-compose.yml -f docker-compose.gui.yml up --build
+#   docker compose -f compose.yaml -f docker/compose.gui.yaml up --build
 #   # ... and `xhost -local:` to revoke access when done.
 #
 # Linux + an X11 display only. The plain `docker compose up` stays fully headless.
+# Paths below resolve against the project directory (the repo root), not docker/.
 services:
   ros_tui:
     environment:
