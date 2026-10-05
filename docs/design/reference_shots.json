@@ -55,6 +55,41 @@
     "shows": "the which-key popup: 'Keys right now · any key closes', keys grouped by Layers / Move / Go / Help"
   },
   {
+    "name": "search-typed",
+    "keys": ["/", "p", "o", "s", "e", "down"],
+    "shows": "search for 'pose': the pose topics and /set_pose grouped by kind, 'pose' highlighted in each name, the cursor on the second match (/goal_pose)"
+  },
+  {
+    "name": "search-open-tab",
+    "keys": ["enter", "/", "c", "h", "a"],
+    "shows": "search for 'cha' with /chatter already open: its row says 'open tab'"
+  },
+  {
+    "name": "command-suggest",
+    "keys": [":", "s", "e"],
+    "shows": "the command line ':se' with one suggestion left, ':services  list only services', highlighted"
+  },
+  {
+    "name": "g-prefix",
+    "keys": ["enter", "0", "g"],
+    "shows": "the narrow g popup bottom right: 'g …  waiting for the next key', gg / gt / gT; the footer shows 'g…'"
+  },
+  {
+    "name": "toast",
+    "keys": [":", "f", "o", "o", "enter"],
+    "shows": "a red toast bottom right of the body: 'unknown command :foo — : then tab lists them'"
+  },
+  {
+    "name": "toast-info",
+    "keys": ["enter", "x"],
+    "shows": "/chatter closed: a blue toast 'closed /chatter · u undoes' bottom right of the body"
+  },
+  {
+    "name": "log-view",
+    "keys": ["/", "a", "d", "d", "enter", "space", "wait1000", ":", "l", "o", "g", "enter"],
+    "shows": "the :log box over a veil: 'All activity' with the count and hint, the call and response lines of /add_two_ints, the newest picked"
+  },
+  {
     "name": "service-response",
     "keys": ["/", "a", "d", "d", "enter", "space", "wait1000"],
     "shows": "/add_two_ints called: REQUEST a 19 b 23, RESPONSE '✓ OK' with sum: 42, ACTIVITY lines for the call and response"

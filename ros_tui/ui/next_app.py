@@ -22,6 +22,11 @@ every key reaches the keymap. ctrl+q and ctrl+c quit, as `:q` does.
 Graph updates feed the ☰ list. A GraphSnapshot has no publisher counts, so on each graph change
 the app asks the bridge for every topic's counts and folds the answers into the list in one go.
 Until a topic's count arrives it counts as unpublished (it would open in Publish, not Echo).
+
+The overlays (search, :log, the command suggestions, which-key, the toast) are `Overlay` views on
+the `overlay` layer; each says where it goes and `refresh_views` places it. Search and :log veil
+what is under them by dimming it. The model's clock is the bridge's `now()`; a UI_TICK_PERIOD_S
+timer calls `tick()`, which lets the model expire the toast.
 """
 
 from textual import events
@@ -30,12 +35,14 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
 
+from ros_tui.constants import UI_TICK_PERIOD_S
 from ros_tui.ros.graph import GraphSnapshot
 from ros_tui.ui import theme
 from ros_tui.ui.messages import GraphUpdated, PublisherCount
 from ros_tui.ui.nav import NavState
-from ros_tui.ui.widgets import ActivityStrip, EntryBody, EntryTabRow, Footer, HomeList, TopBar
-from ros_tui.ui.widgets.base import NavView
+from ros_tui.ui.widgets import (ActivityStrip, CommandSuggestions, EntryBody, EntryTabRow, Footer, HomeList,
+                                LogPopup, SearchPopup, ToastView, TopBar, WhichKeyPopup)
+from ros_tui.ui.widgets.base import NavView, Overlay
 
 
 class KeylessScreen(Screen, inherit_bindings=False):
@@ -50,14 +57,18 @@ class NextApp(App, inherit_bindings=False):
         Binding('ctrl+c', 'quit', show=False, priority=True),
     ]
     CSS = """
-    Screen { background: $rt-term; color: $rt-text; }
-    #body { height: 1fr; padding: 0 1; }
+    Screen { background: $rt-term; color: $rt-text; layers: default overlay; }
+    #body { height: 1fr; padding: 0 1; layers: default overlay; }
+    /* The veil under search and :log (the design's rgba(0,0,0,.5)): dim all but the footer. */
+    Screen.-veiled TopBar, Screen.-veiled EntryTabRow, Screen.-veiled #body, Screen.-veiled ActivityStrip {
+        opacity: 50%;
+    }
     """
 
     def __init__(self, bridge):
         super().__init__()
         self._bridge = bridge
-        self.nav = NavState()
+        self.nav = NavState(clock=bridge.now)
         self._graph: GraphSnapshot | None = None
         self._publishers: dict[str, int] = {}
         self._publishers_dirty = False
@@ -75,12 +86,19 @@ class NextApp(App, inherit_bindings=False):
         with Vertical(id='body'):
             yield HomeList(nav)
             yield EntryBody(nav)
+            yield ToastView(nav)
         yield ActivityStrip(nav)
         yield Footer(nav)
+        # Overlays, bottom to top.
+        yield SearchPopup(nav)
+        yield LogPopup(nav)
+        yield CommandSuggestions(nav)
+        yield WhichKeyPopup(nav)
 
     def on_mount(self) -> None:
         self._bridge.set_graph_listener(lambda snapshot: self.post_message(GraphUpdated(snapshot)))
         self._apply_graph(self._bridge.latest_graph)
+        self.set_interval(UI_TICK_PERIOD_S, self.tick)
 
     def on_unmount(self) -> None:
         self._bridge.set_graph_listener(None)
@@ -95,10 +113,29 @@ class NextApp(App, inherit_bindings=False):
             return
         self.refresh_views()
 
+    def on_resize(self, event: events.Resize) -> None:
+        self.refresh_views()
+
+    def tick(self) -> None:
+        """The clock tick: redraw when the model expired something. The harness calls it after
+        each `advance()`, so a toast's expiry follows the simulated clock."""
+        if self.nav.tick():
+            self.refresh_views()
+
     def refresh_views(self) -> None:
-        home = self.nav.tab is None
+        nav = self.nav
+        home = nav.tab is None
         self.query_one(HomeList).display = home
         self.query_one(EntryBody).display = not home
+        self.screen.set_class(bool(nav.search or nav.logv), '-veiled')
+        for overlay in self.query(Overlay):
+            spot = overlay.place(*overlay.parent.content_size)
+            overlay.display = spot is not None
+            if spot:
+                x, y, width, height = spot
+                overlay.styles.offset = (x, y)
+                overlay.styles.width = width
+                overlay.styles.height = height
         for view in self.query(NavView):
             view.refresh(layout=True)
 

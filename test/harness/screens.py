@@ -136,6 +136,11 @@ class UiSession:
         self.steps.append(f'+{seconds:g}s')
 
     async def _settle(self) -> None:
+        # An app with a clock tick (NextApp.tick) gets one per step, so what it times (toasts)
+        # follows the simulated clock rather than the real one.
+        tick = getattr(self.app, 'tick', None)
+        if callable(tick):
+            tick()
         await self.idle()
         pending = getattr(self.bridge, 'pending_echo', lambda: 0)
         waited = 0.0

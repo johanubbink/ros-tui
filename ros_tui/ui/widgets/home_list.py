@@ -21,13 +21,12 @@ with a bar in the key colour. The rows scroll to keep the cursor in view.
 
 from rich.text import Text
 
-from ros_tui.ui.nav import IN, KINDS as NAV_KINDS, Tab
+from ros_tui.ui.nav import IN, KINDS as NAV_KINDS
 from ros_tui.ui.theme import KINDS
-from ros_tui.ui.widgets.base import NavView, fit, glyph, spread, style
+from ros_tui.ui.widgets.base import NavView, cursor_bar, fit, glyph, spread, style
 
 HERE_WIDTH = 16  # The Here column: '◉ echoing open'.
 NAME_SHARE = 0.3  # The Name column's share of the width, when the names are shorter.
-CURSOR_BAR = '▍'
 
 
 class HomeList(NavView):
@@ -78,9 +77,9 @@ class HomeList(NavView):
             sel = index == nav.list_cur
             if sel:
                 keep = (len(lines) - (1 if first else 0), len(lines))
-            here = 'open' if Tab(kind, item.name) in nav.tabs else ''
+            here = 'open' if nav.is_open(kind, item.name) else ''
             line = Text.assemble(
-                (CURSOR_BAR if sel and on else ' ', style('key')), glyph(kind),
+                cursor_bar(sel and on), glyph(kind),
                 fit(Text(item.name, style('bright') if sel else ''), name_w - 3),
                 fit(Text(item.type, style('bright' if sel else 'type')), type_w),
                 fit(Text(here, style('dim')), HERE_WIDTH))

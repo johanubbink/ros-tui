@@ -40,7 +40,7 @@ REFERENCES = REPO_ROOT / 'docs' / 'design' / 'reference_shots.json'
 OUTPUT = REPO_ROOT / 'test' / 'artifacts' / 'design'
 WINDOW = '1440,900'
 KEY_DELAY_MS = 120  # The page's default pause between keys.
-SETTLE_MS = 1500  # Virtual time after the last key, so the page's 250 ms clock renders the result.
+SETTLE_MS = 1000  # Virtual time after the last key: the page's 250 ms clock renders, a 1.6 s toast still shows.
 CHROMES = ('google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser')
 
 

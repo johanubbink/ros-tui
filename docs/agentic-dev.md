@@ -64,6 +64,8 @@ async def test_echo_chatter():
 - `s.advance(seconds)` moves the fake bridge's clock forward in 0.1 s steps.
   After each step the UI drains what was pushed, so a 1 Hz topic shows every
   message. Nothing in the fake world happens until you advance it.
+  An app with a `tick()` (the new UI) gets one per step, so toasts expire on
+  the simulated clock too.
 - `s.wait_until(predicate)` polls in real time, for the UI's own timers (e.g. the
   filter debounce).
 - `s.text()` is the screen as plain text and `s.state()` is the state summary.

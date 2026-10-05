@@ -336,6 +336,12 @@ class FakeBridge:
             action_scripts=DEMO_ACTION_SCRIPTS,
         )
 
+    # ---------------------------------------------------------------- clock
+
+    def now(self) -> float:
+        """The UI's clock: simulated time, so toasts expire on ``advance()``, not in real time."""
+        return self.clock.now
+
     # ---------------------------------------------------------------- graph + nodes
 
     def set_graph_listener(self, listener):

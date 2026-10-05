@@ -22,6 +22,8 @@ from textual.widget import Widget
 from ros_tui.ui.nav import NavState
 from ros_tui.ui.theme import KINDS, TOKENS
 
+BODY_TOP = 3  # Screen rows above the body: the top bar and the two-line tab row.
+
 
 class NavView(Widget):
     """A widget that draws part of a NavState. It never takes focus and has no bindings: the app
@@ -44,6 +46,19 @@ class NavView(Widget):
         return text
 
 
+class Overlay(NavView):
+    """A NavView drawn on top of the others: on the `overlay` layer, placed absolutely in its
+    parent. After each key the app asks `place` where it goes (NextApp.refresh_views)."""
+
+    DEFAULT_CSS = """
+    Overlay { layer: overlay; position: absolute; }
+    """
+
+    def place(self, width: int, height: int) -> tuple[int, int, int, int] | None:
+        """(x, y, width, height) in a parent of `width` x `height` cells, or None to hide it."""
+        raise NotImplementedError
+
+
 def style(color: str = '', bg: str = '', bold: bool = False) -> Style:
     """A Style from theme token names or hex values: style('key', bold=True)."""
     return Style(color=TOKENS.get(color, color) or None, bgcolor=TOKENS.get(bg, bg) or None, bold=bold)
@@ -58,6 +73,13 @@ def fit(line: Text, width: int, bg: str = '') -> Text:
     return line
 
 
+def band(line: Text, width: int, bg: str) -> Text:
+    """`line` fitted to `width` on the background `bg` (a cursor row, the picked suggestion)."""
+    line = fit(line, width)
+    line.stylize(style(bg=bg))
+    return line
+
+
 def spread(left: Text, right: Text, width: int, bg: str = '') -> Text:
     """`left`, then `right` pushed to the right edge; the left part is cropped if they don't fit."""
     room = max(0, width - right.cell_len)
@@ -68,6 +90,21 @@ def spread(left: Text, right: Text, width: int, bg: str = '') -> Text:
 def glyph(kind: str) -> Text:
     """The kind's glyph in its tint, with the space after it ("≋ ")."""
     return Text(KINDS[kind].glyph + ' ', style(KINDS[kind].color))
+
+
+def cursor_bar(on: bool) -> Text:
+    """The first cell of a row: the cursor's `▍` bar in the key colour when `on`, else a space."""
+    return Text('▍' if on else ' ', style('key'))
+
+
+def rule(width: int) -> Text:
+    """A rule across a popup (the design's 1px border-bottom of a popup's header)."""
+    return Text('─' * width, style('pop-line'))
+
+
+def cursor_cell() -> Text:
+    """The text cursor at the end of a typed value (the design's .cur block)."""
+    return Text(' ', style('term', 'text'))
 
 
 def keyed(key: str, label: str, label_color: str = 'grey') -> Text:

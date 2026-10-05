@@ -215,7 +215,21 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
   row that hides tabs. The row scrolls by whole tabs.
 - The design's 1px rules above the activity strip and the footer are left out:
   a whole row each is too much at 34 lines. The strip and the footer keep their
-  own backgrounds (`strip`, `foot`) instead.
+  own backgrounds (`strip`, `foot`) instead. So is the command line's magenta
+  top rule.
+- **Overlays** (search, `:log`, which-key, the command suggestions, the toast)
+  are `Overlay` views (`widgets/base.py`) on the `overlay` layer, placed
+  absolutely: each one's `place(width, height)` returns its box in its parent
+  and `NextApp.refresh_views` applies it. Popups get a rounded border in their
+  edge colour. The border cells are on the popup's background, so the popup has
+  a thin frame of its own colour outside the line; there's no shadow. Rules
+  inside a popup are a row of `─` in `pop-line` (`rule()`). A popup's picked row
+  is a band of `cursor-on` with the `▍` bar (`cursor_bar()`), like the list
+  cursor; the picked command suggestion is a `cmd-sel` band.
+- **Veil**: textual doesn't blend a translucent layer with what's under it, so
+  the design's `rgba(0,0,0,.5)` veil under search and `:log` is `opacity: 50%`
+  on everything but the footer (the screen's `-veiled` class).
+- **Text cursor**: a typed value ends in a one-cell block in `text` on `term`.
 
 ### Footer contract
 
@@ -344,9 +358,15 @@ user's bad value. Examples from the prototype to copy the style from:
     `lines(width, height)`, returning one Rich `Text` per screen row, which
     `render()` crops to the width. After each key and each graph update the app
     calls `refresh_views()`, which re-renders all of them. Shared text helpers
-    (`style`, `fit`, `spread`, `glyph`, `keyed`) live in `base.py`; a widget may
+    (`style`, `fit`, `band`, `spread`, `glyph`, `keyed`, `cursor_bar`, `rule`,
+    `cursor_cell`) live in `base.py`; a widget may
     keep only view state that the model doesn't need, such as a scroll offset
     (the tab row's first tab, the list's top row).
+  - A popup is an `Overlay`, a `NavView` with `place(width, height)`: the box it
+    takes in its parent, or `None` while the model has it closed. Whether it is
+    open, and everything in it, comes from the model (`nav.search`, `nav.cmd`,
+    `nav.which_key`, `nav.logv`, `nav.toast`). To add one, subclass `Overlay`
+    and yield it in `NextApp.compose`; `refresh_views` places it.
   - Everything the footer, the tests and the tutorial need to know comes from
     the model. The harness reads it through `app.harness_state()`.
 - **One key router.**
@@ -377,11 +397,16 @@ user's bad value. Examples from the prototype to copy the style from:
   field path, and the UI maps that path to a row and an errline. Don't add a
   second validator in a widget.
 - **Every tunable number lives in `ros_tui/constants.py`.**
-- **Time on screen comes from an injectable clock** **(target)**. Rates, call
-  timings and elapsed times read the bridge's clock rather than
-  `time.monotonic()`, so `FakeBridge`'s `ManualClock` makes every shot
-  repeatable. The old UI still reads the real clock (the echo Hz and "response
-  in … ms").
+- **Time on screen comes from an injectable clock.** `NavState.clock` is the
+  bridge's `now()` (`time.monotonic()` in `RosBridge`, the `ManualClock` in
+  `FakeBridge`), so every shot is repeatable. The app's `tick()` runs every
+  `UI_TICK_PERIOD_S` and lets the model expire what is timed (`NavState.tick()`:
+  the toast so far). It redraws only when `tick()` says something changed. The
+  harness calls it after each `advance()` step. A `NavState` built without a
+  clock (the unit tests) has one that stands still, so nothing in the model
+  reads the real time. Rates,
+  call timings and elapsed times **(target)** read the same clock. The old UI
+  still reads the real clock (the echo Hz and "response in … ms").
 - **Every step ships a scenario test with shots** (`test/ui/test_stepNN_*.py`).
   See [agentic-dev.md](agentic-dev.md).
 

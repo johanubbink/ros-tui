@@ -60,6 +60,18 @@ TOKENS = {
     'row-in': '#22303e',  # the current row inside a panel
     'sep': '#444444',  # the breadcrumb's › separators
     'mode-text': '#121212',  # text on a mode badge
+    # Overlays: search, which-key, :log, the command suggestions and toasts.
+    'pop': '#1b222b',  # the search box
+    'pop-2': '#161b22',  # the which-key popup, the :log view
+    'pop-edge': '#6a8fb3',  # the which-key and :log border
+    'pop-line': '#2c3743',  # rules inside a popup
+    'pop-title': '#99aabb',  # the which-key title
+    'cmd-bg': '#1d1a24',  # the command suggestions
+    'cmd-edge': '#5a3f63',
+    'cmd-sel': '#3a2a40',  # the picked suggestion
+    'ok-bg': '#173a17',  # an ok toast (and ✓ OK pills)
+    'bad-bg': '#3a1515',  # a bad toast
+    'info': '#8fc3ec',  # an info toast's text, on panel-in
 }
 
 

@@ -16,10 +16,16 @@
 """The widgets of the new UI. Each draws part of a `NavState` and decides nothing (see base.py)."""
 
 from ros_tui.ui.widgets.activity_strip import ActivityStrip
+from ros_tui.ui.widgets.command_suggestions import CommandSuggestions
 from ros_tui.ui.widgets.entry_body import EntryBody
 from ros_tui.ui.widgets.footer import Footer
 from ros_tui.ui.widgets.home_list import HomeList
+from ros_tui.ui.widgets.log_popup import LogPopup
+from ros_tui.ui.widgets.search_popup import SearchPopup
 from ros_tui.ui.widgets.tab_row import EntryTabRow
+from ros_tui.ui.widgets.toast import ToastView
 from ros_tui.ui.widgets.top_bar import TopBar
+from ros_tui.ui.widgets.which_key import WhichKeyPopup
 
-__all__ = ['ActivityStrip', 'EntryBody', 'EntryTabRow', 'Footer', 'HomeList', 'TopBar']
+__all__ = ['ActivityStrip', 'CommandSuggestions', 'EntryBody', 'EntryTabRow', 'Footer', 'HomeList', 'LogPopup',
+           'SearchPopup', 'ToastView', 'TopBar', 'WhichKeyPopup']

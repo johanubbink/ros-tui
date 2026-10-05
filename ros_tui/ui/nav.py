@@ -24,12 +24,15 @@ without the model knowing about them.
 The layers, top to bottom: TABS (the tab row) › IN (inside a tab: the ☰ list, or an entry's area
 pick) › AREA (the rows of one area) › EDIT (insert: typing into one value). esc goes up one, enter
 goes down one.
+
+Time comes only from `NavState.clock`: the bridge's `now()` in the app (FakeBridge's ManualClock in
+tests), and a clock that stands still otherwise. `tick()` expires what is timed, such as the toast.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, NamedTuple
 
-from ros_tui.constants import NAV_ACTIVITY_MAX, NAV_LOG_LINES, PUBLISH_DEFAULT_RATE_HZ
+from ros_tui.constants import NAV_ACTIVITY_MAX, NAV_LOG_LINES, NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ
 from ros_tui.ui import keymap
 from ros_tui.ui.keymap import COMMANDS, MAX_SUGGESTIONS, key_char, key_display, normalize_key
 
@@ -138,6 +141,7 @@ class Helper:
 class Toast:
     text: str
     kind: str = ''  # '', 'ok', 'info' or 'bad'.
+    until: float = 0.0  # Clock time it goes away at.
 
 
 @dataclass(frozen=True)
@@ -252,6 +256,7 @@ class Press(NamedTuple):
 @dataclass
 class NavState:
     provider: EntryProvider = field(default_factory=EntryProvider)
+    clock: Callable[[], float] = lambda: 0.0  # Seconds; the app passes the bridge's now().
     catalog: dict[str, list[CatalogItem]] = field(default_factory=lambda: {kind: [] for kind in KINDS})
     tabs: list[Tab] = field(default_factory=list)
     active: int = -1  # -1 is the ☰ list (tab 0).
@@ -293,6 +298,9 @@ class NavState:
         """The ☰ list: (kind, item), grouped by kind, filtered by the chip."""
         kinds = KINDS if self.chip < 0 else (KINDS[self.chip],)
         return [(kind, item) for kind in kinds for item in self.catalog[kind]]
+
+    def is_open(self, kind: str, name: str) -> bool:
+        return Tab(kind, name) in self.tabs
 
     def search_rows(self) -> list[tuple[str, CatalogItem]]:
         q = self.search.q.lower() if self.search else ''
@@ -439,7 +447,14 @@ class NavState:
         del self.log[NAV_LOG_LINES:]
 
     def show_toast(self, text: str, kind: str = '') -> None:
-        self.toast = Toast(text, kind)
+        self.toast = Toast(text, kind, self.clock() + NAV_TOAST_S)
+
+    def tick(self) -> bool:
+        """Expire what is timed (the toast). True when something changed, so the views redraw."""
+        if self.toast and self.clock() >= self.toast.until:
+            self.toast = None
+            return True
+        return False
 
     def add_activity(self, tab: Tab | None, text: str, cls: str = '') -> None:
         self.activity.insert(0, ActivityLine(tab.kind if tab else '', tab.name if tab else '', text, cls))
@@ -861,6 +876,11 @@ def _clamp(index: int, last: int) -> int:
 def _cycle(index: int, delta: int, count: int) -> int:
     """Step an index in -1..count-1 (-1 being ☰ or "all"), wrapping at both ends."""
     return (index + 1 + delta) % (count + 1) - 1
+
+
+def short_type(kind: str, type_name: str) -> str:
+    """The type as search results show it: 'String' for std_msgs/msg/String, 'node' for a node."""
+    return 'node' if kind == 'nodes' else type_name.rsplit('/', 1)[-1]
 
 
 def _type_of(kind: str, entry: Any) -> str:

@@ -23,7 +23,8 @@ footer helpers modeName / pathParts / upLabel / downLabel), in its world (harnes
 import pytest
 from harness.fake_bridge import DEMO_GRAPH
 from harness.nav_world import DESIGN_CATALOG, RowsProvider, design_nav, nav_after
-from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, NavState
+from ros_tui.constants import NAV_TOAST_S
+from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, NavState, short_type
 
 HOME = ('tabs', '☰ list')
 OPEN3 = ['enter', '0', 'j', 'enter', '0', 'j', 'enter']  # /chatter, /counter, /diagnostic_status.
@@ -207,6 +208,31 @@ def test_close_toasts_and_undo_reopens():
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'nothing to undo in this tab')
     assert (nav.toast.text, nav.toast.kind) == ('nothing to undo in this tab', 'info')
+
+
+def test_toast_expires_on_the_clock():
+    now = [10.0]
+    nav = design_nav()
+    nav.clock = lambda: now[0]
+    nav.handle_key(':')
+    for key in 'foo':
+        nav.handle_key(key)
+    nav.handle_key('enter')
+    assert nav.toast.until == pytest.approx(10.0 + NAV_TOAST_S)
+    now[0] += NAV_TOAST_S - 0.1
+    assert not nav.tick() and nav.toast is not None
+    now[0] += 0.1
+    assert nav.tick() and nav.toast is None
+    assert not nav.tick()
+
+
+@pytest.mark.parametrize('kind, type_name, short', [
+    ('topics', 'std_msgs/msg/String', 'String'),
+    ('services', 'turtlesim/srv/TeleportAbsolute', 'TeleportAbsolute'),
+    ('nodes', 'namespace /', 'node'),
+])
+def test_short_type(kind, type_name, short):
+    assert short_type(kind, type_name) == short
 
 
 def test_x_on_the_list():

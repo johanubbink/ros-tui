@@ -255,6 +255,10 @@ class RosBridge:
             self._guard.trigger()
         return future
 
+    def now(self) -> float:
+        """The UI's clock (seconds, monotonic). FakeBridge's ManualClock stands in for it in tests."""
+        return time.monotonic()
+
     @property
     def latest_graph(self) -> GraphSnapshot:
         return self._latest_graph  # Atomic attribute read; safe from any thread.
