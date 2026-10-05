@@ -46,3 +46,8 @@ EDITOR_PARSE_DEBOUNCE_S = 0.3
 # Topic publishing.
 PUBLISH_RATE_MIN_HZ = 0.1
 PUBLISH_RATE_MAX_HZ = 100.0
+PUBLISH_DEFAULT_RATE_HZ = 10.0  # The repeat rate of a topic nobody publishes yet.
+
+# Navigation model (ros_tui/ui/nav.py).
+NAV_LOG_LINES = 8  # Key log lines kept (the design's "what the keys did" list).
+NAV_ACTIVITY_MAX = 200  # Activity lines kept for :log.

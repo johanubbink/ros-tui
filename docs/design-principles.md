@@ -34,8 +34,8 @@ serves one of them.
      do.
 3. **Nothing reaches the robot by accident.**
    - What's in the editor goes out on space or `^s`, and on nothing else. The
-     only other keys that send are `.` (resend the last send) and `r` (repeat
-     the publish), see keymap rule 3.
+     only other key that sends is `r`, which starts a repeating publish; `s`
+     only ever stops or cancels. See keymap rule 3.
    - Navigation and editing keys (enter, esc, tab, the arrows, hjkl, typing)
      never send anything. A send flashes when it goes out and lands in the
      activity strip.
@@ -69,7 +69,7 @@ When several are open, keys go to the topmost first: which-key, then the
 helper, the command line, the log, search, insert, and finally normal mode.
 
 **Global keys in normal mode** work on layers 1–3: `0`–`9`, `H` `L` (also `gT`
-`gt`), `x`, `u`, `.`, `y`, `p`, `/`, `:`, `?`, `g…`.
+`gt`), `x`, `u`, `y`, `p`, `/`, `:`, `?`, `g…`.
 
 **Entry verbs** work on layers 2–3 of an entry: space, `^s`, `s`, `r`, `R`, `e`,
 `f`, `[` `]`.
@@ -88,29 +88,39 @@ Follow these when adding or changing a key.
    - `j` `k` with ↑ ↓, and `h` `l` with ← →
    - `/` with `^f`, `H` `L` with `gT` `gt`, and space with `^s`
    - enter, esc and tab always work, so nobody has to know vim.
-3. **Space and `^s` send; nothing else sends something new.** This follows
-   the prototype's "Keys right now" list (`keyList()` in the design).
+3. **Space and `^s` send; `r` repeats; nothing else sends.** This follows
+   the prototype's "Keys right now" list (`keyList()` in the design), minus
+   its `.` (resend the last send), which was dropped.
    - Space, with `^s` as its alias, is the entry's primary verb: publish once,
      call, send the goal, set the changed parameters, or start / stop an echo.
-     In Insert, `^s` keeps the value and sends.
-   - `.` resends the last send, from any tab. The prototype lists it with space
-     under "Do (only these send)". It sends nothing that wasn't sent before.
-   - `r` (topic Publish only) repeats the publish at the shown rate, with `↻`
-     until `s` stops it. The prototype lists it under "Do", next to `R`
-     (change the rate) and `s` (stop repeating, or cancel a goal).
-   - No other key sends, and no navigation or editing key ever does. `s` only
-     ever stops. A send always flashes its button and adds an activity line.
-4. **Every key is in `keymap.py` with a label** **(target)**.
-   - The table is (context, keys, aliases, action, label, group).
-   - The footer, the `?` which-key, the `g…` popup, the "Keys right now" list
-     and the tutorial are all generated from it.
+     In Insert, `^s` keeps the value and sends; a value that doesn't validate
+     is never sent.
+   - `r` (topic Publish only) starts repeating the publish at the shown rate,
+     with `↻`, until `s` stops it. `R` (or `:rate 5`) changes the rate.
+   - `s` only ever stops: it stops a repeat or cancels a goal.
+   - No other key sends, and no navigation or editing key ever does. A send
+     always flashes its button and adds an activity line.
+   - In `keymap.py`, `primary` is dispatched by space and `^s` only, and the
+     "Do (only these send)" group holds nothing but space (`test_keymap.py`
+     checks both).
+4. **Every key is in `keymap.py` with a label.**
+   - `KEYMAP` is a tuple of `Binding(mode, group, show, label, alias, when,
+     shown, run)`. `mode` is the input mode (normal, `g`, insert, search,
+     command, activity, helper, which-key), `when` lists context predicates
+     (`PREDICATES`, `!` negates), `run` maps keys to `NavState` actions.
+   - Dispatch takes the first row that matches; two rows that both match must
+     agree. Rows with an empty `show` only dispatch, rows without `run` are only
+     listed.
+   - The footer, the `?` which-key (`keys_now`), the `g…` popup
+     (`which_key_items`) and the tutorial (`scripts/export_keymap.py`, JSON)
+     are all generated from it.
    - A key that isn't in the table doesn't exist. Its label is the short phrase
      the prototype uses, e.g. "pick an area", "into the latest message: values
      freeze".
 5. **Reserved keys.** These mean the same thing everywhere they apply. Don't
    reuse them for something else:
    - Layers: `esc` `enter`
-   - Sending: `space` `^s` `.` `r` `s`
+   - Sending: `space` `^s` `r` `s` (`.` is free: nothing resends)
    - Moving: `h` `j` `k` `l` and the arrows, `tab` `shift+tab`, `gg` `G`
    - Tabs: `0`–`9` `H` `L` `gt` `gT` `x`
    - Editing: `u` `y` `p` `i` `a` `c` `f` `e` `R` `[` `]`
@@ -272,21 +282,41 @@ user's bad value. Examples from the prototype to copy the style from:
 
 ## Code principles
 
-The first two rules are the **(target)** architecture of the redesign. The
-others already hold.
-
 - **A pure model with thin widgets.**
-  - `ros_tui/ui/nav.py` (`NavState`: tabs, layer, cursors, overlays, the `g`
-    prefix, `footer()`) and `ros_tui/ui/fields.py` (the row model of a message)
-    are plain Python. They don't import textual, and they are unit-tested on
-    their own.
+  - `ros_tui/ui/nav.py` and `ros_tui/ui/keymap.py` are plain Python: no
+    textual, no rclpy (`test_keymap.py` checks). So is `ros_tui/ui/fields.py`,
+    the row model of a message **(target)**. They are unit-tested on their own
+    (`test/test_nav.py`, `test/test_keymap.py`, over the design's world in
+    `test/harness/nav_world.py`).
+  - `NavState` holds the catalogue (the ☰ list, fed by `set_catalog` from a
+    `GraphSnapshot`), the open tabs, the active tab, the layer, the tab, list,
+    area and row cursors, the kind chip, the overlays, the `g` prefix, the undo
+    stack, the key log and the toast. `footer()` gives the mode, breadcrumb,
+    esc / enter labels, pending prefix and helper hint; `summary()` is the same
+    as plain data for the harness.
+  - What an entry holds comes from an `EntryProvider`: its areas (`AREAS`, by
+    screen), its row count, `start_edit` / `commit_edit` (returning a `Commit`:
+    kept with a log line and an optional `UndoEntry`, or an error), `activate_row`,
+    the esc label and log line for leaving an area, the helper of a row, label
+    values like the rate, `verb` (primary, secondary, repeat, rate, history,
+    yank, paste, helper) and `undo`. The default has the design's areas, no
+    rows and a topic's Echo / Publish mode (`e`); other verbs log "not built
+    yet". Entry kinds subclass it.
+  - `handle_key` asks `keymap.lookup` for an action name and runs it from
+    `nav.ACTIONS`, a flat table of one-line calls into `NavState` methods. Keys
+    an overlay or insert doesn't use are swallowed; an unused typing key in
+    normal mode logs a hint ("nothing on "z" here").
+  - Undo entries carry an owner: the tab key they were made in, or `*` for a
+    closed tab, the one entry any tab can undo.
   - Widgets render the model and pass on keys; they make no decisions.
   - Everything the footer, the tests and the tutorial need to know comes from
     the model. The harness reads it through `app.harness_state()`.
 - **One key router.**
-  - The app has one `on_key` that hands every key to the router, which looks it
-    up in `keymap.py`. There are no per-widget bindings and no focus-dependent
-    behaviour.
+  - The app has one `on_key` **(target, step 2)** that hands every key to
+    `NavState.handle_key`, which looks it up in `keymap.py`. It takes textual
+    key names (`slash`, `question_mark`, `shift+tab`, `ctrl+s`) or characters;
+    `normalize_key` makes them one canonical name. There are no per-widget
+    bindings and no focus-dependent behaviour.
   - Per-layer predictability is the point of the design. Focus-driven bindings
     are what made the old UI hard to reason about.
 - **The keymap is the single source of truth.** Dispatch, the footer labels,
@@ -321,8 +351,8 @@ others already hold.
       `term`.
 - [ ] Add `ros_tui/ui/entries/<kind>.py`. It declares its areas (titles in
       capitals) and its verbs: primary (space / `^s`), secondary (`s`), repeat
-      (`r` / `R`), resend (`.`), history (`[ ]`), and yank / paste with the
-      register type.
+      (`r` / `R`), history (`[ ]`), and yank / paste with the register type,
+      as an `EntryProvider` subclass.
 - [ ] Give every verb a row in `keymap.py`, in the kind's context, with a
       label.
 - [ ] Give each area an enter label and an esc label for the footer.
@@ -355,7 +385,7 @@ others already hold.
 - [ ] If it sends, stop: only the verbs above send. Rethink the key, or make it
       an explicit verb with a flash and an activity line.
 - [ ] Add it to `keymap.py` with a label and a group, which updates the footer,
-      `?` and the tutorial.
+      `?` and the tutorial. Its action goes in `nav.ACTIONS`.
 - [ ] Add it to the design prototype too, if it's user-visible, so the reference
       shots and the tutorial stay in step.
 - [ ] Add a transition test in the nav model tests, and a shot if it changes
