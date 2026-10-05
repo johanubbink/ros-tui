@@ -282,7 +282,7 @@ class NavState:
         publishers = publishers or {}
         for kind in KINDS:
             self.catalog[kind] = [
-                CatalogItem(entry.name, _type_of(entry), publishers.get(entry.name, getattr(entry, 'publishers', 0)))
+                CatalogItem(entry.name, _type_of(kind, entry), publishers.get(entry.name, getattr(entry, 'publishers', 0)))
                 for entry in getattr(graph, kind, ())]
         self.list_cur = _clamp(self.list_cur, len(self.home_rows()) - 1)
 
@@ -863,10 +863,13 @@ def _cycle(index: int, delta: int, count: int) -> int:
     return (index + 1 + delta) % (count + 1) - 1
 
 
-def _type_of(entry: Any) -> str:
+def _type_of(kind: str, entry: Any) -> str:
+    """The type shown and searched: a GraphSnapshot node's types[0] is its namespace ('namespace /')."""
     if hasattr(entry, 'type'):
         return entry.type
     types = getattr(entry, 'types', ())
+    if kind == 'nodes':
+        return f'namespace {types[0] if types else "/"}'
     return types[0] if types else ''
 
 

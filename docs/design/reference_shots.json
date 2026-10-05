@@ -10,6 +10,26 @@
     "shows": "/chatter open as tab 1 in Echo (it has a publisher), not echoing yet, LATEST MESSAGE panel selected"
   },
   {
+    "name": "topic-chip",
+    "keys": ["tab"],
+    "shows": "the ☰ list filtered by the Topics chip: the ☰ tab reads '☰ Topics', only the six topics are listed"
+  },
+  {
+    "name": "tab-row",
+    "keys": ["enter", "esc"],
+    "shows": "the tab-row layer: the cursor outlines tab 1 /chatter, footer breadcrumb just 'tabs', 'enter go in' and no esc label"
+  },
+  {
+    "name": "many-tabs",
+    "keys": ["enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter"],
+    "shows": "10 tabs open: the tab row scrolls to keep the active tab 10 in view, '‹ N more' on the left"
+  },
+  {
+    "name": "many-tabs-start",
+    "keys": ["enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "0", "j", "enter", "esc", "g", "g"],
+    "shows": "the tab-row cursor on ☰ with 10 tabs open: the row scrolled back to the start, 'N more ›' on the right"
+  },
+  {
     "name": "echo-live",
     "keys": ["enter", "space", "wait1000"],
     "shows": "echo running: ◉ in the tab and top bar, '● live' in the panel title, ACTIVITY shows 'echo started'"

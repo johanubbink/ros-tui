@@ -135,9 +135,13 @@ Follow these when adding or changing a key.
 
 ### Colour tokens
 
-These are from the design's `:root`. In the app they become textual CSS
-variables in one theme block **(target)**; don't scatter hex values through
-widget CSS.
+These are from the design's `:root`. They live in one place,
+`ros_tui/ui/theme.py`: `TOKENS` (these plus the greys and surfaces of the
+design's terminal CSS), `KINDS` (the kind table below) and `MODES` (the footer
+badges). Rich text in widgets names a token (`style('key', 'tab-cur')`); textual
+CSS uses the same values as `$rt-<token>`, `$rt-kind-<kind>` and
+`$rt-mode-<mode>` (`theme.css_variables()`, merged in by the app). Don't put hex
+values in widget code or CSS; add a token instead.
 
 | Token | Value | Use |
 |-------|-------|-----|
@@ -186,6 +190,32 @@ and carries hints on the right.
 
 On the ☰ list the same logic applies to rows: the cursor row is `#2b3a4a`, with
 a `key` outline while the list has the keys.
+
+### Terminal approximations
+
+The design is HTML; the terminal has whole cells and no borders between them.
+These are the agreed stand-ins. Use them, rather than inventing new ones:
+
+- **Tab underline**: the tab row is two lines. Under the tabs is a rule of `▔`
+  in `rule`; the active tab's stretch of it is in its kind's tint (`accent-fill`
+  for ☰). This stands in for the design's 2px `border-bottom`.
+- **Tab-row cursor**: the cursor tab gets `▏` `▕` edges in `key`, `key` text and
+  the `tab-cur` background, for the design's 1px outline.
+- **List cursor**: the cursor row has the `cursor` background; while the list has
+  the keys (layer `in`) it turns `cursor-on` and gets a `▍` bar in `key` in the
+  first cell, for the design's `key` outline.
+- **Chips and switches** (kind chips, the Echo / Publish switch): pills become
+  ` label ` blocks on `term-3`, the one that is on in `bright` bold on `cursor`.
+  There are no rounded borders.
+- **Panels**: rounded box-drawing borders (`╭─╮│╰─╯`) in the panel's state colour
+  (`tline`, `key` selected, `accent-fill` inside), a one-line title bar on the
+  state's title background, then the body on `term-2`. Side-by-side panels share
+  the width by the design's flex weights (`PANEL_WEIGHTS`).
+- **Overflow markers**: `‹ N more` and `N more ›` in `key` at the edge of the tab
+  row that hides tabs. The row scrolls by whole tabs.
+- The design's 1px rules above the activity strip and the footer are left out:
+  a whole row each is too much at 34 lines. The strip and the footer keep their
+  own backgrounds (`strip`, `foot`) instead.
 
 ### Footer contract
 
@@ -309,11 +339,22 @@ user's bad value. Examples from the prototype to copy the style from:
   - Undo entries carry an owner: the tab key they were made in, or `*` for a
     closed tab, the one entry any tab can undo.
   - Widgets render the model and pass on keys; they make no decisions.
+    Every view of the new UI is a `NavView` (`ros_tui/ui/widgets/base.py`): it
+    holds the `NavState`, never takes focus, has no bindings, and implements
+    `lines(width, height)`, returning one Rich `Text` per screen row, which
+    `render()` crops to the width. After each key and each graph update the app
+    calls `refresh_views()`, which re-renders all of them. Shared text helpers
+    (`style`, `fit`, `spread`, `glyph`, `keyed`) live in `base.py`; a widget may
+    keep only view state that the model doesn't need, such as a scroll offset
+    (the tab row's first tab, the list's top row).
   - Everything the footer, the tests and the tutorial need to know comes from
     the model. The harness reads it through `app.harness_state()`.
 - **One key router.**
-  - The app has one `on_key` **(target, step 2)** that hands every key to
-    `NavState.handle_key`, which looks it up in `keymap.py`. It takes textual
+  - The app (`ros_tui/ui/next_app.py`, `ros_tui --next` until step 10) has one
+    `on_key` that hands every key to `NavState.handle_key`, which looks it up in
+    `keymap.py`. The app and its screen don't inherit textual's bindings (tab
+    focus cycling, the ctrl+p palette), so tab, shift+tab and ctrl+p reach the
+    keymap too; only ctrl+q and ctrl+c are bound, to quit. It takes textual
     key names (`slash`, `question_mark`, `shift+tab`, `ctrl+s`) or characters;
     `normalize_key` makes them one canonical name. There are no per-widget
     bindings and no focus-dependent behaviour.

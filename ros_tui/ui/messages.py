@@ -33,6 +33,15 @@ class GraphUpdated(Message):
         self.snapshot = snapshot
 
 
+class PublisherCount(Message):
+    """How many publishers a topic has, asked for each topic when the graph changes (new UI)."""
+
+    def __init__(self, topic_name: str, count: int):
+        super().__init__()
+        self.topic_name = topic_name
+        self.count = count
+
+
 class PrototypeReady(Message):
     """A type was imported and its default YAML seeded (or failed) in a thread worker."""
 

@@ -243,6 +243,9 @@ def write_png(svg: str, path: Path) -> bool:
     # font (Fira Code from a CDN) is unreachable for rsvg, so name the installed design font.
     svg = svg.replace('<svg ', '<svg xml:space="preserve" ', 1)
     svg = svg.replace('font-family: Fira Code,', 'font-family: JetBrains Mono, Fira Code,')
+    # rsvg ignores textLength, so a long run drifts unless the glyph advance (0.6 em in JetBrains
+    # Mono) matches textual's 12.2 px cell: 20.333 px instead of textual's 20 px.
+    svg = svg.replace('font-size: 20px', 'font-size: 20.333px')
     subprocess.run(['rsvg-convert', '-o', str(path)], input=svg.encode(), check=True)
     return True
 
