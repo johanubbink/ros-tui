@@ -7,6 +7,8 @@ FROM ros:${ROS_DISTRO}-ros-base
 # ---- Dependencies -----------------------------------------------------------
 # colcon + build tooling, the message packages the demo node and app need at
 # runtime, and the test deps so `colcon test` / pytest also work in here.
+# librsvg2-bin + fonts-jetbrains-mono: the agent harness (scripts/agent_check.sh) turns
+# screenshot SVGs into PNGs with rsvg-convert, in the design's monospace font.
 #
 # `apt-get upgrade` first: the ros:${ROS_DISTRO}-ros-base layer is rebuilt less
 # often than the ROS apt repo updates, so freshly installing packages like
@@ -29,6 +31,9 @@ RUN apt-get update \
         python3-pip \
         python3-pytest \
         python3-pytest-asyncio \
+        python3-flake8 \
+        librsvg2-bin \
+        fonts-jetbrains-mono \
         sudo vim less \
     && rm -rf /var/lib/apt/lists/*
 

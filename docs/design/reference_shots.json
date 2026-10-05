@@ -1,0 +1,47 @@
+[
+  {
+    "name": "home",
+    "keys": [],
+    "shows": "the ☰ All list: kind chips, rows grouped by kind with Type and Here columns, footer NORMAL › tabs › ☰ list"
+  },
+  {
+    "name": "chatter-open",
+    "keys": ["enter"],
+    "shows": "/chatter open as tab 1 in Echo (it has a publisher), not echoing yet, LATEST MESSAGE panel selected"
+  },
+  {
+    "name": "echo-live",
+    "keys": ["enter", "space", "wait1000"],
+    "shows": "echo running: ◉ in the tab and top bar, '● live' in the panel title, ACTIVITY shows 'echo started'"
+  },
+  {
+    "name": "echo-frozen",
+    "keys": ["enter", "space", "wait1000", "enter", "wait1500"],
+    "shows": "inside the latest message: '❄ FROZEN' pill, '+N new since', footer breadcrumb ends in 'latest message', esc 'go live'"
+  },
+  {
+    "name": "search-open",
+    "keys": ["/", "a", "d", "d"],
+    "shows": "the search popup over a veil: query 'add', matches grouped by kind with the match highlighted, mode badge SEARCH"
+  },
+  {
+    "name": "command-line",
+    "keys": [":"],
+    "shows": "the command line in the footer (COMMAND badge) with the suggestion list above it"
+  },
+  {
+    "name": "which-key",
+    "keys": ["?"],
+    "shows": "the which-key popup: 'Keys right now · any key closes', keys grouped by Layers / Move / Go / Help"
+  },
+  {
+    "name": "service-response",
+    "keys": ["/", "a", "d", "d", "enter", "space", "wait1000"],
+    "shows": "/add_two_ints called: REQUEST a 19 b 23, RESPONSE '✓ OK' with sum: 42, ACTIVITY lines for the call and response"
+  },
+  {
+    "name": "goal-pose-quat-helper",
+    "keys": ["/", "g", "o", "a", "l", "enter", "enter", "j", "j", "f", "tab", "tab", "9", "0"],
+    "shows": "/goal_pose in Publish, the Quaternion helper on pose.orientation in 'yaw only (°)' mode with yaw 90, preview {z: 0.707107, w: 0.707107}, HELPER badge"
+  }
+]

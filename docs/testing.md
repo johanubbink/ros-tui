@@ -7,7 +7,7 @@ selected with markers (see [`pytest.ini`](../pytest.ini)):
 | ----------- | ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | unit        | (none)      | `test_message_yaml.py`, `test_truncated_yaml.py`, `test_echo.py`, `test_graph.py`, `test_field_wizards.py` | Pure logic, no rclpy node: YAML round trips over many interface types, range and size checks, `byte`/NaN edge cases, truncation, the echo buffer, the wizard helpers. |
 | bridge      | `ros_graph` | `test_bridge.py`                                                | The real `RosBridge` against in-process fixture servers.                 |
-| UI          | `ui`        | `test_ui_pilot.py`, `test_ctrl_t_focus.py`                      | The textual app headless under Pilot, against a `FakeBridge` (no rclpy). |
+| UI          | `ui`        | `test_ui_pilot.py`, `test_ctrl_t_focus.py`, `ui/test_step*.py`  | The textual app headless under Pilot, against a `FakeBridge` (no rclpy). |
 | end to end  | `e2e`       | `test_e2e_smoke.py`                                             | The real app, the real bridge and real fixture servers together.         |
 
 The ROS tests run on an isolated `ROS_DOMAIN_ID` (from `domain_coordinator`),
@@ -41,6 +41,22 @@ minutes.
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs flake8
 and the whole suite in an `osrf/ros:jazzy-desktop` container on every push and
 pull request to `main`.
+
+## Screenshot harness
+
+[`test/harness/`](../test/harness/) has the shared `FakeBridge` (canned, or a
+live simulated world on a manual clock) and `ui_session`, which drives the app
+and takes named screenshots. The scenario tests in `test/ui/` carry the `shots`
+marker as well as `ui`. With `ROS_TUI_SHOTS=1` they write PNG, SVG, text and
+JSON shots to `test/artifacts/`. One command runs flake8 and the suite in Docker
+with shots on:
+
+```bash
+scripts/agent_check.sh -m shots
+```
+
+How it works, the artifact layout and the agent workflow built on it are in
+[agentic-dev.md](agentic-dev.md).
 
 ## Manual checks
 

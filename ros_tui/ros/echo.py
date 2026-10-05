@@ -41,6 +41,11 @@ class EchoBuffer:
             self._received_total += 1
             self._arrival_stamps.append(time.monotonic())
 
+    def pending(self) -> int:
+        """How many messages the next drain() would return."""
+        with self._lock:
+            return len(self._messages)
+
     def drain(self) -> tuple[list[Any], int, int, float]:
         """Return (pending messages, received total, dropped total, receive rate in Hz)."""
         with self._lock:

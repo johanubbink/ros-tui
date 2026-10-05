@@ -16,14 +16,23 @@
 """Headless UI tests: drive the textual app with Pilot against a FakeBridge (no rclpy)."""
 
 import time
-from concurrent.futures import Future
 
 import pytest
 import yaml
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from harness.fake_bridge import (
+    ADD_TWO_INTS_ENTRY,
+    CHATTER_ENTRY,
+    DIAG_ENTRY,
+    FIBONACCI_ENTRY,
+    NODE_PARAMS,
+    POSE_ENTRY,
+    TALKER_NODE,
+    FakeBridge,
+)
 from ros_tui.ros.events import ActionEvent, ActionEventKind
-from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
+from ros_tui.ros.graph import InterfaceEntry, NodeInfo
 from ros_tui.ui.app import RosTuiApp
 from ros_tui.ui.filterable_list import FilterableList
 from ros_tui.ui.messages import NavigateToEntity
@@ -41,112 +50,6 @@ from textual.widgets import (
 )
 
 pytestmark = pytest.mark.ui
-
-FIBONACCI_ENTRY = InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibonacci',))
-ADD_TWO_INTS_ENTRY = InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',))
-CHATTER_ENTRY = InterfaceEntry('/chatter', ('std_msgs/msg/String',))
-POSE_ENTRY = InterfaceEntry('/pose', ('geometry_msgs/msg/PoseStamped',))
-DIAG_ENTRY = InterfaceEntry('/diag', ('diagnostic_msgs/msg/DiagnosticStatus',))
-TALKER_NODE = InterfaceEntry('/talker', ('/',))  # nodes store their namespace in types[0].
-
-SNAPSHOT = GraphSnapshot(
-    version=1,
-    actions=(FIBONACCI_ENTRY,),
-    services=(ADD_TWO_INTS_ENTRY, InterfaceEntry('/set_bool', ('std_srvs/srv/SetBool',))),
-    topics=(CHATTER_ENTRY, POSE_ENTRY, DIAG_ENTRY),
-    nodes=(TALKER_NODE,),
-)
-
-# Canned introspection for /talker; entries match SNAPSHOT so jumps can highlight the target.
-NODE_INFO = NodeInfo(
-    node_name='/talker',
-    publishers=(CHATTER_ENTRY,),
-    subscribers=(POSE_ENTRY,),
-    service_servers=(ADD_TWO_INTS_ENTRY,),
-    service_clients=(),
-    action_servers=(FIBONACCI_ENTRY,),
-    action_clients=(),
-)
-NODE_PARAMS = [('use_sim_time', 'bool', False), ('rate', 'double', 10.0)]
-
-
-def completed_future(result=None):
-    future = Future()
-    future.set_result(result)
-    return future
-
-
-class FakeBridge:
-    def __init__(self, snapshot=SNAPSHOT):
-        self.latest_graph = snapshot
-        self.listener = None
-        self.service_calls = []
-        self.service_future = None
-        self.sent_goals = []
-        self.on_event = None
-        self.cancelled = []
-        self.published = []
-        self.periodic_started = []
-        self.periodic_stopped = []
-        self.subscriptions = {}
-        self.topic_counts_requests = []
-        self.node_info_requests = []
-        self.param_list_requests = []
-        self.set_param_calls = []
-
-    def set_graph_listener(self, listener):
-        self.listener = listener
-
-    def get_node_info(self, node_name, on_done):
-        self.node_info_requests.append(node_name)
-        on_done(NODE_INFO, None)
-
-    def list_node_parameters(self, node_name, on_done):
-        self.param_list_requests.append(node_name)
-        on_done(list(NODE_PARAMS), None)
-
-    def set_node_parameter(self, node_name, name, value_yaml, on_done):
-        self.set_param_calls.append((node_name, name, value_yaml))
-        on_done(None)
-
-    def call_service(self, name, type_name, request, time_setters=()):
-        self.service_calls.append((name, type_name, request))
-        self.service_future = Future()
-        return self.service_future
-
-    def send_goal(self, name, type_name, goal, on_event, time_setters=()):
-        self.sent_goals.append((name, type_name, goal))
-        self.on_event = on_event
-
-    def cancel_goal(self, name):
-        self.cancelled.append(name)
-
-    def publish_once(self, name, type_name, message, time_setters=()):
-        self.published.append((name, type_name, message))
-        return completed_future()
-
-    def start_periodic_publish(self, name, type_name, message, rate_hz, time_setters=()):
-        self.periodic_started.append((name, rate_hz))
-        return completed_future()
-
-    def stop_periodic_publish(self, name):
-        self.periodic_stopped.append(name)
-        return completed_future()
-
-    def subscribe(self, name, type_name, buffer):
-        self.subscriptions[name] = buffer
-        return completed_future()
-
-    def unsubscribe(self, name):
-        self.subscriptions.pop(name, None)
-        return completed_future()
-
-    def topic_endpoint_counts(self, name):
-        self.topic_counts_requests.append(name)
-        return completed_future((1, 2))
-
-    def shutdown(self):
-        pass
 
 
 async def wait_until(pilot, predicate, timeout=5.0):

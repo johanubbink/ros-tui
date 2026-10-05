@@ -47,3 +47,6 @@ CLAUDE.md
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent harness screenshots (scripts/agent_check.sh, scripts/design_shots.py)
+test/artifacts/

@@ -29,10 +29,12 @@ tab something to do:
 | -------- | ------------------------ | ----------------------------------------------------------- |
 | Actions  | `/fibonacci`             | Send `order: 8`; watch the feedback stream, then **Cancel**. |
 | Services | `/add_two_ints`          | Call with `a: 19`, `b: 23` → `sum: 42`.                     |
+| Services | `/set_pose`              | Call a `turtlesim/TeleportAbsolute`; the demo node logs the pose. |
 | Topics   | `/chatter` (~1 Hz)       | Subscribe and **Echo** a calm `std_msgs/String` stream.     |
 | Topics   | `/counter` (~50 Hz)      | **Echo** it to watch the Hz and drop counters move.         |
 | Topics   | `/localisation_pose`     | A nested message: pick fields to echo, or publish one with the Quaternion helper. |
 | Topics   | `/inbox`                 | **Publish** `data: hello`; the demo node logs it.           |
+| Topics   | `/goal_pose`             | **Publish** a `PoseStamped` with the Header and Quaternion helpers; the demo node logs it. |
 | Topics   | `/diagnostic_status`     | **Publish**: put the cursor on `level` and press `ctrl+w` to pick OK/WARN/ERROR/STALE. |
 | Nodes    | `/ros_tui_demo_servers`  | Browse its interfaces (jump to one); view or **Set** a parameter. |
 
