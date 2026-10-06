@@ -212,9 +212,11 @@ def test_the_tick_redraws_only_when_the_active_tab_shows_something_new():
     assert nav.tick() and not nav.tick()  # A message arrived; then nothing new.
     press(nav, '0')
     bridge.clock.advance(1.0)
+    assert nav.tick()  # The "echo started" activity line is no longer fresh: its highlight goes.
+    bridge.clock.advance(1.0)
     assert not nav.tick()  # The echo runs on, but nothing on the ☰ list changes.
     press(nav, '1')
-    assert shown(nav) == {'data': "'chatter 2'"}
+    assert shown(nav) == {'data': "'chatter 3'"}
 
 
 # ---------- publish ----------

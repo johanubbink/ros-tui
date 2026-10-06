@@ -87,6 +87,7 @@ class ServiceEntry(MessageEntry):
         call = data.call = Call(nav.clock(), summary(self.remember(tab), SUMMARY_MAX_CHARS))
         data.response = None
         nav.errlines.pop(tab.key, None)
+        nav.flash_send(tab)
         nav.add_activity(tab, f'▶ called · {call.request}' if call.request else '▶ called', 'c')
         nav.log_line(how, f'calling {tab.name}')
         future = self._bridge.call_service(tab.name, data.type, request, tuple(time_setters))

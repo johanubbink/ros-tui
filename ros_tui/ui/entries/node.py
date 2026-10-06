@@ -209,8 +209,16 @@ class NodeEntry(BridgeEntry):
     def verb(self, nav: NavState, tab: Tab | None, name: str, how: str, arg: Any = None) -> bool:
         if name == 'primary':
             self.set_changed(nav, tab, how)
-            return True
-        return super().verb(nav, tab, name, how, arg)
+        elif name == 'yank':
+            nav.show_toast('nothing to copy on a node', 'bad')
+            nav.log_line(how, 'nothing to copy here')
+        elif name == 'paste':
+            nav.show_toast('nothing copied yet (y copies)' if nav.register is None
+                           else 'nothing to paste into on a node', 'bad')
+            nav.log_line(how, 'no editor here')
+        else:
+            return super().verb(nav, tab, name, how, arg)
+        return True
 
     def set_changed(self, nav: NavState, tab: Tab, how: str) -> None:
         """space / ^s: set every changed parameter on the node, one set_node_parameter call each.

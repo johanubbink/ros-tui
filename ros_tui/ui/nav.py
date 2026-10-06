@@ -26,16 +26,20 @@ pick) › AREA (the rows of one area) › EDIT (insert: typing into one value). 
 goes down one.
 
 Time comes only from `NavState.clock`: the bridge's `now()` in the app (FakeBridge's ManualClock in
-tests), and a clock that stands still otherwise. `tick()` expires what is timed, such as the toast.
+tests), and a clock that stands still otherwise. `tick()` expires what is timed, such as the toast,
+the send flash and the highlight of a fresh activity line. The time of day an activity line shows
+comes from `NavState.wall` (the bridge's `time_of_day()`), so it is repeatable in tests too.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, NamedTuple
 
-from ros_tui.constants import NAV_ACTIVITY_MAX, NAV_ERRLINE_S, NAV_LOG_LINES, NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ
+from ros_tui.constants import (NAV_ACTIVITY_FRESH_S, NAV_ACTIVITY_MAX, NAV_ERRLINE_S, NAV_FLASH_S, NAV_LOG_LINES,
+                               NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ)
 from ros_tui.ui import keymap
 from ros_tui.ui.helpers import Helper
 from ros_tui.ui.keymap import COMMANDS, MAX_SUGGESTIONS, key_char, key_display, normalize_key
+from ros_tui.ui.register import Register
 
 TABS, IN, AREA, EDIT = LAYERS = ('tabs', 'in', 'area', 'edit')
 KINDS = ('topics', 'services', 'actions', 'nodes')
@@ -154,7 +158,15 @@ class ActivityLine:
     kind: str  # The entry's kind ('' for none) and name, so :log can jump there.
     name: str
     text: str
-    cls: str = ''
+    cls: str = ''  # Its colour, as the design's classes: g ok, r bad, c live, y warn, dim.
+    time: str = ''  # The time of day it happened, as shown: '09:41:03'.
+    at: float = 0.0  # NavState.clock() when it happened, for the fresh highlight.
+
+
+def clock_text(seconds: float) -> str:
+    """A time of day in seconds since midnight as 'HH:MM:SS' (the design's now())."""
+    whole = int(seconds) % 86400
+    return f'{whole // 3600:02d}:{whole // 60 % 60:02d}:{whole % 60:02d}'
 
 
 class Running(NamedTuple):
@@ -295,6 +307,7 @@ class Press(NamedTuple):
 class NavState:
     provider: EntryProvider = field(default_factory=EntryProvider)
     clock: Callable[[], float] = lambda: 0.0  # Seconds; the app passes the bridge's now().
+    wall: Callable[[], float] = lambda: 0.0  # The time of day in seconds; the app passes the bridge's time_of_day().
     catalog: dict[str, list[CatalogItem]] = field(default_factory=lambda: {kind: [] for kind in KINDS})
     tabs: list[Tab] = field(default_factory=list)
     active: int = -1  # -1 is the ☰ list (tab 0).
@@ -316,6 +329,9 @@ class NavState:
     log: list[tuple[str, str]] = field(default_factory=list)  # (key, what happened), newest first.
     toast: Toast | None = None
     activity: list[ActivityLine] = field(default_factory=list)  # Newest first.
+    fresh_shown: int = 0  # How many activity lines were fresh at the last tick, so it redraws when one fades.
+    register: Register | None = None  # What y copied, for p (one, app-wide).
+    flash: tuple[str, float] | None = None  # (entry key, clock time it ends) of the primary button's send flash.
     quit: bool = False  # :q asked to leave; the app acts on it.
 
     # ---------- the catalogue ----------
@@ -491,6 +507,7 @@ class NavState:
             'search': self.search.q if self.search else None, 'cmd': self.cmd.q if self.cmd else None,
             'which_key': self.which_key, 'log': self.log[0] if self.log else None,
             'toast': [self.toast.text, self.toast.kind] if self.toast else None,
+            'register': f'{self.register.label} from {self.register.source}' if self.register else None,
         }
 
     # ---------- feedback ----------
@@ -513,7 +530,8 @@ class NavState:
 
     def tick(self) -> bool:
         """Let the entries take in what arrived (echoes), and expire what is timed (the toast,
-        errlines). True when something changed, so the views redraw."""
+        errlines, the send flash, the highlight of fresh activity lines). True when something
+        changed, so the views redraw."""
         changed = self.provider.tick(self)
         now = self.clock()
         expired = [key for key, line in self.errlines.items() if now >= line.until]
@@ -522,11 +540,34 @@ class NavState:
         if self.toast and now >= self.toast.until:
             self.toast = None
             changed = True
-        return changed or bool(expired)
+        if self.flash and now >= self.flash[1]:
+            self.flash = None
+            changed = True
+        # A new line is drawn by whatever added it; only its highlight fading needs a redraw.
+        fresh = self.fresh_lines()
+        faded, self.fresh_shown = fresh < self.fresh_shown, fresh
+        return changed or faded or bool(expired)
 
     def add_activity(self, tab: Tab | None, text: str, cls: str = '') -> None:
-        self.activity.insert(0, ActivityLine(tab.kind if tab else '', tab.name if tab else '', text, cls))
+        self.activity.insert(0, ActivityLine(tab.kind if tab else '', tab.name if tab else '', text, cls,
+                                             clock_text(self.wall()), self.clock()))
         del self.activity[NAV_ACTIVITY_MAX:]
+
+    def fresh_lines(self) -> int:
+        """How many of the newest activity lines are fresh (highlighted for NAV_ACTIVITY_FRESH_S)."""
+        now = self.clock()
+        return next((i for i, line in enumerate(self.activity) if now - line.at >= NAV_ACTIVITY_FRESH_S),
+                    len(self.activity))
+
+    def is_fresh(self, line: ActivityLine) -> bool:
+        return self.clock() - line.at < NAV_ACTIVITY_FRESH_S
+
+    def flash_send(self, tab: Tab) -> None:
+        """Something went out on space / ^s: the entry's primary button flashes for NAV_FLASH_S."""
+        self.flash = (tab.key, self.clock() + NAV_FLASH_S)
+
+    def flashing(self, tab: Tab) -> bool:
+        return self.flash is not None and self.flash[0] == tab.key and self.clock() < self.flash[1]
 
     def hint(self, how: str) -> None:
         self.log_line(how, f'nothing on "{how}" here — ? shows the keys')

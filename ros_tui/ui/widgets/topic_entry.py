@@ -27,7 +27,7 @@ from rich.text import Text
 
 from ros_tui.ui.entries.topic import ECHO, RATE, TopicData, TopicEntry, rate_text
 from ros_tui.ui.nav import EDIT, Area, NavState, Tab
-from ros_tui.ui.widgets.base import button, edit_value, keyed, spread, style
+from ros_tui.ui.widgets.base import button, edit_value, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, hint, pill, waiting
 
@@ -48,14 +48,15 @@ def topic_counts(nav: NavState, tab: Tab) -> Text:
 def topic_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
     entry, data = _entry(nav, tab)
     if entry.mode(tab) == 'echo':
-        return echo_toolbar(data, width)
+        return echo_toolbar(nav, tab, data, width)
     return publish_toolbar(nav, tab, entry, data, width)
 
 
-def echo_toolbar(data: TopicData, width: int) -> Text:
+def echo_toolbar(nav: NavState, tab: Tab, data: TopicData, width: int) -> Text:
     """The echo's start / stop button, what it counted, and the keys of the latest message."""
     echo = data.echo
-    left = button('■ Stop echo' if echo else '▶ Start echo', 'space', 'stop' if echo else 'pri')
+    look = primary_look(nav, tab, 'stop' if echo else 'pri')
+    left = button('■ Stop echo' if echo else '▶ Start echo', 'space', look)
     if echo:
         left.append(f'  {echo.received} received · {echo.hz:.1f} Hz', style('dim'))
         if echo.dropped:
@@ -70,7 +71,7 @@ def publish_toolbar(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData,
     rate = edit_value(editing.value, editing.fresh) if editing else Text(
         rate_text(repeat.rate if repeat else entry.rate(tab)), Style(underline=True))
     label = Text.assemble('■ Stop repeating at ' if repeat else '↻ Repeat at ', rate, ' Hz')
-    left = Text.assemble(button('▶ Publish once', 'space', 'pri'), ' ',
+    left = Text.assemble(button('▶ Publish once', 'space', primary_look(nav, tab, 'pri')), ' ',
                          button(label, 's' if repeat else 'r', 'stop' if repeat else ''), '  ')
     if editing:
         left.append('type a rate · enter keeps · 0.1–100 Hz', style('dim'))

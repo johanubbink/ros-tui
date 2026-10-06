@@ -26,7 +26,7 @@ from rich.text import Text
 from ros_tui.ui.entries.action import CANCELED, EXECUTING, SENDING, SUCCEEDED, ActionData, ActionEntry
 from ros_tui.ui.entries.message import EDITOR
 from ros_tui.ui.nav import Area, NavState, Tab
-from ros_tui.ui.widgets.base import button, keyed, spread, style
+from ros_tui.ui.widgets.base import button, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, pill, waiting
 
@@ -48,7 +48,7 @@ def action_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
     entry, _ = _entry(nav, tab)
     running = entry.executing()
     here = running == tab
-    left = button('▶ Send goal', 'space', 'off' if running else 'pri')
+    left = button('▶ Send goal', 'space', primary_look(nav, tab, 'off' if running else 'pri'))
     if running and not here:
         left.append(f' a goal is running on {running.name}', style('dim'))
     left.append(' ')

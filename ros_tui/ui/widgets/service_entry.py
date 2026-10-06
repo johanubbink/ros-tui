@@ -22,14 +22,15 @@ from rich.text import Text
 from ros_tui.ui.entries.message import EDITOR
 from ros_tui.ui.entries.service import ServiceData
 from ros_tui.ui.nav import Area, NavState, Tab
-from ros_tui.ui.widgets.base import button, keyed, spread, style
+from ros_tui.ui.widgets.base import button, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, field_lines
 from ros_tui.ui.widgets.panel import Panel, pill
 
 
 def service_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
     """The button row: the Call button with its key, and where earlier requests are."""
-    return spread(button('▶ Call', 'space', 'pri'), keyed('[ ]', 'earlier requests', 'dim'), width)
+    return spread(button('▶ Call', 'space', primary_look(nav, tab, 'pri')), keyed('[ ]', 'earlier requests', 'dim'),
+                  width)
 
 
 def response_panel(nav: NavState, tab: Tab, data: ServiceData, area: Area) -> Panel:

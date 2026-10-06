@@ -194,6 +194,7 @@ class ActionEntry(MessageEntry):
         goal = data.goal = Goal(now, summary(self.remember(tab), SUMMARY_MAX_CHARS),
                                 EchoBuffer(FEEDBACK_BUFFER_MAXLEN, clock=self._bridge.now))
         nav.errlines.pop(tab.key, None)
+        nav.flash_send(tab)
         nav.add_activity(tab, f'▶ goal sent · {goal.sent}' if goal.sent else '▶ goal sent', 'c')
         nav.log_line(how, f'sent a goal to {tab.name}')
         self._bridge.send_goal(tab.name, data.type, message, lambda event: self._event(nav, tab, goal, event),

@@ -260,6 +260,12 @@ class RosBridge:
         """The UI's clock (seconds, monotonic). FakeBridge's ManualClock stands in for it in tests."""
         return time.monotonic()
 
+    def time_of_day(self) -> float:
+        """The local time of day in seconds since midnight, for the activity lines' "09:41:03"."""
+        now = time.time()
+        local = time.localtime(now)
+        return local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec + now % 1
+
     @property
     def latest_graph(self) -> GraphSnapshot:
         return self._latest_graph  # Atomic attribute read; safe from any thread.

@@ -217,6 +217,38 @@ expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
   `BridgeEntry._work`) the first time the entry opens; until then the editor
   says `loading…`, or `✗ could not load it: …`.
 
+## The register (y / p)
+
+`y` copies a message and `p` pastes it, through one register for the whole app
+(`NavState.register`, a `register.Register`, the design's `S.reg`). The model is
+`ros_tui/ui/register.py` (pure); the entries do the copying and pasting
+(`MessageEntry.yank` / `paste` in `entries/message.py`, `TopicEntry.yank_echo`).
+
+- **What y copies.** In a topic's Echo: the message LATEST MESSAGE shows, so
+  the frozen one while frozen (`copied the frozen String from /chatter`), else
+  the newest (`copied the latest String from /chatter`). The entry keeps the
+  newest and the frozen message as they arrived as well as converted for
+  display (`TopicData.latest` / `shown`, each a `Received`), so the copy is exact: floats keep every digit and long arrays
+  and strings aren't cut, unlike what the echo shows. In an editor (a topic's
+  Publish, a service's REQUEST, an action's GOAL): what the editor holds
+  (`copied the message` / `request` / `goal`). On a node: nothing (`nothing to
+  copy on a node`). An echo that isn't running or has nothing yet says so:
+  `start the echo first (space)`, `no messages to copy: nobody publishes
+  /inbox`.
+- **It is typed.** The register holds the full type and the role: `message`
+  (a topic), `request` (a service) or `goal` (an action). `p` pastes only into
+  an editor of the same type in the same role; anything else is refused with
+  `copied a String, this needs a PoseStamped` (`Register.mismatch`, a role
+  reads `AddTwoInts request`). Echo has no editor: `switch to Publish (e) to
+  paste`. With nothing copied: `nothing copied yet (y copies)`.
+- **A paste is one undo step** (`undid the paste from /chatter on /inbox`) and
+  replaces the whole message; the toast says `pasted from /chatter · u
+  undoes`. Pasting what the editor already holds is no undo step. A paste never
+  sends: space does.
+- The register is a copy: editing the editor it came from later doesn't change
+  it. While it holds something, the top bar shows the chip `copied: String from
+  /chatter · p pastes` in `reg` after the search hint.
+
 ## Field helpers
 
 `f` on a field row with a helper opens a small popup right under the row that
@@ -304,6 +336,8 @@ values in widget code or CSS; add a token instead.
 | `hb-edge` / `hb-text` / `hb-on` | `#4a5568` / `#aab4c3` / `#2a313b` | a row's `[f …]` helper badge (the design's `.hb`); `hb-on` is the badge on the cursor row and the helper field being typed |
 | `help-field` | `#6a7382` | the helper popup's key line (the design's `.hf`) |
 | `comp` | `#7f8a99` | an enum's completion while it is typed (the design's `.comp`) |
+| `reg` | `#c586c0` | the register chip in the top bar (the design's `.reg`) |
+| `fresh-bg` / `fresh-bad-bg` | `#1d2a1d` / `#2a1a1a` | a fresh activity line's band (the design's `.fl.new`, `.fl.new.bad`) |
 
 Syntax colours in message rows (`widgets/field_rows.py`): field keys `syn-key`
 `#9cdcfe`, numbers and bools `syn-num` `#b5cea8`, strings `syn-str` `#ce9178`,
@@ -390,7 +424,9 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
 - **Overlays** (search, `:log`, which-key, the command suggestions, the field
   helper, the toast) are `Overlay` views (`widgets/base.py`) on the `overlay`
   layer, placed absolutely: each one's `place(width, height)` returns its box
-  in its parent and `NextApp.refresh_views` applies it. Popups get a rounded border in their
+  in its parent and `NextApp.refresh_views` applies it, after each key and
+  tick and also whenever the body changes size (`Body.on_resize`: the activity
+  strip grew a line), so a toast never sits below the body. Popups get a rounded border in their
   edge colour. The border cells are on the popup's background, so the popup has
   a thin frame of its own colour outside the line; there's no shadow. Rules
   inside a popup are a row of `─` in `pop-line` (`rule()`). A popup's picked row
@@ -519,7 +555,15 @@ The command line replaces the footer while it's open: COMMAND, the typed
   - `↻ Repeat at 10 Hz r` is a plain button (`btn-text` on `btn`).
   - Disabled buttons (`off`: `btn-off` on `btn-off-bg`) are dim and say why
     next to them ("a goal is running on /fibonacci").
-- **Flash**: a send outlines its button white for 0.5 s.
+- **Flash**: when space or `^s` sends something to the robot (publish once,
+  call, send goal) the entry's primary button turns a lighter blue (`flash`
+  look: `bright` on `accent` instead of `accent-fill`) for `NAV_FLASH_S`
+  (0.5 s). That stands in for the design's white outline: a terminal can't draw
+  an outline, and a white fill was louder than anything else on screen. The
+  entry calls `nav.flash_send(tab)` where the send actually goes out, so a
+  refused send (a goal already running, a value that doesn't build) doesn't
+  flash. Starting or stopping an echo sends nothing, and a node has no button,
+  so neither flashes. The toolbars ask `primary_look(nav, tab, look)`.
 - **Toasts** sit bottom-right in the body, for about 1.6 s, with one short line:
   - ok: green on `#173a17`
   - info: `#8fc3ec` on `#16283a`, e.g. "closed /chatter · u undoes"
@@ -527,12 +571,25 @@ The command line replaces the footer while it's open: COMMAND, the typed
 - **Errlines** go at the bottom of the panel they're about: `✗` and the
   message in `bad` on `#201414`. They name the field. They clear when the value
   is fixed, or after about 6 s.
-- **Activity strip**:
-  - It sits above the footer, headed "ACTIVITY · ALL TABS", and shows the three
-    newest lines (time, kind glyph and entry, text).
-  - Lines from other tabs are dimmed. A new line is highlighted (green bar, or
-    red for a failure) for about 1.6 s.
-  - `:log` shows them all.
+- **Activity strip** (`widgets/activity_strip.py`, the design's renderFeed):
+  - It sits above the footer, headed `ACTIVITY · ALL TABS` (plus `· other tabs
+    dimmed` while an entry is open) with `:log for everything` on the right, and
+    shows the three newest lines: the time (`09:41:03`, `dim`), the kind glyph
+    and entry, and the text in its `cls` colour.
+  - While an entry is open, lines from other tabs are dimmed; on the ☰ list
+    nothing is.
+  - A new line is **fresh** for `NAV_ACTIVITY_FRESH_S` (1.6 s): a `fresh-bg`
+    band with a `▍` in `ok` in its first cell, or `fresh-bad-bg` and `bad` for
+    a failure (cls `r`). Whatever adds a line redraws it; the tick redraws once
+    more only when a highlight fades (`NavState.fresh_lines` falls), so an idle
+    app still never redraws.
+  - Each `ActivityLine` carries its time of day as text (`time`) and the clock
+    time it happened (`at`). The time of day comes from `NavState.wall`, the
+    bridge's `time_of_day()` (the local time in `RosBridge`; 09:41:00 plus the
+    simulated time in `FakeBridge`), formatted by `nav.clock_text`.
+  - `:log` shows them all with the same columns; `j` `k` move, `gg` `G` go to
+    the newest / oldest, enter goes to that line's tab. The app has no mouse, so
+    the design's "click a line to go there" isn't there.
 - **Helper badges**: a field with a helper shows `[f Quaternion]`,
   `[f Header]`, `[f Time]` or `[f Enum]` after its value, before the type
   hint: brackets in `hb-edge`, `f` in `key` bold, the name in `hb-text`; on the
@@ -558,6 +615,8 @@ user's bad value. Examples from the prototype to copy the style from:
 | a helper closed with esc | `helper closed, nothing changed` |
 | closed a tab | `closed /chatter · u undoes` |
 | wrong type in the register | `copied a String, this needs a PoseStamped` |
+| copied / pasted | `copied the latest String from /chatter`, `copied the request`, `pasted from /chatter · u undoes` |
+| nothing to copy or paste | `start the echo first (space)`, `no messages to copy: nobody publishes /inbox`, `nothing copied yet (y copies)`, `switch to Publish (e) to paste`, `nothing to copy on a node` |
 | field error (name the field) | `level needs OK / WARN / ERROR / STALE or a number, got "hot"` |
 | range error | `rate must be 0.1–100 Hz, got "500"` |
 | esc on an invalid value | `rate must be 0.1–100 Hz, got "500" — kept the old value` |
@@ -599,7 +658,8 @@ user's bad value. Examples from the prototype to copy the style from:
   - `NavState` holds the catalogue (the ☰ list, fed by `set_catalog` from a
     `GraphSnapshot`), the open tabs, the active tab, the layer, the tab, list,
     area and row cursors, the kind chip, the overlays, the `g` prefix, the undo
-    stack, the key log and the toast. `footer()` gives the mode, breadcrumb,
+    stack, the key log, the toast, the activity lines, the register and the send
+    flash. `footer()` gives the mode, breadcrumb,
     esc / enter labels, pending prefix and helper hint; `summary()` is the same
     as plain data for the harness.
   - What an entry holds comes from an `EntryProvider`: its areas (`AREAS`, by
@@ -713,7 +773,9 @@ user's bad value. Examples from the prototype to copy the style from:
   `UI_TICK_PERIOD_S` (0.1 s) and lets the entries take in what arrived and the
   model expire what is timed (`NavState.tick()`: the providers' `tick`, then the
   toast and errlines). It redraws only when `tick()` says something changed.
-  The harness calls it after each `advance()` step. A `NavState` built without a
+  The harness calls it after each `advance()` step. The time of day an activity
+  line shows is the bridge's `time_of_day()` (`NavState.wall`), never `time.time()` in
+  the UI, so it is repeatable too. A `NavState` built without a
   clock (the unit tests) has one that stands still, so nothing in the model
   reads the real time. Call timings read the same clock (a demo service call
   takes `50.0 ms` under the FakeBridge), and so do rates: an `EchoBuffer` takes

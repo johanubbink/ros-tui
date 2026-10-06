@@ -110,6 +110,7 @@ async def test_echo_chatter():
     sends.
   - Everything is driven by `bridge.clock` (a `ManualClock`), so the same keys
     and advances always give the same screen.
+    `time_of_day()` is 09:41:00 plus the clock, so activity lines read `09:41:03`.
 
 Some numbers on screen still come from the real clock in the old UI, such as
 the echo Hz and a service's "response in … ms", so they differ between runs.

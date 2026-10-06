@@ -29,6 +29,9 @@ the design's 'msg' branches of startEdit / commitEdit / undo and its hist():
   what you were typing (the draft).
 - f on a row with a field helper (helpers/) opens it; enter writes its value into the row, as one
   undo step, and esc leaves the row as it was.
+- y copies the editor's message into the register (register.py); p pastes the register into the
+  editor when it holds the same type in the same role (a topic's message, a service's request, an
+  action's goal), as one undo step.
 
 Subclasses send (`verb('primary')`) and may show more areas (`form`).
 """
@@ -44,6 +47,7 @@ from ros_tui.ui.fields import FieldRows, Row, describe, flow_yaml, path_text
 from ros_tui.ui.helpers import Helper, helper_name
 from ros_tui.ui.keymap import key_char
 from ros_tui.ui.nav import Area, Commit, Editing, NavState, Tab, UndoEntry
+from ros_tui.ui.register import ROLES, Register
 
 FIELDS = 'fields'  # UndoEntry kind of a change to an entry's field rows; data is (what, values before).
 EDITOR = 'msg'  # The area id of the editor.
@@ -214,9 +218,62 @@ class MessageEntry(BridgeEntry):
             nav.helper.press(arg, key_char(arg))
         elif name == 'helper_apply' and nav.helper:
             self.apply_helper(nav, tab, how)
+        elif name == 'yank':
+            self.yank(nav, tab, how)
+        elif name == 'paste':
+            self.paste(nav, tab, how)
         elif not (name == 'helper' and self.open_helper(nav, tab, how)):
             return super().verb(nav, tab, name, how, arg)
         return True
+
+    # ---------- the register ----------
+    def _loaded_editor(self, nav: NavState, tab: Tab, how: str) -> FieldRows | None:
+        """The editor, or None (with a toast) while its type is still loading or failed to load."""
+        data = self.data(tab)
+        if data.editor is None:
+            text = f'could not load {data.type}: {data.error}' if data.error else 'still loading the message type'
+            nav.show_toast(text, 'bad')
+            nav.log_line(how, text)
+        return data.editor
+
+    def yank(self, nav: NavState, tab: Tab, how: str) -> None:
+        """y: copy what the editor holds (the design's yank)."""
+        editor = self._loaded_editor(nav, tab, how)
+        if editor is None:
+            return
+        role = ROLES[tab.kind]
+        nav.register = Register.of(self.data(tab).type, role, tab.name, editor.to_plain())
+        nav.show_toast(f'copied the {role}', 'info')
+        nav.log_line(how, f'copied the {role} of {tab.name} — p pastes it')
+
+    def paste(self, nav: NavState, tab: Tab, how: str) -> None:
+        """p: replace the editor's message with the register's, if it is the same type and role, as
+        one undo step (the design's paste)."""
+        register = nav.register
+        if register is None:
+            nav.show_toast('nothing copied yet (y copies)', 'bad')
+            nav.log_line(how, 'nothing copied yet')
+            return
+        editor = self._loaded_editor(nav, tab, how)
+        if editor is None:
+            return
+        data = self.data(tab)
+        wrong = register.mismatch(data.type, ROLES[tab.kind])
+        if wrong:
+            nav.show_toast(wrong, 'bad')
+            nav.log_line(how, f'✗ {wrong} — not pasted')
+            return
+        before = editor.to_plain()
+        editor.load(register.values)
+        data.hpos, data.draft = -1, None
+        nav.errlines.pop(tab.key, None)
+        if before == register.values:
+            nav.show_toast(f'pasted from {register.source} · it was the same already', 'info')
+            nav.log_line(how, f'pasted from {register.source}: nothing changed')
+            return
+        nav.push_undo(UndoEntry(tab.key, FIELDS, (f'the paste from {register.source}', before)))
+        nav.show_toast(f'pasted from {register.source} · u undoes', 'info')
+        nav.log_line(how, f'pasted the {register.label} from {register.source} (u undoes)')
 
     # ---------- field helpers ----------
     def open_helper(self, nav: NavState, tab: Tab, how: str) -> bool:

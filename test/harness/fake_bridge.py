@@ -58,6 +58,7 @@ import yaml
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
 STAMP_EPOCH_S = 1728036000  # Stamps of simulated messages count from here (as the design does).
+TIME_OF_DAY_S = 9 * 3600 + 41 * 60  # The fake clock's 0.0 is 09:41:00, so activity times are repeatable.
 
 # ---------------------------------------------------------------- the canned world (old tests)
 
@@ -385,6 +386,10 @@ class FakeBridge:
     def now(self) -> float:
         """The UI's clock: simulated time, so toasts expire on ``advance()``, not in real time."""
         return self.clock.now
+
+    def time_of_day(self) -> float:
+        """The time of day the activity lines show: 09:41:00 plus the simulated time."""
+        return TIME_OF_DAY_S + self.clock.now
 
     # ---------------------------------------------------------------- graph + nodes
 

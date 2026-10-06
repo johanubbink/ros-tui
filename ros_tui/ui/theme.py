@@ -91,6 +91,10 @@ TOKENS = {
     'ok-bg': '#173a17',  # an ok toast (and ✓ OK pills)
     'bad-bg': '#3a1515',  # a bad toast
     'info': '#8fc3ec',  # an info toast's text, on panel-in
+    # The register chip in the top bar (the design's .reg) and the activity strip's fresh lines (.fl.new).
+    'reg': '#c586c0',
+    'fresh-bg': '#1d2a1d',
+    'fresh-bad-bg': '#2a1a1a',
     # Field helpers (the design's .hb badge, .hpop popup and .comp enum completion).
     'hb-edge': '#4a5568',  # a row's [f …] badge at rest
     'hb-text': '#aab4c3',

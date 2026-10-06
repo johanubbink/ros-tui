@@ -30,6 +30,8 @@ Echo:
   since"). Leaving it, however that happens, makes it live again: being frozen is not stored, it
   is where the cursor is (`frozen`).
 - enter on a field hides or shows it, per entry.
+- y copies the message LATEST MESSAGE shows (the frozen one while frozen) into the register. The
+  newest message is also kept as it arrived, so the copy is exact, not cut for display.
 
 Publish (the editor, history and undo come from `MessageEntry`):
 - space / ^s publishes the message once; r repeats it at the rate (`start_periodic_publish`) until
@@ -40,14 +42,15 @@ Publish (the editor, history and undo come from `MessageEntry`):
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from ros_tui.constants import PUBLISH_DEFAULT_RATE_HZ, PUBLISH_RATE_MAX_HZ, PUBLISH_RATE_MIN_HZ, SUMMARY_MAX_CHARS
 from ros_tui.ros.echo import EchoBuffer
-from ros_tui.ros.message_yaml import message_to_display
+from ros_tui.ros.message_yaml import message_to_display, message_to_plain
 from ros_tui.ui.entries.message import MessageData, MessageEntry
 from ros_tui.ui.fields import Row, flat_rows, summary
 from ros_tui.ui.nav import AREA, EDIT, IN, Area, Commit, Editing, NavState, Running, Tab, UndoEntry
+from ros_tui.ui.register import Register
 
 ECHO = 'out'  # The area id of LATEST MESSAGE.
 RATE = 'rate'  # The Editing area of the rate editor, and the UndoEntry kind of a rate change.
@@ -78,12 +81,18 @@ class Repeat:
         return self.sent_before + int((now - self.since) * self.rate + 1e-9)
 
 
+class Received(NamedTuple):
+    """An echoed message as it arrived (for an exact y) and as display values (converted once)."""
+    message: Any
+    display: dict
+
+
 @dataclass
 class TopicData(MessageData):
     counts: tuple[int, int] | None = None  # (publishers, subscribers), asked for when the tab opens.
     echo: Echo | None = None
-    latest: dict | None = None  # The newest message received, as display values.
-    shown: dict | None = None  # What LATEST MESSAGE shows: the newest, or what it froze on.
+    latest: Received | None = None  # The newest message received.
+    shown: Received | None = None  # What LATEST MESSAGE shows: the newest, or what it froze on.
     new_since: int = 0  # Messages received since it froze.
     hidden: set[str] = field(default_factory=set)  # Echo rows (field paths) hidden with enter.
     rate: float | None = None  # The repeat rate the user set (None: not set).
@@ -212,7 +221,13 @@ class TopicEntry(MessageEntry):
         data = self.data(tab)
         if data.editor is None:
             return []
-        return flat_rows(data.editor.fields, data.shown if self.frozen(nav, tab) else data.latest)
+        received = self.received(nav, tab)
+        return flat_rows(data.editor.fields, received.display if received else None)
+
+    def received(self, nav: NavState, tab: Tab) -> Received | None:
+        """The message LATEST MESSAGE shows: the one it froze on while frozen, else the newest."""
+        data = self.data(tab)
+        return data.shown if self.frozen(nav, tab) else data.latest
 
     def row_count(self, tab: Tab, area: Area) -> int:
         if area.id == ECHO:
@@ -263,7 +278,7 @@ class TopicEntry(MessageEntry):
                 if hz > 0:
                     data.measured = hz
                 if messages:
-                    data.latest = message_to_display(messages[-1])
+                    data.latest = Received(messages[-1], message_to_display(messages[-1]))
                 if self.frozen(nav, tab):
                     data.new_since += fresh
                 else:
@@ -296,6 +311,25 @@ class TopicEntry(MessageEntry):
     def _echo_failed(self, tab: Tab) -> None:
         self.data(tab).echo = None
 
+    def yank_echo(self, nav: NavState, tab: Tab, how: str) -> None:
+        """y in Echo: copy the message LATEST MESSAGE shows (the frozen one while frozen), exactly."""
+        data, received = self.data(tab), self.received(nav, tab)
+        if data.echo is None:
+            problem = 'start the echo first (space)'
+        elif received is None:
+            problem = (f'no messages to copy: nobody publishes {tab.name}' if self.publishers(nav, tab) == 0
+                       else f'no messages to copy yet: waiting for the first one on {tab.name}')
+        else:
+            problem = ''
+        if problem:
+            nav.show_toast(problem, 'bad')
+            nav.log_line(how, 'nothing to copy yet')
+            return
+        nav.register = Register.of(data.type, 'message', tab.name, message_to_plain(received.message))
+        which = 'frozen' if self.frozen(nav, tab) else 'latest'
+        nav.show_toast(f'copied the {which} {nav.register.label} from {tab.name}', 'info')
+        nav.log_line(how, f'copied the {which} message — p pastes it into an editor of the same type')
+
     # ---------- publish ----------
     def publish(self, nav: NavState, tab: Tab, how: str) -> None:
         """space in Publish: check the message, then publish it once."""
@@ -307,6 +341,7 @@ class TopicEntry(MessageEntry):
         nav.errlines.pop(tab.key, None)
         future = self._bridge.publish_once(tab.name, self.data(tab).type, message, tuple(time_setters))
         future.add_done_callback(lambda done: self._failed(nav, tab, done, 'publish'))
+        nav.flash_send(tab)
         nav.add_activity(tab, f'✓ published · {sent}' if sent else '✓ published', 'g')
         nav.log_line(how, f'published once on {tab.name}')
 
@@ -410,6 +445,11 @@ class TopicEntry(MessageEntry):
             self.command_rate(nav, tab, how, arg or '')
         elif name in ('history_older', 'history_newer') and self.mode(tab) == 'echo':
             nav.log_line(how, 'the history is for Publish — e switches to it')
+        elif name == 'yank' and self.mode(tab) == 'echo':
+            self.yank_echo(nav, tab, how)
+        elif name == 'paste' and self.mode(tab) == 'echo' and nav.register is not None:
+            nav.show_toast('switch to Publish (e) to paste', 'bad')
+            nav.log_line(how, 'no editor in Echo')
         else:
             return super().verb(nav, tab, name, how, arg)
         return True

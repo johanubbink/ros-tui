@@ -193,5 +193,25 @@
     "name": "action-succeeded",
     "keys": ["/", "f", "i", "b", "enter", "enter", "c", "4", "esc", "space", "wait2500"],
     "shows": "order 4 sent and done: RESULT has the green SUCCEEDED pill, the time and the sequence; ACTIVITY '✓ goal succeeded · N s'"
+  },
+  {
+    "name": "register-copied",
+    "keys": ["enter", "space", "wait2000", "enter", "wait1000", "y"],
+    "shows": "the frozen /chatter echo copied: the top bar's magenta chip 'copied: String from /chatter · p pastes' and the toast 'copied the latest String from /chatter' (the app says 'the frozen String' while it is frozen)"
+  },
+  {
+    "name": "paste-mismatch",
+    "keys": ["enter", "space", "wait2000", "y", "/", "g", "o", "a", "l", "enter", "p"],
+    "shows": "a String pasted into /goal_pose is refused: the red toast 'copied a String, this needs a PoseStamped'; the message is unchanged"
+  },
+  {
+    "name": "activity-strip",
+    "keys": ["enter", "space", "/", "a", "d", "d", "enter", "space", "wait300"],
+    "shows": "ACTIVITY · ALL TABS · other tabs dimmed: time, kind glyph and entry, text; the /add_two_ints lines highlighted green (fresh), the /chatter echo line dimmed"
+  },
+  {
+    "name": "log-view-times",
+    "keys": ["enter", "space", "/", "a", "d", "d", "enter", "space", "wait2000", ":", "l", "o", "g", "enter"],
+    "shows": "the :log view over a veil: 'All activity  N entries, newest first · j k move · enter goes there · esc closes', each line with its time, the kind glyph and entry, and the text"
   }
 ]

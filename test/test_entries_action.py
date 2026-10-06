@@ -192,7 +192,7 @@ def test_the_tick_redraws_only_for_what_shows():
     nav, bridge = action_nav(*OPEN_FIB, *order(12), 'space')
     assert advance(nav, bridge, 1.0) == 10  # Its own tab shows the time, to a tenth of a second.
     press(nav, '0')
-    advance(nav, bridge, 0.1)
+    advance(nav, bridge, 0.7)  # Past the highlight of the fresh "goal sent" activity line.
     assert advance(nav, bridge, 1.0) == 4  # Elsewhere only the spinner in the top bar turns.
 
 

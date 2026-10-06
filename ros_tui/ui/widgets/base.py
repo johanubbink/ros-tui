@@ -19,7 +19,7 @@ from rich.style import Style
 from rich.text import Text
 from textual.widget import Widget
 
-from ros_tui.ui.nav import NavState, Running
+from ros_tui.ui.nav import NavState, Running, Tab
 from ros_tui.ui.theme import KINDS, TOKENS
 
 BODY_TOP = 3  # Screen rows above the body: the top bar and the two-line tab row.
@@ -132,7 +132,13 @@ BUTTON_LOOKS = {  # The design's .btn looks -> (text colour, background, its key
     'pri': ('bright', 'accent-fill', 'key'),
     'stop': ('warn', 'stop-bg', 'warn'),
     'off': ('btn-off', 'btn-off-bg', 'btn-off'),  # Disabled: say why next to it.
+    'flash': ('bright', 'accent', 'bright'),  # A send just went out: a lighter blue (the design's .btn.flash outline).
 }
+
+
+def primary_look(nav: NavState, tab: Tab, look: str) -> str:
+    """The look of an entry's primary (space) button: lighter for NAV_FLASH_S after a send goes out."""
+    return 'flash' if nav.flashing(tab) else look
 
 
 def button(label: Text | str, key: str, look: str = '') -> Text:
@@ -140,6 +146,6 @@ def button(label: Text | str, key: str, look: str = '') -> Text:
     the label (a Text may style parts of itself) and the key on the look's background."""
     color, bg, key_color = BUTTON_LOOKS[look]
     text = Text.assemble(' ', label, ' ')
-    text.stylize_before(style(color, bg, bold=look in ('pri', 'stop')))
+    text.stylize_before(style(color, bg, bold=look in ('pri', 'stop', 'flash')))
     text.append(f'{key} ', style(key_color, bg))
     return text

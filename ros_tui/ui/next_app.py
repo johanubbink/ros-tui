@@ -56,6 +56,14 @@ class KeylessScreen(Screen, inherit_bindings=False):
     """The default screen without textual's tab / shift+tab focus cycling and ctrl+c copy."""
 
 
+class Body(Vertical):
+    """The body, which the toast and the helper popup are placed in: when it changes size (the
+    activity strip grows a line), they are placed again, or the toast would sit below its bottom."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.app.refresh_views()
+
+
 class NextApp(App, inherit_bindings=False):
     TITLE = 'ros_tui'
     ENABLE_COMMAND_PALETTE = False
@@ -75,7 +83,8 @@ class NextApp(App, inherit_bindings=False):
     def __init__(self, bridge):
         super().__init__()
         self._bridge = bridge
-        self.nav = NavState(entry_router(bridge, lambda fn: self.post_message(UiCall(fn)), self._work), clock=bridge.now)
+        self.nav = NavState(entry_router(bridge, lambda fn: self.post_message(UiCall(fn)), self._work),
+                            clock=bridge.now, wall=bridge.time_of_day)
         self._graph: GraphSnapshot | None = None
         self._publishers: dict[str, int] = {}
         self._publishers_dirty = False
@@ -90,7 +99,7 @@ class NextApp(App, inherit_bindings=False):
         nav = self.nav
         yield TopBar(nav)
         yield EntryTabRow(nav)
-        with Vertical(id='body'):
+        with Body(id='body'):
             yield HomeList(nav)
             yield EntryBody(nav)
             yield HelperPopup(nav)
