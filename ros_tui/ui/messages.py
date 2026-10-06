@@ -19,7 +19,7 @@ Textual messages crossing the ROS-thread -> UI-thread boundary.
 ``post_message`` is the only channel the bridge callbacks are allowed to use.
 """
 
-from typing import Any
+from typing import Any, Callable
 
 from textual.message import Message
 
@@ -40,6 +40,14 @@ class PublisherCount(Message):
         super().__init__()
         self.topic_name = topic_name
         self.count = count
+
+
+class UiCall(Message):
+    """A bridge answer for an entry provider (new UI): `fn` runs on the UI thread, then the views redraw."""
+
+    def __init__(self, fn: Callable[[], None]):
+        super().__init__()
+        self.fn = fn
 
 
 class PrototypeReady(Message):

@@ -110,3 +110,10 @@ def cursor_cell() -> Text:
 def keyed(key: str, label: str, label_color: str = 'grey') -> Text:
     """A key in the key colour followed by what it does: "esc tab row"."""
     return Text.assemble((key, style('key', bold=True)), (' ' + label if label else '', style(label_color)))
+
+
+def edit_value(value: str, fresh: bool = False) -> Text:
+    """A value being typed (the design's .edit, or .edit.fresh when the first key replaces it), with
+    the text cursor at its end. The value is underlined, standing in for the design's outline."""
+    return Text.assemble((value, style('bright', 'edit-fresh' if fresh else 'edit') + Style(underline=True)),
+                         cursor_cell())

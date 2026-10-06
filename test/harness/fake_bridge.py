@@ -22,7 +22,8 @@ of two modes:
   pending and action events are never emitted; the test resolves them by hand
   (``bridge.service_future.set_result(...)``, ``bridge.on_event(...)``).
 - **live** (``FakeBridge.demo()``, or ``live=True``): a small simulated world driven by a
-  ``ManualClock``. Services answer after ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum),
+  ``ManualClock``. Services and node requests (info, parameters, sets) answer after
+  ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum),
   actions are accepted, stream feedback and then succeed (or cancel), and echo subscriptions get
   messages pushed into their ``EchoBuffer`` at each topic's rate. Time only moves when the test
   calls ``bridge.clock.advance(seconds)``, so screenshots are deterministic.
@@ -48,6 +49,7 @@ from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
 from ros_tui.ros.message_yaml import import_type
 from std_msgs.msg import Int32, String
+import yaml
 
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
@@ -319,6 +321,8 @@ class FakeBridge:
         self.node_info_requests = []
         self.param_list_requests = []
         self.set_param_calls = []
+        self.rejected_params: dict[str, str] = {}  # Parameter name -> why setting it fails.
+        self._node_params: dict[str, list[tuple[str, str, Any]]] = {}  # Live: params after sets.
         self._feed_timers: dict[str, _Timer] = {}
         self._goals: dict[str, '_LiveGoal'] = {}
 
@@ -352,15 +356,29 @@ class FakeBridge:
         info = self.node_infos.get(node_name)
         if info is None:
             info = NodeInfo(node_name, (), (), (), (), (), ())
-        on_done(info, None)
+        self._answer_later(lambda: on_done(info, None))
 
     def list_node_parameters(self, node_name, on_done):
         self.param_list_requests.append(node_name)
-        on_done(list(self.params), None)
+        self._answer_later(lambda: on_done(list(self._node_params.get(node_name, self.params)), None))
 
     def set_node_parameter(self, node_name, name, value_yaml, on_done):
+        """Recorded; a name in ``rejected_params`` fails with its reason. Live, a set that succeeds
+        changes what ``list_node_parameters`` answers for that node from then on."""
         self.set_param_calls.append((node_name, name, value_yaml))
-        on_done(None)
+        reason = self.rejected_params.get(name)
+        if reason is None and self.live:
+            value = yaml.safe_load(value_yaml)
+            params = self._node_params.setdefault(node_name, list(self.params))
+            params[:] = [(n, kind, value if n == name else old) for n, kind, old in params]
+        self._answer_later(lambda: on_done(reason))
+
+    def _answer_later(self, answer: Callable[[], Any]) -> None:
+        """Live, a node request answers SERVICE_DELAY_S later (so "loading…" shows); canned, at once."""
+        if self.live:
+            self.clock.call_later(SERVICE_DELAY_S, answer)
+        else:
+            answer()
 
     # ---------------------------------------------------------------- services
 

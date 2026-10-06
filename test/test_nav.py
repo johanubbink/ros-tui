@@ -23,8 +23,8 @@ footer helpers modeName / pathParts / upLabel / downLabel), in its world (harnes
 import pytest
 from harness.fake_bridge import DEMO_GRAPH
 from harness.nav_world import DESIGN_CATALOG, RowsProvider, design_nav, nav_after
-from ros_tui.constants import NAV_TOAST_S
-from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, NavState, short_type
+from ros_tui.constants import NAV_ERRLINE_S, NAV_TOAST_S
+from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, NavState, Tab, short_type
 
 HOME = ('tabs', '☰ list')
 OPEN3 = ['enter', '0', 'j', 'enter', '0', 'j', 'enter']  # /chatter, /counter, /diagnostic_status.
@@ -224,6 +224,19 @@ def test_toast_expires_on_the_clock():
     now[0] += 0.1
     assert nav.tick() and nav.toast is None
     assert not nav.tick()
+
+
+def test_errline_expires_on_the_clock():
+    now = [10.0]
+    nav = rows_nav(INBOX + ['enter', 'c', 'x'])
+    nav.clock = lambda: now[0]
+    nav.handle_key('enter')
+    inbox = Tab('topics', '/inbox')
+    assert nav.errline(inbox) and nav.layer == EDIT
+    now[0] += NAV_ERRLINE_S - 0.1
+    assert not nav.tick() and nav.errline(inbox)
+    now[0] += 0.1
+    assert nav.tick() and nav.errline(inbox) == '' and nav.layer == EDIT
 
 
 @pytest.mark.parametrize('kind, type_name, short', [
@@ -471,7 +484,7 @@ def test_invalid_value_enter_stays_esc_drops():
     nav = rows_nav(INBOX + ['enter', 'c', 'x', 'enter'])
     assert nav.layer == EDIT
     assert last_log(nav) == ('enter', '✗ a needs a number, got "x" — still editing (esc drops it)')
-    assert nav.errlines['topics:/inbox'] == 'a needs a number, got "x"'
+    assert nav.errline(Tab('topics', '/inbox')) == 'a needs a number, got "x"'
     nav.handle_key('escape')
     assert nav.layer == AREA and nav.editing is None
     assert (nav.toast.text, nav.toast.kind) == ('a needs a number, got "x" — kept the old value', 'bad')

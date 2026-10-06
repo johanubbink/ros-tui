@@ -23,6 +23,10 @@ Graph updates feed the ☰ list. A GraphSnapshot has no publisher counts, so on 
 the app asks the bridge for every topic's counts and folds the answers into the list in one go.
 Until a topic's count arrives it counts as unpublished (it would open in Publish, not Echo).
 
+The entries are `entries.entry_router` over the bridge. An entry's bridge answers arrive on the
+bridge's thread; the router's `post` wraps each in a `UiCall` message, so it is applied on the UI
+thread, and the views redraw after it.
+
 The overlays (search, :log, the command suggestions, which-key, the toast) are `Overlay` views on
 the `overlay` layer; each says where it goes and `refresh_views` places it. Search and :log veil
 what is under them by dimming it. The model's clock is the bridge's `now()`; a UI_TICK_PERIOD_S
@@ -38,7 +42,8 @@ from textual.screen import Screen
 from ros_tui.constants import UI_TICK_PERIOD_S
 from ros_tui.ros.graph import GraphSnapshot
 from ros_tui.ui import theme
-from ros_tui.ui.messages import GraphUpdated, PublisherCount
+from ros_tui.ui.entries import entry_router
+from ros_tui.ui.messages import GraphUpdated, PublisherCount, UiCall
 from ros_tui.ui.nav import NavState
 from ros_tui.ui.widgets import (ActivityStrip, CommandSuggestions, EntryBody, EntryTabRow, Footer, HomeList,
                                 LogPopup, SearchPopup, ToastView, TopBar, WhichKeyPopup)
@@ -68,7 +73,7 @@ class NextApp(App, inherit_bindings=False):
     def __init__(self, bridge):
         super().__init__()
         self._bridge = bridge
-        self.nav = NavState(clock=bridge.now)
+        self.nav = NavState(entry_router(bridge, lambda fn: self.post_message(UiCall(fn))), clock=bridge.now)
         self._graph: GraphSnapshot | None = None
         self._publishers: dict[str, int] = {}
         self._publishers_dirty = False
@@ -142,6 +147,12 @@ class NextApp(App, inherit_bindings=False):
     def harness_state(self) -> dict:
         """The nav model's summary (layer, mode, breadcrumb, tabs …) for the screenshot harness."""
         return self.nav.summary()
+
+    def on_ui_call(self, message: UiCall) -> None:
+        """A bridge answer for an entry (posted from the bridge's thread): apply it, then redraw."""
+        message.stop()
+        message.fn()
+        self.refresh_views()
 
     # ---------- the graph ----------
     def on_graph_updated(self, message: GraphUpdated) -> None:

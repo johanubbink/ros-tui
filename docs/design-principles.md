@@ -156,6 +156,9 @@ values in widget code or CSS; add a token instead.
 | `live` | `#4fd8e8` | running: ◉ echoing, the action spinner, "calling…" |
 | `warn` | `#ffd08a` | ❄ FROZEN, "+N new since", canceled, "● changed", stop buttons |
 | `bad` | `#f48771` | errors: errlines, bad toasts, ✗ |
+| `panel-hint` | `#9a9a9a` | the hints after a panel's title |
+| `err-bg` | `#201414` | the errline under a panel |
+| `edit` / `edit-fresh` | `#1c2733` / `#2f4f73` | a value being typed / one the first key replaces (a bool) |
 
 Syntax colours in message rows: field keys `#9cdcfe`, numbers `#b5cea8`,
 strings `#ce9178`, type hints `#5c6f5c`.
@@ -178,15 +181,27 @@ The active tab is underlined in its kind's colour, and the ☰ tab in
 ### Panels: selected vs. inside
 
 An entry's body is made of panels (areas): MESSAGE, LATEST MESSAGE, REQUEST and
-RESPONSE, GOAL and RESULT, INTERFACES and PARAMETERS. The title is in capitals
-and carries hints on the right.
+RESPONSE, GOAL and RESULT, INTERFACES and PARAMETERS. The title is in capitals,
+in `label` bold, and the hints follow it after two spaces in `panel-hint`, with
+keys in `key` bold and parts joined by " · " (`enter edits · space sets`,
+`enter opens it in a tab`). A state can replace the hint, e.g. `● changed ·
+space sets` in `warn`.
 
 - **At rest**: a `tline` border.
 - **Selected** (layer 2, the area under the cursor): a `key` (near-white)
-  border, title on `#262b33`.
+  border, title on `tab-cur` (`#262b33`). No row is highlighted.
 - **Inside** (layers 3 and 4): an `accent-fill` (blue) border, title on
-  `#16283a`. The current row gets a `#22303e` background with a 2-cell blue bar
-  on its left.
+  `panel-in` (`#16283a`). The current row gets a `row-in` (`#22303e`) band
+  with a `▍` in `accent-fill` in its first cell (the design's 2px inset bar).
+- The body scrolls to keep the current row in view. Group headings inside an
+  area (`▾ Publishes`) are lines, not rows: the cursor skips them.
+- An **errline** takes the panel's last body line: ` ✗ ` and the message in
+  `bad` on `err-bg`. It goes away after `NAV_ERRLINE_S` (6 s, as the design's
+  `inl`) or when the value is kept or dropped.
+- A **changed** value that isn't sent yet shows as the new value in `warn`, then
+  `was <old>` in `dim`.
+- A **loading** area says `loading…` in `dim` until the bridge answers, or
+  `✗ could not load it: <error>` in `bad`.
 
 On the ☰ list the same logic applies to rows: the cursor row is `#2b3a4a`, with
 a `key` outline while the list has the keys.
@@ -230,6 +245,11 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
   the design's `rgba(0,0,0,.5)` veil under search and `:log` is `opacity: 50%`
   on everything but the footer (the screen's `-veiled` class).
 - **Text cursor**: a typed value ends in a one-cell block in `text` on `term`.
+- **Edit box**: the design outlines the value being typed in `key`; a terminal
+  can't outline a few cells, so the value is underlined in `bright` on the
+  `edit` background (`edit-fresh` when the first key replaces it), then the
+  text cursor (`base.edit_value`). The background alone was invisible on the
+  `row-in` band.
 
 ### Footer contract
 
@@ -315,6 +335,9 @@ user's bad value. Examples from the prototype to copy the style from:
 | no helper | `no helper for this field — fields with one show [f …]` |
 | unknown command | `unknown command :foo — : then tab lists them` |
 | unknown key | `nothing on "z" here — ? shows the keys` |
+| parameter type error | `use_sim_time needs true or false, got "x"`, `publish_rate needs a number, got "5x"` |
+| kept a parameter change | `publish_rate = 5.0 (not set yet: space sets it, u undoes)` |
+| set result (activity) | `✓ set publish_rate = 5.0`, `✗ set frame_id: <the node's reason>` |
 | an empty state | `nothing yet — what you send shows up here`, `waiting — nobody publishes this yet` |
 | a successful action | `✓ response · sum: 42 (4.0 ms)`, `↻ repeating at 10 Hz`, `■ goal canceled after 2.5 s` |
 
@@ -346,6 +369,30 @@ user's bad value. Examples from the prototype to copy the style from:
     yank, paste, helper) and `undo`. The default has the design's areas, no
     rows and a topic's Echo / Publish mode (`e`); other verbs log "not built
     yet". Entry kinds subclass it.
+  - **The provider router.** `NavState` holds one provider. In the app that is
+    `entries.EntryRouter` (`entry_router(bridge, post)`): it hands each call to
+    the provider of the tab's kind (`entries/node.py`'s `NodeEntry` for nodes),
+    and to the default `EntryProvider` for kinds that aren't built yet; `undo`
+    goes by the kind of the tab that owns the entry. `for_tab(tab)` returns the
+    provider that holds a tab (a plain provider returns itself), so a view can
+    reach its entry kind's own data (`NodeEntry.data(tab)`). An entry kind is
+    plain Python like `nav.py`: no textual, no rclpy.
+  - **Bridge answers.** An entry kind that talks to the bridge subclasses
+    `entries.base.BridgeEntry`, calls the bridge itself and wraps every answer
+    in `self._post(fn)`, which runs `fn` on the UI thread: the app wraps it in
+    a `UiCall` message (`messages.py`) and redraws after it. Without a `post`
+    (unit tests over the canned FakeBridge) `fn` runs straight away. An answer
+    only changes the provider's data and adds activity lines; it never moves
+    the cursor or the layer. Until it is in, the area shows `loading…`.
+    Answers can be stale or arrive mid-edit, so an edit commits to its row by
+    name (`Editing.field`), not by index, and `NavState.row_index` keeps the
+    cursor within the rows there are now.
+  - **Panels.** An entry's renderer (`EntryBody.RENDERERS`, by kind, e.g.
+    `widgets/node_entry.py`) turns the provider's data into one
+    `widgets.panel.Panel` per area: body lines, the line of the current row,
+    the title hint and the errline. `draw_panel` draws it in the state
+    `panel_state(nav, index)` gives (rest, `sel`, `in`); `split` shares the
+    width by `PANEL_WEIGHTS`. Kinds without a renderer get empty panels.
   - `handle_key` asks `keymap.lookup` for an action name and runs it from
     `nav.ACTIONS`, a flat table of one-line calls into `NavState` methods. Keys
     an overlay or insert doesn't use are swallowed; an unused typing key in
@@ -401,7 +448,7 @@ user's bad value. Examples from the prototype to copy the style from:
   bridge's `now()` (`time.monotonic()` in `RosBridge`, the `ManualClock` in
   `FakeBridge`), so every shot is repeatable. The app's `tick()` runs every
   `UI_TICK_PERIOD_S` and lets the model expire what is timed (`NavState.tick()`:
-  the toast so far). It redraws only when `tick()` says something changed. The
+  the toast and errlines). It redraws only when `tick()` says something changed. The
   harness calls it after each `advance()` step. A `NavState` built without a
   clock (the unit tests) has one that stands still, so nothing in the model
   reads the real time. Rates,
@@ -410,15 +457,24 @@ user's bad value. Examples from the prototype to copy the style from:
 - **Every step ships a scenario test with shots** (`test/ui/test_stepNN_*.py`).
   See [agentic-dev.md](agentic-dev.md).
 
-### Checklist: adding an entry kind (target)
+### Checklist: adding an entry kind
+
+`entries/node.py` with `widgets/node_entry.py` is the worked example.
 
 - [ ] Add a glyph and tint to the kind table (and to this page). The glyph must
       not clash with the existing ones, and the tint must be readable on
       `term`.
-- [ ] Add `ros_tui/ui/entries/<kind>.py`. It declares its areas (titles in
-      capitals) and its verbs: primary (space / `^s`), secondary (`s`), repeat
-      (`r` / `R`), history (`[ ]`), and yank / paste with the register type,
-      as an `EntryProvider` subclass.
+- [ ] Add `ros_tui/ui/entries/<kind>.py`: a `BridgeEntry` subclass, pure
+      Python. Its areas are in `nav.AREAS` (titles in capitals, the enter label,
+      `editable`). Implement `row_count`, `start_edit` / `commit_edit` (validate
+      in pure code; the error names the field and quotes the value),
+      `activate_row`, `undo` (an `UndoEntry` owned by `tab.key`), and `verb` for
+      primary (space / `^s`), secondary (`s`), repeat (`r` / `R`), history
+      (`[ ]`) and yank / paste with the register type. Load what it needs in
+      `on_open`, through the bridge and `post`.
+- [ ] Register it in `entries.entry_router`.
+- [ ] Add a renderer to `EntryBody.RENDERERS` that builds one `Panel` per
+      area (and a `PANEL_WEIGHTS` entry if the panels aren't equal).
 - [ ] Give every verb a row in `keymap.py`, in the kind's context, with a
       label.
 - [ ] Give each area an enter label and an esc label for the footer.
@@ -426,6 +482,8 @@ user's bad value. Examples from the prototype to copy the style from:
       included. Add the kind to `DEMO_GRAPH`, the demo servers and the design.
 - [ ] Show its running marker in the tab, the top bar and the Here column, if
       it has one.
+- [ ] Unit-test the provider on its own (`test/test_entries_<kind>.py`, a
+      `NavState` over the router and a canned `FakeBridge`).
 - [ ] Write a scenario test with shots, and add design references to
       `docs/design/reference_shots.json`.
 

@@ -58,6 +58,10 @@ TOKENS = {
     'tab-cur': '#262b33',  # the tab-row cursor, a selected panel's title
     'panel-in': '#16283a',  # the title of the panel you are inside
     'row-in': '#22303e',  # the current row inside a panel
+    'panel-hint': '#9a9a9a',  # the hints in a panel's title bar
+    'err-bg': '#201414',  # an errline under a panel
+    'edit': '#1c2733',  # a value being typed
+    'edit-fresh': '#2f4f73',  # a value the first typed key replaces (a bool)
     'sep': '#444444',  # the breadcrumb's › separators
     'mode-text': '#121212',  # text on a mode badge
     # Overlays: search, which-key, :log, the command suggestions and toasts.

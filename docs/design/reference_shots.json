@@ -98,5 +98,25 @@
     "name": "goal-pose-quat-helper",
     "keys": ["/", "g", "o", "a", "l", "enter", "enter", "j", "j", "f", "tab", "tab", "9", "0"],
     "shows": "/goal_pose in Publish, the Quaternion helper on pose.orientation in 'yaw only (°)' mode with yaw 90, preview {z: 0.707107, w: 0.707107}, HELPER badge"
+  },
+  {
+    "name": "node-open",
+    "keys": ["G", "k", "enter"],
+    "shows": "/ros_tui_demo_servers open: ◆ NODE header with namespace /, INTERFACES selected (white border) with ▾ Publishes / Subscribes / Serves / Action server groups, PARAMETERS at rest with use_sim_time bool false, publish_rate double 10, frame_id string map"
+  },
+  {
+    "name": "node-params-editing",
+    "keys": ["G", "k", "enter", "l", "enter", "j", "enter"],
+    "shows": "inside PARAMETERS (blue border), publish_rate in insert: its value in the edit box with a cursor; footer INSERT tabs › /ros_tui_demo_servers › parameters › editing"
+  },
+  {
+    "name": "node-param-error",
+    "keys": ["G", "k", "enter", "l", "enter", "j", "enter", "backspace", "backspace", "5", "x", "enter"],
+    "shows": "publish_rate is 5x and still in insert: the red errline '✗ publish_rate needs a number, got \"5x\"' at the bottom of PARAMETERS, the same line in the activity strip"
+  },
+  {
+    "name": "node-param-changed",
+    "keys": ["G", "k", "enter", "l", "enter", "j", "enter", "backspace", "backspace", "5", "x", "enter", "backspace", "esc"],
+    "shows": "publish_rate kept as 5: yellow '5 was 10', the PARAMETERS title reads '● changed · space sets', the errline is gone"
   }
 ]

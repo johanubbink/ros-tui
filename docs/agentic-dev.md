@@ -88,6 +88,10 @@ async def test_echo_chatter():
   and `/set_pose`, `/fibonacci`, and the nodes `/ros_tui_demo_servers` and
   `/talker`.
   - Services answer 0.05 s after the call (AddTwoInts returns the real sum).
+  - Node requests (`get_node_info`, `list_node_parameters`, `set_node_parameter`)
+    answer 0.05 s later too, so a node entry shows "loading…" until you advance.
+    A set changes what later lists return. A parameter name in
+    `bridge.rejected_params` (name → reason) fails its set with that reason.
   - Actions are accepted, send a feedback every 0.3 s, then succeed. A cancel
     gives `CANCEL_ACCEPTED`, then a `CANCELED` result.
   - Echo subscriptions get messages at each topic's rate: /chatter 1 Hz,

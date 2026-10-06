@@ -32,7 +32,7 @@ tests), and a clock that stands still otherwise. `tick()` expires what is timed,
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, NamedTuple
 
-from ros_tui.constants import NAV_ACTIVITY_MAX, NAV_LOG_LINES, NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ
+from ros_tui.constants import NAV_ACTIVITY_MAX, NAV_ERRLINE_S, NAV_LOG_LINES, NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ
 from ros_tui.ui import keymap
 from ros_tui.ui.keymap import COMMANDS, MAX_SUGGESTIONS, key_char, key_display, normalize_key
 
@@ -144,6 +144,11 @@ class Toast:
     until: float = 0.0  # Clock time it goes away at.
 
 
+class Errline(NamedTuple):
+    text: str  # A bad value's message, shown under the entry's panel.
+    until: float  # Clock time it goes away at.
+
+
 @dataclass(frozen=True)
 class ActivityLine:
     kind: str  # The entry's kind ('' for none) and name, so :log can jump there.
@@ -171,6 +176,12 @@ class EntryProvider:
 
     def __init__(self):
         self._modes: dict[str, str] = {}
+
+    def for_tab(self, tab: Tab) -> 'EntryProvider':
+        """The provider that holds this tab's entry: itself, unless it routes by kind
+        (entries.EntryRouter). Views use it to reach an entry kind's own data, such as a node's
+        parameters."""
+        return self
 
     def on_open(self, nav: 'NavState', tab: Tab) -> None:
         """A tab was opened or gone to. A topic opens in Echo when someone publishes it."""
@@ -274,7 +285,7 @@ class NavState:
     which_key: str | None = None  # 'all' (the ? popup), 'g' (the prefix popup) or None.
     pending: str = ''  # A typed prefix waiting for its next key ('g').
     undo_stack: list[UndoEntry] = field(default_factory=list)
-    errlines: dict[str, str] = field(default_factory=dict)  # Entry key -> its current error line.
+    errlines: dict[str, Errline] = field(default_factory=dict)  # Entry key -> its current error line.
     log: list[tuple[str, str]] = field(default_factory=list)  # (key, what happened), newest first.
     toast: Toast | None = None
     activity: list[ActivityLine] = field(default_factory=list)  # Newest first.
@@ -336,8 +347,11 @@ class NavState:
         return self.provider.row_count(self.tab, area) if self.tab and area else 0
 
     def row_index(self, area: Area | None = None) -> int:
+        """The current row of the area, kept within its rows (they can change when the bridge answers)."""
         area = area or self.area()
-        return self.row_idx.get((self.tab.key, area.id), 0) if self.tab and area else 0
+        if not self.tab or not area:
+            return 0
+        return _clamp(self.row_idx.get((self.tab.key, area.id), 0), self.row_count(area) - 1)
 
     def set_row(self, index: int, area: Area | None = None) -> None:
         area = area or self.area()
@@ -449,12 +463,20 @@ class NavState:
     def show_toast(self, text: str, kind: str = '') -> None:
         self.toast = Toast(text, kind, self.clock() + NAV_TOAST_S)
 
+    def errline(self, tab: Tab) -> str:
+        line = self.errlines.get(tab.key)
+        return line.text if line else ''
+
     def tick(self) -> bool:
-        """Expire what is timed (the toast). True when something changed, so the views redraw."""
-        if self.toast and self.clock() >= self.toast.until:
+        """Expire what is timed (the toast, errlines). True when something changed, so the views redraw."""
+        now = self.clock()
+        expired = [key for key, line in self.errlines.items() if now >= line.until]
+        for key in expired:
+            del self.errlines[key]
+        if self.toast and now >= self.toast.until:
             self.toast = None
             return True
-        return False
+        return bool(expired)
 
     def add_activity(self, tab: Tab | None, text: str, cls: str = '') -> None:
         self.activity.insert(0, ActivityLine(tab.kind if tab else '', tab.name if tab else '', text, cls))
@@ -651,7 +673,7 @@ class NavState:
             self.editing = None
             return True
         self.log_line(how, f'✗ {message} — still editing (esc drops it)')
-        self.errlines[self.tab.key] = message
+        self.errlines[self.tab.key] = Errline(message, self.clock() + NAV_ERRLINE_S)
         self.add_activity(self.tab, f'✗ {message}', 'r')
         return False
 

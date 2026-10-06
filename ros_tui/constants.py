@@ -52,4 +52,5 @@ PUBLISH_DEFAULT_RATE_HZ = 10.0  # The repeat rate of a topic nobody publishes ye
 NAV_LOG_LINES = 8  # Key log lines kept (the design's "what the keys did" list).
 NAV_ACTIVITY_MAX = 200  # Activity lines kept for :log.
 NAV_TOAST_S = 1.6  # How long a toast shows.
+NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel (the design's inl, 6 s).
 UI_TICK_PERIOD_S = 0.25  # The new UI's clock tick: expires toasts (the design's 250 ms setInterval).
