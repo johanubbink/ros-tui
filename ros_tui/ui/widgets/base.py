@@ -131,6 +131,7 @@ BUTTON_LOOKS = {  # The design's .btn looks -> (text colour, background, its key
     '': ('btn-text', 'btn', 'key'),
     'pri': ('bright', 'accent-fill', 'key'),
     'stop': ('warn', 'stop-bg', 'warn'),
+    'off': ('btn-off', 'btn-off-bg', 'btn-off'),  # Disabled: say why next to it.
 }
 
 
@@ -139,6 +140,6 @@ def button(label: Text | str, key: str, look: str = '') -> Text:
     the label (a Text may style parts of itself) and the key on the look's background."""
     color, bg, key_color = BUTTON_LOOKS[look]
     text = Text.assemble(' ', label, ' ')
-    text.stylize_before(style(color, bg, bold=look != ''))
+    text.stylize_before(style(color, bg, bold=look in ('pri', 'stop')))
     text.append(f'{key} ', style(key_color, bg))
     return text

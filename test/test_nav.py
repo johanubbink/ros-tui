@@ -206,8 +206,8 @@ def test_close_toasts_and_undo_reopens():
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'reopened /counter')
     nav.handle_key('u')
-    assert last_log(nav) == ('u', 'nothing to undo in this tab')
-    assert (nav.toast.text, nav.toast.kind) == ('nothing to undo in this tab', 'info')
+    assert last_log(nav) == ('u', 'nothing to undo here')
+    assert (nav.toast.text, nav.toast.kind) == ('nothing to undo here', 'info')
 
 
 def test_toast_expires_on_the_clock():
@@ -603,17 +603,12 @@ def test_helper_overlay_routes_to_the_provider():
 def test_undo_is_per_tab():
     nav = rows_nav(INBOX + ['enter', 'enter', '5', 'escape', '0', 'G', 'k', 'enter'])  # Edit /inbox, open a node.
     nav.handle_key('u')
-    assert last_log(nav) == ('u', 'nothing to undo in this tab (1 change in another tab is kept)')
+    assert last_log(nav) == ('u', 'nothing to undo here')
     assert nav.provider.values['topics:/inbox|msg'][0] == '15'
     nav.handle_key('1')
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'undid the edit of a on /inbox')
     assert nav.provider.values['topics:/inbox|msg'][0] == '1'
-
-
-def test_undo_counts_changes_kept_elsewhere():
-    nav = rows_nav(INBOX + ['enter', 'enter', '5', 'tab', '5', 'escape', '0', 'k', 'enter', 'u'])
-    assert last_log(nav) == ('u', 'nothing to undo in this tab (2 changes in other tabs are kept)')
 
 
 def test_reopen_is_the_global_exception():
@@ -622,7 +617,7 @@ def test_reopen_is_the_global_exception():
     nav.handle_key('u')  # From /inbox: its own edit is older than the close.
     assert (last_log(nav), nav.tab.name) == (('u', 'reopened /chatter'), '/chatter')
     nav.handle_key('u')
-    assert last_log(nav) == ('u', 'nothing to undo in this tab (1 change in another tab is kept)')
+    assert last_log(nav) == ('u', 'nothing to undo here')
 
 
 # ---------- activity log ----------

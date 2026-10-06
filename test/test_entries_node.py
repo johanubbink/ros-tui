@@ -23,6 +23,7 @@ branches of startEdit / commitEdit / undo and setParams (docs/design/hybrid-keys
 import pytest
 from harness.fake_bridge import DEMO_GRAPH, DEMO_NODE_INFOS, DEMO_PARAMS, SERVICE_DELAY_S, FakeBridge
 from ros_tui.ui.entries import EntryRouter, entry_router
+from ros_tui.ui.entries.action import ActionEntry
 from ros_tui.ui.entries.node import NodeEntry, Param, parse_value, render_value
 from ros_tui.ui.nav import AREA, EDIT, IN, NavState, Tab
 
@@ -193,7 +194,7 @@ def test_undo_only_in_this_tab():
     nav, _ = node_nav(*OPEN_NODE, *TO_RATE, 'c', '5', 'enter', '0', 'g', 'g', 'enter')  # Change it, open /chatter.
     assert nav.tab == Tab('topics', '/chatter')
     press(nav, 'u')
-    assert nav.log[0] == ('u', 'nothing to undo in this tab (1 change in another tab is kept)')
+    assert nav.log[0] == ('u', 'nothing to undo here')
     assert node_data(nav).changes == {'publish_rate': 5.0}
     press(nav, '1', 'u')
     assert node_data(nav).changes == {} and nav.log[0] == ('u', f'undid the change to publish_rate on {NODE}')
@@ -212,13 +213,12 @@ def test_reopening_keeps_changes_that_are_not_set():
     assert node_data(nav).changes == {'publish_rate': 5.0}
 
 
-def test_the_router_keeps_the_default_for_other_kinds():
-    nav, _ = node_nav('/', *'fib', 'enter')  # Actions are built in step 7.
+def test_the_router_hands_each_kind_to_its_entry():
+    nav, _ = node_nav('/', *'fib', 'enter')
     assert isinstance(nav.provider, EntryRouter) and nav.tab.kind == 'actions'
-    assert nav.provider.for_tab(nav.tab) is nav.provider.default
+    assert isinstance(nav.provider.for_tab(nav.tab), ActionEntry)
     assert isinstance(nav.provider.for_tab(NODE_TAB), NodeEntry)
-    press(nav, 'space')
-    assert nav.log[0] == ('space', 'not built yet')
+    assert nav.provider.for_tab(None) is nav.provider.default
 
 
 def test_a_set_change_leaves_nothing_to_undo():
@@ -226,4 +226,4 @@ def test_a_set_change_leaves_nothing_to_undo():
     nav, _ = node_nav(*OPEN_NODE, *TO_RATE, 'c', '5', 'enter', 'c', '6', 'enter', 'space')
     assert node_data(nav).changes == {} and nav.undo_stack == []
     press(nav, 'u')
-    assert nav.log[0] == ('u', 'nothing to undo in this tab')
+    assert nav.log[0] == ('u', 'nothing to undo here')

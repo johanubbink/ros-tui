@@ -158,5 +158,25 @@
     "name": "rate-editing",
     "keys": ["/", "i", "n", "b", "o", "x", "enter", "R", "5"],
     "shows": "R on /inbox: the rate in the Repeat button is an edit box holding 5, 'type a rate · enter keeps · 0.1–100 Hz', no panel highlighted, footer INSERT tabs › /inbox › repeat rate › editing"
+  },
+  {
+    "name": "action-executing",
+    "keys": ["/", "f", "i", "b", "enter", "space", "wait1500"],
+    "shows": "/fibonacci sent with order 12: '▶ Send goal space' disabled, '■ Cancel goal s' in the stop look; RESULT has the cyan EXECUTING pill, 'N s · live feedback' and the growing sequence; the spinner after /fibonacci in the tab and '▷ ◐ /fibonacci' in the top bar"
+  },
+  {
+    "name": "action-blocked",
+    "keys": ["/", "f", "i", "b", "enter", "space", "/", "n", "a", "v", "i", "enter", "space"],
+    "shows": "a goal runs on /fibonacci, so space on /navigate_to_pose sends nothing: Send goal disabled with 'a goal is running on /fibonacci' next to it, Cancel disabled, the errline 'a goal is already running on /fibonacci'"
+  },
+  {
+    "name": "action-canceled",
+    "keys": ["/", "f", "i", "b", "enter", "space", "wait1500", "s"],
+    "shows": "s canceled the goal: RESULT has the yellow CANCELED pill, 'N s · last feedback' and the sequence so far; ACTIVITY '■ goal canceled after N s'; no spinner left"
+  },
+  {
+    "name": "action-succeeded",
+    "keys": ["/", "f", "i", "b", "enter", "enter", "c", "4", "esc", "space", "wait2500"],
+    "shows": "order 4 sent and done: RESULT has the green SUCCEEDED pill, the time and the sequence; ACTIVITY '✓ goal succeeded · N s'"
   }
 ]

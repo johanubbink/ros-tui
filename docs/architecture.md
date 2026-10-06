@@ -186,7 +186,11 @@ described in [`wizards/__init__.py`](../ros_tui/ui/wizards/__init__.py).
 `ctrl+q` exits the app, and `main()` then calls `bridge.shutdown()`. That
 clears the bridge's running flag (so `submit()` refuses new work) and wakes
 the executor. The ROS thread leaves its spin loop and tears down: queued
-commands are cancelled, parked and in-flight requests fail with "ROS bridge
-shut down", and every timer (including periodic publishers), subscription,
-publisher and client is destroyed, then the node and the context.
+commands are cancelled, and parked and in-flight requests fail with "ROS
+bridge shut down". Then every running goal is canceled, as `ros2 action
+send_goal` does on ctrl+c, so nothing keeps acting on the robot after you quit:
+the thread spins for at most `SHUTDOWN_CANCEL_TIMEOUT_S` (1 s) until each
+server answered the cancel (a goal still waiting for acceptance is canceled
+when it is accepted). Then every timer (including periodic publishers),
+subscription, publisher and client is destroyed, then the node and the context.
 `shutdown()` waits up to 3 s for the thread to finish.

@@ -47,6 +47,7 @@ from ros_tui.constants import (
     HOUSEKEEPING_PERIOD_S,
     READY_TIMEOUT_S,
     RESPONSE_TIMEOUT_S,
+    SHUTDOWN_CANCEL_TIMEOUT_S,
 )
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind
@@ -892,6 +893,22 @@ class RosBridge:
 
     # ---------------------------------------------------------------- teardown
 
+    def _cancel_goals(self) -> None:
+        """Cancel the goals still running, as ``ros2 action send_goal`` does on ctrl+c: nothing keeps
+        acting on the robot after the app quits. A goal whose acceptance is still on its way is
+        canceled once it arrives. Spins for at most SHUTDOWN_CANCEL_TIMEOUT_S, until every server
+        answered (queued commands and parked requests are already gone, so only replies run)."""
+        entities = self._entities
+        canceling: dict[str, Any] = {}
+        deadline = time.monotonic() + SHUTDOWN_CANCEL_TIMEOUT_S
+        while self._context.ok() and time.monotonic() < deadline:
+            for name, active in entities.active_goals.items():
+                if name not in canceling:
+                    canceling[name] = active.handle.cancel_goal_async()
+            if entities.inflight_actions <= canceling.keys() and all(f.done() for f in canceling.values()):
+                return
+            self._executor.spin_once(timeout_sec=0.05)
+
     def _teardown(self) -> None:
         while True:
             try:
@@ -909,6 +926,8 @@ class RosBridge:
                 record.outer.set_exception(shutdown_error)
         entities.pending_ready = []
         entities.awaiting_response = []
+        with contextlib.suppress(Exception):
+            self._cancel_goals()
         with contextlib.suppress(Exception):
             for periodic in list(entities.periodic.values()):
                 self._node.destroy_timer(periodic.timer)

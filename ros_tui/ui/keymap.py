@@ -139,8 +139,8 @@ PREDICATES = {
     'echo': lambda nav: nav.entry_mode() == 'echo',
     'publish': lambda nav: nav.entry_mode() == 'publish',
     'helper_here': lambda nav: nav.helper_name() is not None,
-    # An area of field rows (fields.py): a message being edited, a service response or an action result.
-    'fields': lambda nav: _area_id(nav) == 'msg' or (_area_id(nav) == 'out' and _kind(nav) in ('services', 'actions')),
+    # An area of field rows that fold (fields.py): a message being edited or a service response.
+    'fields': lambda nav: _area_id(nav) == 'msg' or (_area_id(nav) == 'out' and _kind(nav) == 'services'),
     'enum_helper': lambda nav: getattr(nav.helper, 'kind', None) == 'enum',
     'rate_edit': lambda nav: _editing_area(nav) == 'rate',
     'field_edit': lambda nav: _editing_area(nav) == 'msg',

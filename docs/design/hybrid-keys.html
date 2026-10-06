@@ -289,7 +289,7 @@ function closeTab(i,how){if(i<0){log(how,'the ☰ list always stays');return}con
 // one exception, since a closed tab has no tab of its own to undo from.
 function undoOwner(u){return u.type==='close'?'*':u.k||(u.type==='rate'?'topics:'+u.n:'nodes:'+u.n)}
 function undo(how){const here=ek();let j=-1;for(let i=S.undo.length-1;i>=0;i--){const o=undoOwner(S.undo[i]);if(o==='*'||o===here){j=i;break}}
- if(j<0){const elsewhere=S.undo.length;log(how,'nothing to undo in this tab'+(elsewhere?(elsewhere>1?' ('+elsewhere+' changes in other tabs are kept)':' (1 change in another tab is kept)'):''));toast('nothing to undo in this tab','info');render();return}
+ if(j<0){log(how,'nothing to undo here');toast('nothing to undo here','info');render();return}
  const u=S.undo.splice(j,1)[0];
  if(u.type==='close'){const c=S.closed.pop(),j=S.open.findIndex(o=>o.ti===c.o.ti&&o.name===c.o.name);if(j>=0)S.active=j;else{S.open.splice(Math.min(c.i,S.open.length),0,c.o);S.active=S.open.indexOf(c.o)}S.layer='in';log(how,'reopened '+c.o.name)}
  else if(u.type==='edit'){editsFor(u.k)[u.i][2]=u.old;log(how,'undid the edit of '+editsFor(u.k)[u.i][0]+' on '+u.k.split(':')[1])}

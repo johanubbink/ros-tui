@@ -31,7 +31,7 @@ shows the edit box instead of its value; a value the last send check rejected is
 from rich.text import Text
 
 from ros_tui.ui.entries.message import EDITOR, MessageData
-from ros_tui.ui.fields import FieldRows, within
+from ros_tui.ui.fields import FieldRows, Row, flat_text, within
 from ros_tui.ui.nav import EDIT, Area, Editing, NavState, Tab
 from ros_tui.ui.widgets.base import edit_value, style
 from ros_tui.ui.widgets.panel import Panel, hint, waiting
@@ -66,6 +66,15 @@ def field_lines(form: FieldRows, editing: Editing | None = None) -> list[Text]:
         line.append(f'{HINT_GAP}# {row.hint}', style('syn-hint'))
         lines.append(line)
     return lines
+
+
+def shown_value(row: Row) -> Text:
+    """A flat row's value as an echo or a result shows it: readable, coloured by type, then a dim
+    enum name."""
+    text = Text(flat_text(row), style(VALUE_COLORS[row.style]))
+    if row.enum_name:
+        text.append(' ' + row.enum_name, style('dim'))
+    return text
 
 
 def editor_panel(nav: NavState, tab: Tab, data: MessageData, area: Area) -> Panel:

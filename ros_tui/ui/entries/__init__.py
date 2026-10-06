@@ -17,14 +17,15 @@
 
 `NavState` holds a single provider. `EntryRouter` is that provider in the app: it hands each call
 to the provider of the tab's kind (`node.NodeEntry` for nodes, `service.ServiceEntry` for services,
-`topic.TopicEntry` for topics) and to the default `EntryProvider` for the kinds that aren't built
-yet. `running` and `tick` go to every provider. Pure Python: no textual, no rclpy. Bridge results reach a provider
-through `post`, which runs a function on the UI thread, and slow imports run through `work`, in a
-worker thread (see `NextApp`).
+`topic.TopicEntry` for topics, `action.ActionEntry` for actions) and to the default `EntryProvider`
+for anything else. `running` and `tick` go to every provider. Pure Python: no textual, no rclpy.
+Bridge results reach a provider through `post`, which runs a function on the UI thread, and slow
+imports run through `work`, in a worker thread (see `NextApp`).
 """
 
 from typing import Any
 
+from ros_tui.ui.entries.action import ActionEntry
 from ros_tui.ui.entries.base import Post, Work
 from ros_tui.ui.entries.node import NodeEntry
 from ros_tui.ui.entries.service import ServiceEntry
@@ -102,4 +103,4 @@ class EntryRouter(EntryProvider):
 def entry_router(bridge: Any, post: Post | None = None, work: Work | None = None) -> EntryRouter:
     """The app's provider: the built entry kinds over `bridge`, the default for the rest."""
     return EntryRouter({'nodes': NodeEntry(bridge, post), 'services': ServiceEntry(bridge, post, work),
-                        'topics': TopicEntry(bridge, post, work)})
+                        'topics': TopicEntry(bridge, post, work), 'actions': ActionEntry(bridge, post, work)})

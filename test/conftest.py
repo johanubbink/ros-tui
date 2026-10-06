@@ -66,6 +66,7 @@ class FixtureServers:
         # use_sim_time (which would freeze this node's timers and break sibling tests).
         self.node.declare_parameter('test_param', 0)
         self.inbox_messages: list[str] = []
+        self.canceled_goals = 0  # Goals the Fibonacci server ended as canceled.
         callback_group = ReentrantCallbackGroup()
         self.action_server = ActionServer(
             self.node,
@@ -102,6 +103,7 @@ class FixtureServers:
         for index in range(1, goal_handle.request.order):
             if goal_handle.is_cancel_requested:
                 goal_handle.canceled()
+                self.canceled_goals += 1
                 return Fibonacci.Result(sequence=sequence)
             sequence.append(sequence[index] + sequence[index - 1])
             goal_handle.publish_feedback(Fibonacci.Feedback(sequence=sequence))

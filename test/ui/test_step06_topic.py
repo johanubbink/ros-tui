@@ -170,6 +170,6 @@ async def test_echo_a_nested_message():
         assert line_with(s, 'header', 'frame_id: map')
         assert line_with(s, 'pose.pose.position', '{x: 1.0806, y: 1.68294, z: 0.0}')  # Readable floats.
         await s.shot('echo-pose', expect='/localisation_pose echoing: one row per field, nested messages opened down to '
-                     'their compact parts: header {stamp: …, frame_id: map}, pose.pose.position {x: 1.0806, …} (floats cut to 6 '
-                     'significant digits), '
+                     'their compact parts: header {stamp: …, frame_id: map}, pose.pose.position {x: 1.0806, …} '
+                     '(floats cut to 6 significant digits), '
                      'pose.pose.orientation {x: …, w: …}, pose.covariance [0.0, …] cut at the panel edge')

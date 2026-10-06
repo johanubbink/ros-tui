@@ -183,7 +183,7 @@ def test_history_skips_the_send_the_editor_already_shows():
 def test_undo_only_in_this_tab():
     nav, _ = service_nav(*EDIT_A, '4', 'escape', '0', 'g', 'g', 'enter')  # Changed a, then opened /chatter.
     press(nav, 'u')
-    assert nav.log[0] == ('u', 'nothing to undo in this tab (1 change in another tab is kept)')
+    assert nav.log[0] == ('u', 'nothing to undo here')
     press(nav, '1', 'u')
     assert fields(data(nav).editor)[0] == ('a', '0') and nav.log[0] == ('u', 'undid the edit of a on /add_two_ints')
 

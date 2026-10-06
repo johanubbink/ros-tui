@@ -28,6 +28,7 @@ row, the hints after the title and an errline. `draw_panel` draws it in one of t
 
 from dataclasses import dataclass, field
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ros_tui.ui.nav import AREA, EDIT, IN, NavState
@@ -47,6 +48,7 @@ class Panel:
     hint: Text = field(default_factory=Text)  # After the title, e.g. "enter edits · space sets".
     cursor: int | None = None  # The line of the current row; None when the area has no rows.
     errline: str = ''  # Shown under the body, after "✗ ".
+    wrap: bool = False  # Wrap long lines (the design's .lwrap) instead of cropping them.
 
 
 def panel_state(nav: NavState, index: int) -> str:
@@ -68,8 +70,13 @@ def draw_panel(panel: Panel, width: int, height: int, state: str = '') -> list[T
         title.append('  ')
         title.append_text(panel.hint)
     room = max(0, height - 3 - (1 if panel.errline else 0))
-    top = max(0, panel.cursor - room + 1) if panel.cursor is not None else 0
-    body = [_row(panel.lines[i] if i < len(panel.lines) else Text(), inner, state == 'in' and i == panel.cursor)
+    lines, owners = panel.lines, list(range(len(panel.lines)))
+    if panel.wrap:
+        pieces = [(piece, index) for index, line in enumerate(panel.lines) for piece in wrapped(line, inner - 1)]
+        lines, owners = [piece for piece, _ in pieces], [index for _, index in pieces]
+    current = [i for i, owner in enumerate(owners) if owner == panel.cursor]
+    top = max(0, current[-1] - room + 1) if current else 0
+    body = [_row(lines[i] if i < len(lines) else Text(), inner, state == 'in' and i in current)
             for i in range(top, top + room)]
     if panel.errline:
         body.append(fit(Text(' ✗ ' + panel.errline, style('bad', 'err-bg')), inner))
@@ -83,6 +90,31 @@ def _row(content: Text, width: int, current: bool) -> Text:
     row.append('▍' if current else ' ', style('accent-fill'))
     row.append_text(content)
     return fit(row, width)
+
+
+def wrapped(line: Text, width: int, indent: int = 2) -> list[Text]:
+    """`line` cut into pieces of at most `width` cells, at a space where there is one; the pieces
+    after the first are indented by `indent`."""
+    pieces = []
+    while line.cell_len > width > indent:
+        fits = _chars_within(line.plain, width)
+        cut = line.plain.rfind(' ', 0, fits + 1)
+        if cut <= indent:
+            cut = fits
+        pieces.append(line[:cut])
+        rest = line[cut + 1:] if line.plain[cut:cut + 1] == ' ' else line[cut:]
+        line = Text(' ' * indent) + rest
+    return pieces + [line]
+
+
+def _chars_within(text: str, width: int) -> int:
+    """How many leading characters of `text` fit in `width` cells (a wide character takes two)."""
+    cells = 0
+    for index, char in enumerate(text):
+        cells += cell_len(char)
+        if cells > width:
+            return index
+    return len(text)
 
 
 def hint(*parts: tuple[str, str] | str, color: str = '') -> Text:

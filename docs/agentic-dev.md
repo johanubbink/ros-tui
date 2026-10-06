@@ -96,7 +96,12 @@ async def test_echo_chatter():
     A set changes what later lists return. A parameter name in
     `bridge.rejected_params` (name → reason) fails its set with that reason.
   - Actions are accepted, send a feedback every 0.3 s, then succeed. A cancel
-    gives `CANCEL_ACCEPTED`, then a `CANCELED` result.
+    gives `CANCEL_ACCEPTED`, then a `CANCELED` result. An action name in
+    `bridge.failing_actions` fails its goals: `'rejected'` (rejected at once),
+    `'aborted'` (an `ABORTED` result halfway through its feedback) or any other
+    text (an `ERROR` event with that text, as when no server answers).
+    `rotate_demo()` adds a second action, `/turtle1/rotate_absolute`, for the
+    single-running-goal rule.
   - Echo subscriptions get messages at each topic's rate: /chatter 1 Hz,
     /counter 50 Hz, /diagnostic_status 1 Hz, /localisation_pose 2 Hz. Topics
     nobody publishes stay silent, but what the UI publishes on a topic (once,

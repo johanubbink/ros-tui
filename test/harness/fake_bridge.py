@@ -24,7 +24,8 @@ of two modes:
 - **live** (``FakeBridge.demo()``, or ``live=True``): a small simulated world driven by a
   ``ManualClock``. Services and node requests (info, parameters, sets) answer after
   ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum; a name in ``failing_services`` fails),
-  actions are accepted, stream feedback and then succeed (or cancel), and echo subscriptions get
+  actions are accepted, stream feedback and then succeed (or cancel, or fail as ``failing_actions``
+  says), and echo subscriptions get
   messages pushed into their ``EchoBuffer`` at each topic's rate. What the UI publishes (once, or
   repeated at its rate) loops back into an echo on the same topic. Time only moves when the test
   calls ``bridge.clock.advance(seconds)``, so screenshots are deterministic.
@@ -51,6 +52,7 @@ from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
 from ros_tui.ros.message_yaml import import_type
 from sensor_msgs.srv import SetCameraInfo
 from std_msgs.msg import Int32, String
+from turtlesim.action import RotateAbsolute
 import yaml
 
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
@@ -251,6 +253,23 @@ def camera_demo() -> 'FakeBridge':
     return bridge
 
 
+# A second action, for the single-running-goal rule: turtlesim's own, with a float goal and feedback.
+# Not in DEMO_GRAPH: the demo servers don't have it.
+ROTATE_ACTION = InterfaceEntry('/turtle1/rotate_absolute', ('turtlesim/action/RotateAbsolute',))
+ROTATE_STEPS = 5
+
+
+def rotate_demo() -> 'FakeBridge':
+    """FakeBridge.demo() plus ROTATE_ACTION, which turns to theta in ROTATE_STEPS feedbacks."""
+    bridge = FakeBridge.demo()
+    bridge.latest_graph = replace(DEMO_GRAPH, actions=DEMO_GRAPH.actions + (ROTATE_ACTION,))
+    bridge.action_scripts = {**bridge.action_scripts, ROTATE_ACTION.name: ActionScript(
+        steps=lambda goal: ROTATE_STEPS,
+        feedback=lambda goal, step: RotateAbsolute.Feedback(remaining=goal.theta * (1 - step / ROTATE_STEPS)),
+        result=lambda goal, done: RotateAbsolute.Result(delta=goal.theta * done / ROTATE_STEPS))}
+    return bridge
+
+
 def completed_future(result=None):
     future = Future()
     future.set_result(result)
@@ -339,6 +358,8 @@ class FakeBridge:
         self.set_param_calls = []
         self.rejected_params: dict[str, str] = {}  # Parameter name -> why setting it fails.
         self.failing_services: dict[str, str] = {}  # Service name -> why calling it fails (a TimeoutError).
+        # Live: action name -> how its goals fail: 'rejected', 'aborted' (halfway), else why sending fails.
+        self.failing_actions: dict[str, str] = {}
         self._node_params: dict[str, list[tuple[str, str, Any]]] = {}  # Live: params after sets.
         self._feed_timers: dict[str, _Timer] = {}
         self._periodic_timers: dict[str, _Timer] = {}  # Live: the repeating publishes.
@@ -429,10 +450,14 @@ class FakeBridge:
         self.sent_goals.append((name, type_name, goal))
         self.on_event = on_event
         if self.live:
-            if name in self._goals:
-                on_event(ActionEvent(name, ActionEventKind.ERROR, payload='goal already in flight'))
+            failure = self.failing_actions.get(name)
+            if name in self._goals or failure not in (None, 'rejected', 'aborted'):
+                on_event(ActionEvent(name, ActionEventKind.ERROR, payload=failure or 'goal already in flight'))
                 return
-            self._goals[name] = _LiveGoal(self, name, type_name, goal, on_event)
+            if failure == 'rejected':
+                on_event(ActionEvent(name, ActionEventKind.REJECTED))
+                return
+            self._goals[name] = _LiveGoal(self, name, type_name, goal, on_event, aborts=failure == 'aborted')
 
     def cancel_goal(self, name):
         self.cancelled.append(name)
@@ -515,9 +540,10 @@ class FakeBridge:
 
 
 class _LiveGoal:
-    """One simulated goal: accepted now, feedback every period, then SUCCEEDED (or CANCELED)."""
+    """One simulated goal: accepted now, feedback every period, then SUCCEEDED (or CANCELED; or
+    ABORTED halfway when it ``aborts``)."""
 
-    def __init__(self, bridge: FakeBridge, name: str, type_name: str, goal: Any, on_event):
+    def __init__(self, bridge: FakeBridge, name: str, type_name: str, goal: Any, on_event, aborts: bool = False):
         self._bridge, self._name, self._goal, self._on_event = bridge, name, goal, on_event
         script = bridge.action_scripts.get(name)
         if script is None:
@@ -526,13 +552,15 @@ class _LiveGoal:
                                   lambda goal, done: action.Result())
         self._script = script
         self._steps = script.steps(goal)
+        self._aborts = aborts
+        self._last = max(1, self._steps // 2) if aborts else self._steps  # Feedbacks before it ends.
         self._done = 0
         on_event(ActionEvent(name, ActionEventKind.ACCEPTED))
         self._timer = bridge.clock.call_every(ACTION_FEEDBACK_PERIOD_S, self._tick)
 
     def _tick(self) -> None:
-        if self._done >= self._steps:
-            self._finish(GoalStatus.STATUS_SUCCEEDED)
+        if self._done >= self._last:
+            self._finish(GoalStatus.STATUS_ABORTED if self._aborts else GoalStatus.STATUS_SUCCEEDED)
             return
         self._done += 1
         feedback = self._script.feedback(self._goal, self._done)

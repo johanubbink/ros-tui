@@ -40,6 +40,7 @@ TABS, IN, AREA, EDIT = LAYERS = ('tabs', 'in', 'area', 'edit')
 KINDS = ('topics', 'services', 'actions', 'nodes')
 CLOSE = 'close'  # UndoEntry kind of a closed tab; NavState undoes it itself.
 ANYWHERE = '*'  # UndoEntry owner that any tab can undo (only a closed tab).
+NOTHING_TO_UNDO = 'nothing to undo here'
 
 
 @dataclass(frozen=True)
@@ -166,8 +167,8 @@ class ActivityLine:
 class Running(NamedTuple):
     """Something an entry has running, as the tab row, the top bar and the Here column show it."""
 
-    glyph: str  # '◉' an echo, '↻' a repeating publish (step 7: the action spinner).
-    label: str  # The Here column's words: 'echoing', '10 Hz'.
+    glyph: str  # '◉' an echo, '↻' a repeating publish, a frame of the '◐◓◑◒' spinner for a goal executing.
+    label: str  # The Here column's words: 'echoing', '10 Hz', 'running'.
     tone: str  # The theme token it is drawn in: 'live' or 'ok'.
 
 
@@ -511,7 +512,8 @@ class NavState:
         return line.text if line else ''
 
     def report_error(self, tab: Tab, message: str) -> None:
-        """A bad value: an errline under the entry's panel and a red activity line."""
+        """A bad value or a blocked send (the design's inl): an errline under the entry's panel and a
+        red activity line."""
         self.errlines[tab.key] = Errline(message, self.clock() + NAV_ERRLINE_S)
         self.add_activity(tab, f'✗ {message}', 'r')
 
@@ -617,17 +619,14 @@ class NavState:
         self.undo_stack.append(entry)
 
     def undo(self, how: str) -> None:
-        """Undo the newest change made in this tab. Reopening a closed tab is the one exception: a
-        closed tab has no tab of its own to undo from, so any tab can reopen it."""
+        """Undo your last change in this entry, or reopen the tab you just closed: a closed tab has
+        no tab of its own to undo from, so any tab can reopen it."""
         here = self.tab.key if self.tab else 'home'
         index = next((i for i in range(len(self.undo_stack) - 1, -1, -1)
                       if self.undo_stack[i].owner in (ANYWHERE, here)), -1)
         if index < 0:
-            kept = len(self.undo_stack)
-            note = '' if not kept else (f' ({kept} changes in other tabs are kept)' if kept > 1
-                                        else ' (1 change in another tab is kept)')
-            self.log_line(how, 'nothing to undo in this tab' + note)
-            self.show_toast('nothing to undo in this tab', 'info')
+            self.log_line(how, NOTHING_TO_UNDO)
+            self.show_toast(NOTHING_TO_UNDO, 'info')
             return
         entry = self.undo_stack.pop(index)
         if entry.kind != CLOSE:

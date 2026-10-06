@@ -71,10 +71,12 @@ TOKENS = {
     # Pills in panel titles (the design's .pill.run / .pill.can; .pill.ok is ok on ok-bg).
     'live-bg': '#0f3a40',
     'warn-bg': '#3a3010',
-    # Buttons (the design's .btn and .btn.stop; .btn.pri is bright on accent-fill).
+    # Buttons (the design's .btn, .btn.stop and .btn[disabled]; .btn.pri is bright on accent-fill).
     'btn': '#1f1f1f',
     'btn-text': '#e6e6e6',
     'stop-bg': '#4a2a12',
+    'btn-off': '#5a5a5a',  # a disabled button's text and key (the design's .btn[disabled])
+    'btn-off-bg': '#181818',
     'sep': '#444444',  # the breadcrumb's › separators
     'mode-text': '#121212',  # text on a mode badge
     # Overlays: search, which-key, :log, the command suggestions and toasts.

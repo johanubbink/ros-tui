@@ -130,15 +130,17 @@ Follow these when adding or changing a key.
      `o` `d` (add / delete a list element)
    - Overlays: `/` `^f` `:` `?` `g`
    - Quitting: `:q`
-6. **Undo is per tab.** `u` undoes only changes made in the current tab: edits,
-   pastes, rate changes, parameter changes and applied helpers. The one
-   exception is reopening a closed tab. If there is nothing to undo here, say
-   so, and mention changes in other tabs that are being kept.
+6. **Undo is per entry.** `u` undoes your last change in this entry (edits,
+   pastes, rate changes, parameter changes and applied helpers), or reopens the
+   tab you just closed: a closed tab has no tab of its own to undo from, so any
+   tab can reopen it. Each entry keeps its own stack, so switching tabs never
+   undoes something elsewhere. With nothing to undo here, `u` says exactly
+   `nothing to undo here` (log and toast), and nothing else.
 
 ## The field-row editor
 
-Every message the user fills in (a service request, a topic's message, and an
-action's goal next) is edited as **field rows**, one row per field, that
+Every message the user fills in (a service request, a topic's message and an
+action's goal) is edited as **field rows**, one row per field, that
 expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
 (`FieldRows`); `widgets/field_rows.py` draws it; `entries/message.py`
 (`MessageEntry`) holds it per entry and does the keys.
@@ -238,7 +240,8 @@ values in widget code or CSS; add a token instead.
 | `err-bg` | `#201414` | the errline under a panel |
 | `edit` / `edit-fresh` | `#1c2733` / `#2f4f73` | a value being typed / one the first key replaces (a bool) |
 | `btn` / `btn-text` | `#1f1f1f` / `#e6e6e6` | a button at rest (the design's `.btn`), e.g. `↻ Repeat at 10 Hz r` |
-| `stop-bg` | `#4a2a12` | a stop button (`■ Stop echo`, `■ Stop repeating`); its text is `warn` |
+| `stop-bg` | `#4a2a12` | a stop button (`■ Stop echo`, `■ Stop repeating`, `■ Cancel goal`); its text is `warn` |
+| `btn-off` / `btn-off-bg` | `#5a5a5a` / `#181818` | a disabled button's text and background (the design's `.btn[disabled]`) |
 
 Syntax colours in message rows (`widgets/field_rows.py`): field keys `syn-key`
 `#9cdcfe`, numbers and bools `syn-num` `#b5cea8`, strings `syn-str` `#ce9178`,
@@ -309,7 +312,13 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
 - **Panels**: rounded box-drawing borders (`╭─╮│╰─╯`) in the panel's state colour
   (`tline`, `key` selected, `accent-fill` inside), a one-line title bar on the
   state's title background, then the body on `term-2`. Side-by-side panels share
-  the width by the design's flex weights (`PANEL_WEIGHTS`).
+  the width by the design's flex weights (`PANEL_WEIGHTS`), except GOAL and
+  RESULT: 3:2 instead of the design's 2:1, so RESULT's title (`EXECUTING 12.3 s
+  · live feedback`) stays whole at 124 columns.
+- **Wrapped lines**: a panel with `wrap` (RESULT, the design's `.lwrap`) wraps a
+  long line at a space, the rest indented by two cells, instead of cropping it.
+  It counts terminal cells (`rich.cells.cell_len`), not characters.
+  The current row's band covers all of its lines.
 - **Overflow markers**: `‹ N more` and `N more ›` in `key` at the edge of the tab
   row that hides tabs. The row scrolls by whole tabs.
 - The design's 1px rules above the activity strip and the footer are left out:
@@ -362,21 +371,28 @@ The command line replaces the footer while it's open: COMMAND, the typed
 
 - **Running**:
   - `◉` (`live`) is a topic being echoed and `↻` (`ok`) a topic repeating.
-  - The `◐◓◑◒` spinner (`live`) is an action executing.
+  - The `◐◓◑◒` spinner (`live`) is an action's goal executing. Its frame comes
+    from the clock (`ACTION_SPINNER_HZ`, 4 frames a second, as the design's
+    `S.t*4`), so every view shows the same frame; the Here column says
+    `◐ running`.
   - Markers show after the name in the tab (`/chatter ◉`), in the top bar's
     running list (`≋ ◉ /chatter  ≋ ↻ /inbox`), in the list's Here column
     (`◉ echoing`, `↻ 10 Hz`, `◐ running`, then `open`) and in search rows
     (before `open tab`).
-  - They show whether the entry's tab is open or not: an echo or a repeat
-    keeps running when you switch or close its tab, as in the design, until
-    space or `s` stops it. A closed tab's echo or repeat stays in the top bar
-    and the Here column, so it is never invisible; reopen the entry to stop it.
-    Quitting stops everything: `bridge.shutdown()` destroys the node, with its
-    subscriptions and repeat timers.
+  - They show whether the entry's tab is open or not: an echo, a repeat or a
+    goal keeps running when you switch or close its tab, as in the design,
+    until space or `s` stops it (or the goal ends). A closed tab's echo, repeat
+    or goal stays in the top bar and the Here column, so it is never invisible;
+    reopen the entry (`u` right after `x`) to stop it.
+    **Quitting stops everything**, so nothing keeps acting on the robot after
+    you quit: `bridge.shutdown()` first cancels a running goal (as `ros2
+    action send_goal` does on ctrl+c, waiting at most
+    `SHUTDOWN_CANCEL_TIMEOUT_S` for the server), then destroys the node with
+    its subscriptions and repeat timers.
   - One hook feeds all of them: an entry kind's `running()` returns its
     `nav.Running(glyph, label, tone)` markers by entry; `NavState.running(kind,
     name)` and `running_all()` read them, and `widgets.base.markers` draws them.
-    A new running thing (step 7's goal spinner) only adds a marker there.
+    A new running thing only adds a marker there, as the goal spinner did.
 - **Echo live vs. frozen**:
   - The LATEST MESSAGE title says `● live · enter freezes it`, or `not echoing ·
     space starts`. Not echoing, every value is `–`.
@@ -393,6 +409,32 @@ The command line replaces the footer while it's open: COMMAND, the typed
   - The echo's row is the button and what it counted: `■ Stop echo space
     3 received · 1.0 Hz`, then `· N dropped` in `warn` when the buffer dropped
     some.
+- **Goals** (the action entry, `entries/action.py`):
+  - **One goal runs at a time, app-wide** (the design's `S.goal`). While any
+    goal is sending or executing, space on any action tab sends nothing: the
+    errline and a red activity line say `a goal is already running on
+    /fibonacci`, plus ` — s cancels it` on that goal's own tab. The Send button
+    looks disabled meanwhile, and on another action's tab `a goal is running on
+    /fibonacci` follows it. `ActionEntry` holds every action tab, so it knows
+    the one that runs (`executing()`).
+  - `■ Cancel goal s` has the stop look while this entry's goal runs and is
+    disabled otherwise. `s` asks the server to cancel (`cancel_goal`); the goal
+    ends when the server sends the CANCELED result. An `s` while the goal is
+    still on its way is kept and sent once the server accepts it. `s` on another action's tab
+    says `nothing running here — the goal runs on /fibonacci`.
+  - RESULT's title: no goal yet, then a pill (below) and the time on the
+    bridge's clock: `EXECUTING 2.4 s · live feedback` (`· canceling…` after
+    `s`), `SUCCEEDED 3.6 s`, `CANCELED 2.4 s · last feedback`, `ABORTED 1.8 s`,
+    `REJECTED`, `FAILED`. The body is the newest feedback while it runs (`waiting
+    for feedback…` before the first), the last feedback after a cancel, else the
+    result, as flat rows like an echo (floats cut for display); a rejection or
+    an error is its errline.
+  - Feedback is live data: the bridge pushes it into the goal's bounded
+    `EchoBuffer` on its thread, and the tick drains it, converting only the
+    newest. The other events (accepted, result, rejected, error) are posted to
+    the UI thread. Elapsed time stops at the end event's clock time. Each goal's
+    events are bound to that goal, and once it ended a late event changes
+    nothing, so a stale event can't touch the next goal.
 - **Repeat rate**: the rate shows in the Repeat button, underlined, with a note
   after it: `matches the publisher` (the rate the echo measured), `your rate`
   (set with `R` or `:rate`) or `default` (`PUBLISH_DEFAULT_RATE_HZ`), then
@@ -403,16 +445,18 @@ The command line replaces the footer while it's open: COMMAND, the typed
   restarts the repeat at the new rate, with the activity line
   `↻ rate now 5 Hz`.
 - **Pills** in panel titles:
-  - `calling…` (running, `live` on `#0f3a40`)
+  - `calling…` / `EXECUTING` / `sending…` (running, `live` on `#0f3a40`)
   - `✓ OK` / `SUCCEEDED` (`ok` on `#173a17`)
   - `CANCELED` (`warn` on `#3a3010`)
+  - `✗ FAILED` (a service call), `ABORTED` / `REJECTED` / `FAILED` (a goal)
+    (`bad` on `bad-bg`)
   - each followed by the timing, e.g. `4.0 ms` or `3.5 s · live feedback`.
 - **Buttons** carry their key (`widgets.base.button(label, key, look)`):
   - `▶ Publish once space` is primary (`pri`: `bright` on `accent-fill`).
   - `■ Stop echo space` is the stop style (`stop`: `warn` on `stop-bg`).
   - `↻ Repeat at 10 Hz r` is a plain button (`btn-text` on `btn`).
-  - Disabled buttons are dim and say why next to them ("a goal is running on
-    /fibonacci").
+  - Disabled buttons (`off`: `btn-off` on `btn-off-bg`) are dim and say why
+    next to them ("a goal is running on /fibonacci").
 - **Flash**: a send outlines its button white for 0.5 s.
 - **Toasts** sit bottom-right in the body, for about 1.6 s, with one short line:
   - ok: green on `#173a17`
@@ -439,7 +483,7 @@ user's bad value. Examples from the prototype to copy the style from:
 
 | Situation | Text |
 |-----------|------|
-| undo with nothing here | `nothing to undo in this tab (1 change in another tab is kept)` |
+| undo with nothing here | `nothing to undo here` |
 | helper can't apply | `fix the highlighted values first` |
 | closed a tab | `closed /chatter · u undoes` |
 | wrong type in the register | `copied a String, this needs a PoseStamped` |
@@ -459,13 +503,14 @@ user's bad value. Examples from the prototype to copy the style from:
 | set result (activity) | `✓ set publish_rate = 5.0`, `✗ set frame_id: <the node's reason>` |
 | an empty state | `nothing yet — what you send shows up here`, `waiting — nobody publishes this yet` |
 | a successful action | `✓ response · sum: 42 (4.0 ms)`, `↻ repeating at 10 Hz`, `■ goal canceled after 2.5 s` |
+| action activity | `▶ goal sent · order: 12`, `✓ goal succeeded · 3.6 s`, `■ goal canceled after 2.4 s`, `✗ goal aborted after 1.8 s`, `✗ goal rejected by the server`, `✗ goal failed: <the bridge's reason>` |
 | topic activity | `◉ echo started`, `■ echo stopped`, `✓ published · data: hello`, `↻ rate now 5 Hz`, `■ repeat stopped after 40 sent` |
 | a running thing asked to start again | `already repeating at 10 Hz — s stops it` |
 
 - Activity lines start with a glyph: `✓` for done, `▶` for sent or called,
   `↻` for repeating, `◉` for an echo started, `■` for stopped or canceled, `✗`
   for failed. Their colour comes from the line's `cls`: `g` green, `r` red,
-  `c` cyan (`live`), `dim`.
+  `c` cyan (`live`), `y` yellow (`warn`, a canceled goal), `dim`.
 - Mention the undo when there is one: "(u undoes)".
 - Use the field's path as the user sees it (`pose.orientation`, `points[1].x`),
   never an internal name.
@@ -502,8 +547,8 @@ user's bad value. Examples from the prototype to copy the style from:
     and other verbs log "not built yet". Entry kinds subclass it.
   - **The provider router.** `NavState` holds one provider. In the app that is
     `entries.EntryRouter` (`entry_router(bridge, post)`): it hands each call to
-    the provider of the tab's kind (`entries/node.py`'s `NodeEntry` for nodes),
-    and to the default `EntryProvider` for kinds that aren't built yet; `undo`
+    the provider of the tab's kind (`NodeEntry`, `ServiceEntry`, `TopicEntry`,
+    `ActionEntry`), and to the default `EntryProvider` for anything else; `undo`
     goes by the kind of the tab that owns the entry. `for_tab(tab)` returns the
     provider that holds a tab (a plain provider returns itself), so a view can
     reach its entry kind's own data (`NodeEntry.data(tab)`). An entry kind is
@@ -534,7 +579,7 @@ user's bad value. Examples from the prototype to copy the style from:
     `widgets.panel.Panel` per area: body lines, the line of the current row,
     the title hint and the errline. `draw_panel` draws it in the state
     `panel_state(nav, index)` gives (rest, `sel`, `in`); `split` shares the
-    width by `PANEL_WEIGHTS`. Kinds without a renderer get empty panels.
+    width by `PANEL_WEIGHTS`. Every kind has a renderer.
   - `handle_key` asks `keymap.lookup` for an action name and runs it from
     `nav.ACTIONS`, a flat table of one-line calls into `NavState` methods. Keys
     an overlay or insert doesn't use are swallowed; an unused typing key in
@@ -611,7 +656,11 @@ user's bad value. Examples from the prototype to copy the style from:
   conversion per tick, and the count, drops and rate still add up. The tick
   asks for a redraw only when the active tab shows something new (its echo's
   count or rate, its repeat's `N sent`): an idle app, or an echo running in
-  another tab, never redraws on the tick.
+  another tab, never redraws on the tick. An action's feedback goes through the
+  same kind of buffer. A running goal is the one exception that redraws on
+  other tabs, because its spinner turns in the top bar: at most
+  `ACTION_SPINNER_HZ` (4) times a second there, and on its own tab when the
+  time (to a tenth of a second) or the feedback changes.
 - **Every step ships a scenario test with shots** (`test/ui/test_stepNN_*.py`).
   See [agentic-dev.md](agentic-dev.md).
 

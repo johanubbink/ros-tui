@@ -224,6 +224,19 @@ def test_bridge_shutdown_stops_periodic_publish(fixture_servers, ros_domain):
     assert len(fixture_servers.inbox_messages) <= settled_count + 1
 
 
+def test_bridge_shutdown_cancels_a_running_goal(fixture_servers, ros_domain):
+    own_bridge = RosBridge(node_name='ros_tui_shutdown_goal_test')
+    own_bridge.start()
+    events = []
+    own_bridge.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=200), events.append)
+    assert wait_for(lambda: ActionEventKind.FEEDBACK in event_kinds(events), timeout=10.0)
+    canceled_before = fixture_servers.canceled_goals
+    started = time.monotonic()
+    own_bridge.shutdown()
+    assert time.monotonic() - started < 3.0
+    assert wait_for(lambda: fixture_servers.canceled_goals == canceled_before + 1, timeout=5.0)
+
+
 def test_subscribe_receives_chatter(bridge, fixture_servers):
     buffer = EchoBuffer()
     bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=2.0)

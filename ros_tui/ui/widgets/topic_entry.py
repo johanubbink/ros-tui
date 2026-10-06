@@ -26,10 +26,9 @@ from rich.style import Style
 from rich.text import Text
 
 from ros_tui.ui.entries.topic import ECHO, RATE, TopicData, TopicEntry, rate_text
-from ros_tui.ui.fields import flat_text
 from ros_tui.ui.nav import EDIT, Area, NavState, Tab
 from ros_tui.ui.widgets.base import button, edit_value, keyed, spread, style
-from ros_tui.ui.widgets.field_rows import VALUE_COLORS, editor_panel
+from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, hint, pill, waiting
 
 KEY_WIDTH = 18  # The field column of LATEST MESSAGE, at least (the design's padEnd(18)).
@@ -110,9 +109,7 @@ def latest_panel(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData, ar
             line.append('waiting — nobody publishes this yet' if nobody else 'waiting for the first message…',
                         style('dim'))
         else:
-            line.append(flat_text(row), style(VALUE_COLORS[row.style]))
-            if row.enum_name:
-                line.append(' ' + row.enum_name, style('dim'))
+            line.append_text(shown_value(row))
         panel.lines.append(line)
     panel.cursor = nav.row_index(area) if rows else None
     return panel

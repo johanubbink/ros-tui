@@ -20,6 +20,7 @@ GRAPH_POLL_PERIOD_S = 1.0
 HOUSEKEEPING_PERIOD_S = 0.25
 READY_TIMEOUT_S = 5.0  # Action-server discovery (5 sub-entities) can exceed 2 s under load.
 RESPONSE_TIMEOUT_S = 30.0
+SHUTDOWN_CANCEL_TIMEOUT_S = 1.0  # On quit, how long the bridge waits for servers to accept canceling running goals.
 CLIENT_CACHE_SIZE = 8
 DEFAULT_QOS_DEPTH = 10
 
@@ -56,4 +57,5 @@ NAV_TOAST_S = 1.6  # How long a toast shows.
 NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel (the design's inl, 6 s).
 SEND_HISTORY_MAX = 20  # Sends kept per entry for [ and ] (the design's hist, 20).
 SUMMARY_MAX_CHARS = 60  # A message summarised in an activity line ('a: 19, b: 23') is cut here.
+ACTION_SPINNER_HZ = 4.0  # Frames per second of the ◐◓◑◒ spinner of an executing goal (the design's S.t*4).
 UI_TICK_PERIOD_S = 0.1  # The new UI's clock tick: drains the echoes (as ECHO_RENDER_PERIOD_S) and expires toasts.
