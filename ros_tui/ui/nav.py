@@ -41,7 +41,7 @@ from ros_tui.ui.helpers import Helper
 from ros_tui.ui.keymap import COMMANDS, MAX_SUGGESTIONS, key_char, key_display, normalize_key
 from ros_tui.ui.register import Register
 
-TABS, IN, AREA, EDIT = LAYERS = ('tabs', 'in', 'area', 'edit')
+TABS, IN, AREA, EDIT = ('tabs', 'in', 'area', 'edit')
 KINDS = ('topics', 'services', 'actions', 'nodes')
 CLOSE = 'close'  # UndoEntry kind of a closed tab; NavState undoes it itself.
 ANYWHERE = '*'  # UndoEntry owner that any tab can undo (only a closed tab).
@@ -187,15 +187,11 @@ class Footer(NamedTuple):
 
 
 class EntryProvider:
-    """What an entry holds and does. NavState asks; later steps subclass this per entry kind.
+    """What an entry holds and does. NavState asks; each entry kind subclasses it (ros_tui/ui/entries/).
 
-    The default gives every entry the design's areas, no rows and no verbs, and switches a topic
-    between Echo and Publish. Hooks that take `nav` may change it (log, toast, push undo, open a
-    tab); the others only answer.
+    The default gives every entry the design's areas, no rows, no modes and no verbs. Hooks that
+    take `nav` may change it (log, toast, push undo, open a tab); the others only answer.
     """
-
-    def __init__(self):
-        self._modes: dict[str, str] = {}
 
     def for_tab(self, tab: Tab) -> 'EntryProvider':
         """The provider that holds this tab's entry: itself, unless it routes by kind
@@ -204,14 +200,11 @@ class EntryProvider:
         return self
 
     def on_open(self, nav: 'NavState', tab: Tab) -> None:
-        """A tab was opened or gone to. A topic opens in Echo when someone publishes it."""
-        if tab.kind == 'topics' and tab.name not in self._modes:
-            item = nav.item(tab)
-            self._modes[tab.name] = 'echo' if item and item.publishers > 0 else 'publish'
+        """A tab was opened or gone to."""
 
     def mode(self, tab: Tab) -> str | None:
-        """A topic's 'echo' or 'publish'; None for the other kinds."""
-        return self._modes.get(tab.name) if tab.kind == 'topics' else None
+        """The entry's mode, when its kind has them (a topic's 'echo' or 'publish')."""
+        return None
 
     def screen(self, tab: Tab) -> str:
         """The key the area pick is remembered under, and that AREAS is indexed by."""
@@ -269,7 +262,8 @@ class EntryProvider:
         helper_apply, helper_key, history_older, history_newer, yank, paste, and on field rows fold,
         unfold, add_item, delete_item. True if handled."""
         if name == 'toggle_mode':
-            return self._toggle_mode(nav, tab, how, arg)
+            nav.log_line(how, 'only topics have Echo / Publish')
+            return True
         if name == 'helper':
             nav.show_toast('no helper for this field — fields with one show [f …]', 'bad')
             nav.log_line(how, 'no helper on this field')
@@ -284,17 +278,6 @@ class EntryProvider:
     def undo(self, nav: 'NavState', entry: UndoEntry) -> str:
         """Undo a change this provider pushed; returns the log line."""
         return 'undid it'
-
-    def _toggle_mode(self, nav, tab, how, to):
-        if tab is None or tab.kind != 'topics':
-            nav.log_line(how, 'only topics have Echo / Publish')
-            return True
-        if nav.layer == EDIT:
-            nav.commit_edit(how)
-        self._modes[tab.name] = to or ('publish' if self._modes.get(tab.name) == 'echo' else 'echo')
-        nav.layer = IN
-        nav.log_line(how, f'now in {self._modes[tab.name]}')
-        return True
 
 
 class Press(NamedTuple):
@@ -793,7 +776,7 @@ class NavState:
             self.log_line(how, 'open an entry first')
             return
         if not self.provider.verb(self, self.tab, name, how, arg):
-            self.log_line(how, 'not built yet')
+            self.log_line(how, 'nothing to do here')
 
     def primary(self, how: str) -> None:
         """space / ^s: the entry's one sending verb. In insert it keeps the value first."""

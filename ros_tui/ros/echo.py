@@ -28,7 +28,7 @@ _RATE_STALE_S = 2.0
 class EchoBuffer:
     """push() on the ROS thread, drain() on the UI thread; overflow drops oldest.
 
-    ``clock`` times the arrivals for the rate (the bridge's ``now()`` in the new UI, so a fake
+    ``clock`` times the arrivals for the rate (the entries pass the bridge's ``now()``, so a fake
     clock gives repeatable rates)."""
 
     def __init__(self, maxlen: int = ECHO_BUFFER_MAXLEN, hz_window: int = ECHO_HZ_WINDOW,

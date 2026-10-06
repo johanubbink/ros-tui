@@ -16,9 +16,9 @@
 """Drive the app headless and take named screenshots for agents to compare with the design.
 
     async with ui_session() as s:                 # FakeBridge.demo(), 124x34 terminal
-        await s.keys('c', 'h', 'a', 't', 'enter')
+        await s.keys('enter', 'space')            # open /chatter, start the echo
         await s.advance(2.0)                      # simulated seconds (the bridge's ManualClock)
-        await s.shot('echo-live', expect='/chatter echoing, chatter 1 and chatter 2 visible')
+        await s.shot('echo-live', expect="/chatter echoing, data 'chatter 2'")
 
 Every ``shot()`` records the screen text and a state summary in ``s.shots``. With
 ``ROS_TUI_SHOTS=1`` it also writes, into ``test/artifacts/<test id>/``:
@@ -26,8 +26,8 @@ Every ``shot()`` records the screen text and a state summary in ``s.shots``. Wit
 - ``NN-name.svg``: textual's own screenshot (``App.export_screenshot``),
 - ``NN-name.png``: the SVG rendered by ``rsvg-convert`` (skipped, with a warning, if missing),
 - ``NN-name.txt``: the screen as plain text,
-- ``NN-name.json``: the state (screen, focus, active tab, toasts, plus whatever the app's optional
-  ``harness_state()`` hook returns), the keys pressed so far and the ``expect`` text,
+- ``NN-name.json``: the state (screen, focus, plus the nav model's
+  ``NavState.summary()``), the keys pressed so far and the ``expect`` text,
 - a section in ``manifest.md`` with the keys and the ``expect`` text.
 
 See docs/agentic-dev.md.
@@ -46,9 +46,8 @@ from typing import Any, Callable
 
 from harness.fake_bridge import FakeBridge
 from rich.console import Console
-from ros_tui.constants import ECHO_RENDER_PERIOD_S
+from ros_tui.constants import UI_TICK_PERIOD_S
 from ros_tui.ui.app import RosTuiApp
-from textual.widgets import TabbedContent
 
 ARTIFACTS_ROOT = Path(__file__).resolve().parents[1] / 'artifacts'
 SHOTS_ENV = 'ROS_TUI_SHOTS'
@@ -115,7 +114,7 @@ class UiSession:
         await self.idle()
         return bool(predicate())
 
-    async def advance(self, seconds: float, step: float = ECHO_RENDER_PERIOD_S) -> None:
+    async def advance(self, seconds: float, step: float = UI_TICK_PERIOD_S) -> None:
         """Advance the fake bridge's clock by ``seconds`` in ``step``s, letting the UI keep up.
 
         After each step the UI gets (real) time to drain what the step pushed into echo buffers,
@@ -130,17 +129,15 @@ class UiSession:
             clock.advance(delta)
             remaining -= delta
             await self._settle()
-        # Action feedback and similar buffers drain on the UI's own 10 Hz timer.
-        await self.pilot.pause(ECHO_RENDER_PERIOD_S * 1.5)
+        # Let the app's own real-time tick run once too.
+        await self.pilot.pause(UI_TICK_PERIOD_S * 1.5)
         await self.idle()
         self.steps.append(f'+{seconds:g}s')
 
     async def _settle(self) -> None:
-        # An app with a clock tick (NextApp.tick) gets one per step, so what it times (toasts)
-        # follows the simulated clock rather than the real one.
-        tick = getattr(self.app, 'tick', None)
-        if callable(tick):
-            tick()
+        # The app's clock tick runs once per step, so what it times (echo drains, toasts) follows
+        # the simulated clock rather than the real one.
+        self.app.tick()
         await self.idle()
         pending = getattr(self.bridge, 'pending_echo', lambda: 0)
         waited = 0.0
@@ -156,26 +153,17 @@ class UiSession:
         return self._render_console().export_text(clear=False)
 
     def state(self) -> dict[str, Any]:
-        """A JSON-able summary of where the UI is; the app may add to it via ``harness_state()``."""
+        """A JSON-able summary of where the UI is, with the nav model's own (``NavState.summary()``)."""
         app = self.app
         focused = app.focused
-        tabbed = list(app.screen_stack[0].query(TabbedContent))
         state = {
             'screen': type(app.screen).__name__,
             'screen_stack': [type(screen).__name__ for screen in app.screen_stack],
             'focused': None if focused is None else {
                 'id': focused.id, 'class': type(focused).__name__,
             },
-            'active_tab': tabbed[0].active if tabbed else None,
-            # textual has no public accessor for live notifications (the toast rack lags a frame).
-            'toasts': [
-                {'message': str(note.message), 'severity': note.severity}
-                for note in getattr(app, '_notifications', ())
-            ],
         }
-        hook: Callable[[], dict] | None = getattr(app, 'harness_state', None)
-        if callable(hook):
-            state.update(hook())
+        state.update(app.nav.summary())
         return state
 
     async def shot(self, name: str, expect: str = '') -> dict[str, Any]:
@@ -259,16 +247,14 @@ def write_png(svg: str, path: Path) -> bool:
 async def ui_session(
     size: tuple[int, int] = DEFAULT_SIZE,
     bridge=None,
-    app_factory: Callable[[Any], Any] | None = None,
     test_id: str | None = None,
 ):
     """Run the app headless over ``bridge`` (default ``FakeBridge.demo()``) and yield a UiSession.
 
-    ``app_factory(bridge)`` builds the app (default ``RosTuiApp``); ``test_id`` names the artifact
-    folder (default: the running pytest test's node id).
+    ``test_id`` names the artifact folder (default: the running pytest test's node id).
     """
     bridge = FakeBridge.demo() if bridge is None else bridge
-    app = (app_factory or RosTuiApp)(bridge)
+    app = RosTuiApp(bridge)
     async with app.run_test(size=size) as pilot:
         session = UiSession(app, pilot, bridge, test_id or current_test_id())
         await session.idle()

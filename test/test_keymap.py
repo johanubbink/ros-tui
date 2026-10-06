@@ -15,7 +15,6 @@
 
 """The keymap table (ros_tui/ui/keymap.py) against the design's keyList(), and its contract with nav.py."""
 
-import json
 import re
 import subprocess
 import sys
@@ -211,12 +210,13 @@ def test_pure_python():
     assert out.stdout.strip() == '[]'
 
 
-def test_export_script(tmp_path):
-    target = tmp_path / 'keymap.json'
-    subprocess.run([sys.executable, str(REPO / 'scripts' / 'export_keymap.py'), str(target)], check=True)
-    data = json.loads(target.read_text(encoding='utf-8'))
-    assert len(data['bindings']) == len(KEYMAP)
-    assert {'name': 'q', 'text': 'quit'} in data['commands']
-    out = subprocess.run([sys.executable, str(REPO / 'scripts' / 'export_keymap.py')],
-                         capture_output=True, text=True, check=True)
-    assert json.loads(out.stdout) == data
+def test_the_key_tables_in_usage_md_match_the_keymap():
+    """docs/usage.md lists every listed row of KEYMAP, mode by mode, in the table's order."""
+    doc = (REPO / 'docs' / 'usage.md').read_text(encoding='utf-8').split('## Every key', 1)[1]
+    cells = [[cell.strip().strip('`') for cell in line.strip('|').split('|')]
+             for line in doc.splitlines() if line.startswith('| `')]
+    names = {'rate': 'N', 'helper': 'matching', 'jump': '0–9'}  # How the labels' {vars} read in the doc.
+    modes = ('normal', 'g', 'insert', 'search', 'command', 'activity', 'helper')
+    assert [(keys, label, alias) for keys, label, alias, _ in cells] == [
+        (b.show.format(**names), b.label.format(**names), b.alias)
+        for mode in modes for b in KEYMAP if b.mode == mode and b.show]

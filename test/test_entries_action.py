@@ -22,7 +22,7 @@ Expectations follow the design's actions branches of send(), secondary() and ren
 """
 
 import pytest
-from harness.fake_bridge import DEMO_GRAPH, ROTATE_ACTION, FakeBridge, rotate_demo
+from harness.fake_bridge import ROTATE_ACTION, FakeBridge, rotate_demo
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ui.entries import entry_router
 from ros_tui.ui.entries.action import CANCELED, EXECUTING, FAILED, REJECTED, SENDING, SUCCEEDED, spinner
@@ -124,7 +124,7 @@ def test_s_cancels_and_keeps_the_last_feedback():
 
 
 def test_s_before_the_goal_is_accepted_cancels_it_once_it_is():
-    bridge = FakeBridge(DEMO_GRAPH)  # Canned: the goal's events come by hand.
+    bridge = FakeBridge()  # Canned: the goal's events come by hand.
     nav, _ = action_nav(*OPEN_FIB, 'space', 's', bridge=bridge)
     assert goal(nav).state == SENDING and bridge.cancelled == []
     assert nav.log[0] == ('s', 'canceling the goal once the server accepts it')

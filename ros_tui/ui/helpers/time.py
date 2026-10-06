@@ -16,13 +16,10 @@
 """Conversions between a builtin_interfaces/Time value (``{'sec', 'nanosec'}``) and the ways the
 Time and Header helpers let you type one.
 
-None of them reads the wall clock (callers pass ``time.time()`` in), so they stay deterministic.
+None of them reads the wall clock, so they stay deterministic.
 """
 
-from datetime import datetime
 from typing import Any
-
-WALLCLOCK_FORMAT = '%Y-%m-%d %H:%M:%S'  # Local time.
 
 
 def seconds_str_to_stamp(text: str) -> dict[str, int]:
@@ -41,22 +38,6 @@ def seconds_str_to_stamp(text: str) -> dict[str, int]:
         raise ValueError('not a number')
     nanosec = int((frac + '000000000')[:9]) if frac else 0
     return {'sec': int(whole), 'nanosec': nanosec}
-
-
-def epoch_to_stamp(epoch: float) -> dict[str, int]:
-    """Convert a POSIX epoch (float seconds) into ``{'sec', 'nanosec'}``, clamped at zero."""
-    epoch = max(epoch, 0.0)
-    sec = int(epoch)
-    nanosec = int(round((epoch - sec) * 1_000_000_000))
-    if nanosec >= 1_000_000_000:  # rounding can carry into the next second.
-        sec += 1
-        nanosec -= 1_000_000_000
-    return {'sec': sec, 'nanosec': nanosec}
-
-
-def parse_wallclock(text: str) -> float:
-    """Parse a local ``YYYY-MM-DD HH:MM:SS`` string into a POSIX epoch (float seconds)."""
-    return datetime.strptime(text.strip(), WALLCLOCK_FORMAT).timestamp()
 
 
 def stamp_to_seconds_str(stamp: dict[str, int]) -> str:

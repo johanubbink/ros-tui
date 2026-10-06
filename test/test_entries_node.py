@@ -21,7 +21,7 @@ branches of startEdit / commitEdit / undo and setParams (docs/design/hybrid-keys
 """
 
 import pytest
-from harness.fake_bridge import DEMO_GRAPH, DEMO_NODE_INFOS, DEMO_PARAMS, SERVICE_DELAY_S, FakeBridge
+from harness.fake_bridge import DEMO_GRAPH, DEMO_PARAMS, SERVICE_DELAY_S, FakeBridge
 from ros_tui.ui.entries import EntryRouter, entry_router
 from ros_tui.ui.entries.action import ActionEntry
 from ros_tui.ui.entries.node import NodeEntry, Param, parse_value, render_value
@@ -34,7 +34,7 @@ TO_RATE = ['l', 'enter', 'j']  # PARAMETERS, inside, the publish_rate row.
 
 
 def node_nav(*keys, bridge=None):
-    bridge = bridge or FakeBridge(DEMO_GRAPH, node_infos=DEMO_NODE_INFOS, params=DEMO_PARAMS)
+    bridge = bridge or FakeBridge()
     nav = NavState(entry_router(bridge))
     nav.set_catalog(DEMO_GRAPH, {'/chatter': 1})
     press(nav, *keys)
@@ -106,6 +106,29 @@ def test_loading_until_the_bridge_answers():
     assert data.groups is None and data.params is None and nav.row_count() == 0
     bridge.clock.advance(SERVICE_DELAY_S)
     assert data.groups and data.params
+
+
+class UnreachableNode(FakeBridge):
+    """A node that is gone: its interfaces and parameters both fail to load."""
+
+    def get_node_info(self, node_name, on_done):
+        on_done(None, 'node vanished')
+
+    def list_node_parameters(self, node_name, on_done):
+        on_done(None, 'no parameter services')
+
+
+def test_a_node_that_does_not_answer_says_why():
+    nav, _ = node_nav(*OPEN_NODE, bridge=UnreachableNode())
+    data = node_data(nav)
+    assert (data.info_error, data.params_error) == ('node vanished', 'no parameter services')
+    assert data.groups is None and data.params is None and nav.row_count() == 0
+
+
+def test_space_with_nothing_changed_sets_nothing():
+    nav, bridge = node_nav(*OPEN_NODE, 'space')
+    assert bridge.set_param_calls == []
+    assert nav.toast.text == 'change a value first (enter edits it)'
 
 
 def test_a_reload_keeps_the_cursor_and_the_edit_on_their_parameter():

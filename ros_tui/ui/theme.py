@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The colours of the new UI, in one place: the design's :root tokens and its KC kind table.
+"""The colours of the UI, in one place: the design's :root tokens and its KC kind table.
 
 Widgets that build Rich text use `TOKENS`, `KINDS` and `MODES` directly; textual CSS gets the same
 values as `$rt-<token>` variables (`css_variables`, merged in by the app). Don't put hex values in
@@ -30,7 +30,6 @@ TOKENS = {
     'tline': '#333333',  # panel border at rest
     'text': '#dcdcdc',  # terminal text
     'muted': '#7d8794',
-    'faint': '#4d5662',
     'accent': '#3a96dd',  # entry names in headers
     'accent-fill': '#0178d4',  # primary buttons, the inside-an-area border, the ☰ tab underline
     'key': '#eceff4',  # key caps, the selected-panel border, the tab-row cursor

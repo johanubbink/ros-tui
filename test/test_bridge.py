@@ -318,7 +318,7 @@ def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
     assert INBOX_TOPIC in names(info.subscribers)
     assert ADD_TWO_INTS_SERVICE in names(info.service_servers)
     assert FIBONACCI_ACTION in names(info.action_servers)
-    # The fixture node's own parameter services are hidden, like the Services tab does.
+    # The fixture node's own parameter services are hidden, as the ☰ list hides them.
     assert not any(name.endswith('/get_parameters') for name in names(info.service_servers))
     # No hidden action-internal endpoints leak into the topic/service lists.
     leaked = names(info.publishers) | names(info.subscribers) | names(info.service_servers)

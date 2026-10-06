@@ -18,9 +18,9 @@
 ``FakeBridge`` implements the bridge contract the UI uses and records every call. It runs in one
 of two modes:
 
-- **canned** (the default, ``FakeBridge()``): nothing happens on its own. Service futures stay
-  pending and action events are never emitted; the test resolves them by hand
-  (``bridge.service_future.set_result(...)``, ``bridge.on_event(...)``).
+- **canned** (the default, ``FakeBridge()``, over ``DEMO_GRAPH``): nothing happens on its own.
+  Node requests answer at once, service futures stay pending and action events are never emitted;
+  a test sends them by hand (``bridge.on_event(...)``).
 - **live** (``FakeBridge.demo()``, or ``live=True``): a small simulated world driven by a
   ``ManualClock``. Services and node requests (info, parameters, sets) answer after
   ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum; a name in ``failing_services`` fails),
@@ -59,35 +59,6 @@ SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
 STAMP_EPOCH_S = 1728036000  # Stamps of simulated messages count from here (as the design does).
 TIME_OF_DAY_S = 9 * 3600 + 41 * 60  # The fake clock's 0.0 is 09:41:00, so activity times are repeatable.
-
-# ---------------------------------------------------------------- the canned world (old tests)
-
-FIBONACCI_ENTRY = InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibonacci',))
-ADD_TWO_INTS_ENTRY = InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',))
-CHATTER_ENTRY = InterfaceEntry('/chatter', ('std_msgs/msg/String',))
-POSE_ENTRY = InterfaceEntry('/pose', ('geometry_msgs/msg/PoseStamped',))
-DIAG_ENTRY = InterfaceEntry('/diag', ('diagnostic_msgs/msg/DiagnosticStatus',))
-TALKER_NODE = InterfaceEntry('/talker', ('/',))  # nodes store their namespace in types[0].
-
-SNAPSHOT = GraphSnapshot(
-    version=1,
-    actions=(FIBONACCI_ENTRY,),
-    services=(ADD_TWO_INTS_ENTRY, InterfaceEntry('/set_bool', ('std_srvs/srv/SetBool',))),
-    topics=(CHATTER_ENTRY, POSE_ENTRY, DIAG_ENTRY),
-    nodes=(TALKER_NODE,),
-)
-
-# Canned introspection for /talker; entries match SNAPSHOT so jumps can highlight the target.
-NODE_INFO = NodeInfo(
-    node_name='/talker',
-    publishers=(CHATTER_ENTRY,),
-    subscribers=(POSE_ENTRY,),
-    service_servers=(ADD_TWO_INTS_ENTRY,),
-    service_clients=(),
-    action_servers=(FIBONACCI_ENTRY,),
-    action_clients=(),
-)
-NODE_PARAMS = [('use_sim_time', 'bool', False), ('rate', 'double', 10.0)]
 
 # ---------------------------------------------------------------- the demo world
 
@@ -325,7 +296,7 @@ class FakeBridge:
 
     def __init__(
         self,
-        snapshot: GraphSnapshot = SNAPSHOT,
+        snapshot: GraphSnapshot = DEMO_GRAPH,
         *,
         live: bool = False,
         clock: ManualClock | None = None,
@@ -338,14 +309,13 @@ class FakeBridge:
         self.latest_graph = snapshot
         self.live = live
         self.clock = clock or ManualClock()
-        self.node_infos = {'/talker': NODE_INFO} if node_infos is None else node_infos
-        self.params = NODE_PARAMS if params is None else params
+        self.node_infos = DEMO_NODE_INFOS if node_infos is None else node_infos
+        self.params = DEMO_PARAMS if params is None else params
         self.feeds = feeds or {}
         self.responders = responders or {}
         self.action_scripts = action_scripts or {}
         self.listener = None
         self.service_calls = []
-        self.service_future = None
         self.sent_goals = []
         self.on_event = None
         self.cancelled = []
@@ -371,11 +341,8 @@ class FakeBridge:
     def demo(cls, clock: ManualClock | None = None) -> 'FakeBridge':
         """A live bridge over ``DEMO_GRAPH``: the same world as the demo servers and the design."""
         return cls(
-            DEMO_GRAPH,
             live=True,
             clock=clock,
-            node_infos=DEMO_NODE_INFOS,
-            params=DEMO_PARAMS,
             feeds=DEMO_FEEDS,
             responders=DEMO_RESPONDERS,
             action_scripts=DEMO_ACTION_SCRIPTS,
@@ -430,7 +397,6 @@ class FakeBridge:
     def call_service(self, name, type_name, request, time_setters=()):
         self.service_calls.append((name, type_name, request))
         future = Future()
-        self.service_future = future
         if self.live:
             self.clock.call_later(SERVICE_DELAY_S, lambda: self._answer(future, name, type_name, request))
         return future
@@ -494,9 +460,6 @@ class FakeBridge:
         self.periodic_stopped.append(name)
         self._stop_periodic(name)
         return completed_future()
-
-    def periodic_topics(self):
-        return tuple(self._periodic_timers)
 
     def _stop_periodic(self, name):
         timer = self._periodic_timers.pop(name, None)

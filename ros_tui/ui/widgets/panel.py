@@ -34,6 +34,7 @@ from rich.text import Text
 from ros_tui.ui.nav import AREA, EDIT, IN, NavState
 from ros_tui.ui.widgets.base import fit, style
 
+PANEL_TOP = 2  # Lines above a panel's body: the border and the title bar.
 PANEL_LOOKS = {  # panel state -> (border colour, title background)
     '': ('tline', 'term-3'),
     'sel': ('key', 'tab-cur'),
@@ -69,19 +70,33 @@ def draw_panel(panel: Panel, width: int, height: int, state: str = '') -> list[T
     if panel.hint:
         title.append('  ')
         title.append_text(panel.hint)
-    room = max(0, height - 3 - (1 if panel.errline else 0))
-    lines, owners = panel.lines, list(range(len(panel.lines)))
-    if panel.wrap:
-        pieces = [(piece, index) for index, line in enumerate(panel.lines) for piece in wrapped(line, inner - 1)]
-        lines, owners = [piece for piece, _ in pieces], [index for _, index in pieces]
-    current = [i for i, owner in enumerate(owners) if owner == panel.cursor]
-    top = max(0, current[-1] - room + 1) if current else 0
+    lines, current, top, room = _scrolled(panel, inner, height)
     body = [_row(lines[i] if i < len(lines) else Text(), inner, state == 'in' and i in current)
             for i in range(top, top + room)]
     if panel.errline:
         body.append(fit(Text(' ✗ ' + panel.errline, style('bad', 'err-bg')), inner))
     framed = [Text.assemble(('│', edge), line, ('│', edge)) for line in [fit(title, inner)] + body]
     return [Text('╭' + '─' * inner + '╮', edge)] + framed + [Text('╰' + '─' * inner + '╯', edge)]
+
+
+def cursor_line(panel: Panel, width: int, height: int) -> int | None:
+    """The line of `draw_panel(panel, width, height)` that the current row ends on (the line under
+    it is where a popup for the row goes), or None when the panel has no current row."""
+    _, current, top, _ = _scrolled(panel, max(0, width - 2), height)
+    return PANEL_TOP + current[-1] - top if current else None
+
+
+def _scrolled(panel: Panel, inner: int, height: int) -> tuple[list[Text], list[int], int, int]:
+    """The body lines (wrapped if the panel wraps), the indices of the current row's lines, the first
+    line shown (scrolled to keep the current row in view) and how many lines are shown."""
+    room = max(0, height - PANEL_TOP - 1 - (1 if panel.errline else 0))
+    lines, owners = panel.lines, list(range(len(panel.lines)))
+    if panel.wrap:
+        pieces = [(piece, index) for index, line in enumerate(panel.lines) for piece in wrapped(line, inner - 1)]
+        lines, owners = [piece for piece, _ in pieces], [index for _, index in pieces]
+    current = [i for i, owner in enumerate(owners) if owner == panel.cursor]
+    top = max(0, current[-1] - room + 1) if current else 0
+    return lines, current, top, room
 
 
 def _row(content: Text, width: int, current: bool) -> Text:

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 5: the field-row editor and the service entry over the live demo world.
+"""The field-row editor and the service entry over the live demo world.
 
 /add_two_ints: editing the request (insert, tab to the next field), calling it ("calling…", then
 "✓ OK" with sum: 42 and the time on the bridge's clock), a bad value with its errline, and [ ] through
@@ -26,7 +26,6 @@ service-called, service-error, service-history (docs/design/reference_shots.json
 import pytest
 from harness.fake_bridge import SERVICE_DELAY_S, FakeBridge, camera_demo
 from harness.screens import ui_session
-from ros_tui.ui.next_app import NextApp
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
@@ -48,7 +47,7 @@ def where(s) -> tuple:
 
 
 async def test_service_entry():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('slash', *'add', 'enter')
         assert where(s) == ('in', 'normal', ['tabs', ADD], 'msg', 0)
         for expected in ('⇄ SERVICE', 'example_interfaces/srv/AddTwoInts', '▶ Call space', '[ ] earlier requests',
@@ -129,7 +128,7 @@ async def test_service_entry():
 async def test_failed_call():
     bridge = FakeBridge.demo()
     bridge.failing_services[ADD] = f'service {ADD} not available'
-    async with ui_session(app_factory=NextApp, bridge=bridge) as s:
+    async with ui_session(bridge=bridge) as s:
         await s.keys('slash', *'add', 'enter', 'space')
         await s.advance(SERVICE_DELAY_S * 2)
         assert line_with(s, 'RESPONSE', '✗ FAILED', '50.0 ms')
@@ -140,7 +139,7 @@ async def test_failed_call():
 
 
 async def test_nested_request():
-    async with ui_session(app_factory=NextApp, bridge=camera_demo()) as s:
+    async with ui_session(bridge=camera_demo()) as s:
         await s.keys('slash', *'camera', 'enter')
         for expected in ('▾ camera_info', 'header: auto', 'height: 0', "distortion_model: ''", '▸ d [0 items]',
                          '▸ k [9 items]', '▸ roi {…}'):

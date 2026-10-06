@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The one table of keys. Dispatch (nav.py), the footer, `?`, the `g…` popup and the tutorial read it.
+"""The one table of keys. Dispatch (nav.py), the footer, `?`, the `g…` popup and docs/usage.md read it.
 
 Pure Python: no textual, no rclpy. Each `Binding` is one row of the design's "Keys right now" list
 (`keyList()` in docs/design/hybrid-keys.html), with the keys it dispatches. Rows with an empty `show`
@@ -94,7 +94,7 @@ def key_display(key: str) -> str:
 @dataclass(frozen=True)
 class Binding:
     mode: str  # One of MODES.
-    group: str  # Heading in `?` and the tutorial.
+    group: str  # Heading in `?` and docs/usage.md.
     show: str  # The key as the design prints it; '' keeps the row out of the lists.
     label: str  # What it does, in the design's words; may hold {rate} or {helper} (and `show` {jump}).
     alias: str = ''  # The familiar alternative, listed as "also …".
@@ -314,16 +314,3 @@ def keys_now(nav) -> list[KeyRow]:
 def which_key_items(nav) -> list[KeyRow]:
     """The `?` popup lists keys_now(); the `g` popup lists what can follow the prefix."""
     return rows_for(nav, 'g') if nav.which_key == 'g' else keys_now(nav)
-
-
-def export() -> dict:
-    """The whole table as plain data, for scripts/export_keymap.py and the tutorial."""
-    return {
-        'modes': list(MODES),
-        'bindings': [{
-            'mode': b.mode, 'group': b.group, 'show': b.show, 'label': b.label, 'alias': b.alias,
-            'when': list(b.when), 'shown': list(b.shown),
-            'run': [{'keys': list(keys), 'action': action} for keys, action in b.run],
-        } for b in KEYMAP],
-        'commands': [{'name': name, 'text': text} for name, text in COMMANDS],
-    }

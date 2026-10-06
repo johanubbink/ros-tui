@@ -26,24 +26,16 @@ DEFAULT_QOS_DEPTH = 10
 
 # Type introspection.
 TYPE_CACHE_SIZE = 256
-MAX_CONSTANTS_IN_COMMENT = 16
 
 # Display truncation.
 TRUNCATE_ARRAY_ELEMENTS = 16
 TRUNCATE_STRING_CHARS = 256
-TRUNCATE_RENDER_LINES = 60
 
-# UI rendering.
+# Echo and feedback buffers.
 ECHO_BUFFER_MAXLEN = 200
 ECHO_HZ_WINDOW = 64
-ECHO_RENDER_PERIOD_S = 0.1
-ECHO_MAX_RENDER_PER_TICK = 3
 ECHO_DISPLAY_DIGITS = 6  # Significant digits of an echoed float on screen (the value keeps them all).
 FEEDBACK_BUFFER_MAXLEN = 200
-FEEDBACK_MAX_RENDER_PER_TICK = 3
-OUTPUT_LOG_MAX_LINES = 1000
-FILTER_DEBOUNCE_S = 0.15
-EDITOR_PARSE_DEBOUNCE_S = 0.3
 
 # Topic publishing.
 PUBLISH_RATE_MIN_HZ = 0.1
@@ -60,4 +52,4 @@ NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel (the design's inl
 SEND_HISTORY_MAX = 20  # Sends kept per entry for [ and ] (the design's hist, 20).
 SUMMARY_MAX_CHARS = 60  # A message summarised in an activity line ('a: 19, b: 23') is cut here.
 ACTION_SPINNER_HZ = 4.0  # Frames per second of the ◐◓◑◒ spinner of an executing goal (the design's S.t*4).
-UI_TICK_PERIOD_S = 0.1  # The new UI's clock tick: drains the echoes (as ECHO_RENDER_PERIOD_S) and expires toasts.
+UI_TICK_PERIOD_S = 0.1  # The UI's clock tick: drains the echoes and expires toasts.

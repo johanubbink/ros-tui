@@ -22,7 +22,9 @@ Expectations follow the design's services branches of send(), hist() and renderE
 
 from dataclasses import replace
 
-from harness.fake_bridge import CAMERA_INFO_SERVICE, SERVICE_DELAY_S, FakeBridge, camera_demo
+import pytest
+from harness.fake_bridge import CAMERA_INFO_SERVICE, DEMO_GRAPH, SERVICE_DELAY_S, FakeBridge, camera_demo
+from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ui.entries import entry_router
 from ros_tui.ui.fields import FieldRows
 from ros_tui.ui.nav import AREA, EDIT, IN, NavState, Tab
@@ -32,6 +34,7 @@ POSE = Tab('services', '/set_pose')
 CAMERA = Tab('services', CAMERA_INFO_SERVICE.name)
 OPEN_ADD = ['/', *'add', 'enter']
 EDIT_A = OPEN_ADD + ['enter', 'enter']  # Into REQUEST, then edit a.
+MYSTERY = InterfaceEntry('/mystery', ())  # The graph knows no type for it.
 
 
 def service_nav(*keys, bridge=None, work=None):
@@ -79,6 +82,17 @@ def test_a_type_that_does_not_load_says_why():
     press(nav, *OPEN_ADD, 'space')
     assert data(nav).editor is None and 'nope_msgs/srv/Nope' in data(nav).error
     assert nav.toast.text.startswith('could not load nope_msgs/srv/Nope') and bridge.service_calls == []
+
+
+@pytest.mark.parametrize('kind', ['topics', 'services', 'actions'])
+def test_an_entry_without_a_type_says_so(kind):
+    """Any message entry (topic, service, action) opens without a type, and sends nothing."""
+    bridge = FakeBridge.demo()
+    bridge.latest_graph = replace(DEMO_GRAPH, **{kind: getattr(DEMO_GRAPH, kind) + (MYSTERY,)})
+    nav, _ = service_nav('/', *'myst', 'enter', 'space', bridge=bridge)
+    assert nav.tab == Tab(kind, MYSTERY.name)
+    assert nav.toast.text == 'no type information for this entry'
+    assert bridge.service_calls == bridge.sent_goals == bridge.published == []
 
 
 def test_edit_then_tab_to_the_next_field():

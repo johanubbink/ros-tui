@@ -32,10 +32,10 @@ from rich.text import Text
 
 from ros_tui.ui.helpers import Helper
 from ros_tui.ui.widgets.base import Overlay, band, cursor_bar, cursor_cell, fit, rule, style
+from ros_tui.ui.widgets.entry_body import row_line
 
 MIN_WIDTH = 72  # The design's 560 px popup; wider when its key hint needs it.
 LEFT = 5  # Cells from the body's left edge (the design's left: 44px, past the row numbers).
-FIRST_ROW = 4  # Body lines above an entry panel's first row: the header, the toolbar, the border, the title.
 VALUE_WIDTH = 8  # A field's value, at least (the design's min-width: 64px).
 
 
@@ -51,9 +51,9 @@ class HelperPopup(Overlay):
         natural = max(line.cell_len for line in self.body(helper, 0))
         w = min(max(MIN_WIDTH, natural + 4), width - LEFT)  # Border and padding: 4 cells across, 2 down.
         h = min(len(self.body(helper, w - 4)) + 2, height)
-        room = height - FIRST_ROW - 1 - (1 if self.nav.tab and self.nav.errline(self.nav.tab) else 0)
-        row = self.nav.row_index()
-        line = FIRST_ROW + row - max(0, row - room + 1)  # Where the row is drawn (its panel scrolls).
+        line = row_line(self.nav, width, height)  # The entry body fills the parent.
+        if line is None:
+            return None
         y = line + 1 if line + 1 + h <= height else max(0, line - h)
         return LEFT, y, w, h
 

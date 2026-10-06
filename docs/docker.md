@@ -23,20 +23,20 @@ ros2 run ros_tui ros_tui         # inside the container
 
 The demo node ([`launch/demo.launch.py`](../launch/demo.launch.py) →
 [`ros_tui/demo/demo_servers.py`](../ros_tui/demo/demo_servers.py)) gives every
-tab something to do:
+kind something to do. Open each with `/` and its name, then `enter`:
 
-| Tab      | Entity                   | Try                                                         |
-| -------- | ------------------------ | ----------------------------------------------------------- |
-| Actions  | `/fibonacci`             | Send `order: 8`; watch the feedback stream, then **Cancel**. |
-| Services | `/add_two_ints`          | Call with `a: 19`, `b: 23` → `sum: 42`.                     |
-| Services | `/set_pose`              | Call a `turtlesim/TeleportAbsolute`; the demo node logs the pose. |
-| Topics   | `/chatter` (~1 Hz)       | Subscribe and **Echo** a calm `std_msgs/String` stream.     |
-| Topics   | `/counter` (~50 Hz)      | **Echo** it to watch the Hz and drop counters move.         |
-| Topics   | `/localisation_pose`     | A nested message: pick fields to echo, or publish one with the Quaternion helper. |
-| Topics   | `/inbox`                 | **Publish** `data: hello`; the demo node logs it.           |
-| Topics   | `/goal_pose`             | **Publish** a `PoseStamped` with the Header and Quaternion helpers; the demo node logs it. |
-| Topics   | `/diagnostic_status`     | **Publish**: put the cursor on `level` and press `ctrl+w` to pick OK/WARN/ERROR/STALE. |
-| Nodes    | `/ros_tui_demo_servers`  | Browse its interfaces (jump to one); view or **Set** a parameter. |
+| Kind    | Entry                    | Try                                                         |
+| ------- | ------------------------ | ----------------------------------------------------------- |
+| action  | `/fibonacci`             | `enter enter`, type `8`, `esc`, space sends the goal; watch the feedback, then `s` cancels it. |
+| service | `/add_two_ints`          | `enter enter 19 tab 23 esc`, then space → `sum: 42`.        |
+| service | `/set_pose`              | Call a `turtlesim/TeleportAbsolute`; the demo node logs the pose. |
+| topic   | `/chatter` (~1 Hz)       | Opens in Echo: space echoes a calm `std_msgs/String` stream; `enter` freezes it. |
+| topic   | `/counter` (~50 Hz)      | Echo it to watch the count, the Hz and the drops move.      |
+| topic   | `/localisation_pose`     | A nested message: echo it, or `e` to publish one with the Quaternion helper (`f`). |
+| topic   | `/inbox`                 | Opens in Publish: type `hello` into `data`, space publishes it; the demo node logs it. |
+| topic   | `/goal_pose`             | Publish a `PoseStamped` with the Header and Quaternion helpers; the demo node logs it. |
+| topic   | `/diagnostic_status`     | `e` for Publish, then `f` on `level` picks OK / WARN / ERROR / STALE. |
+| node    | `/ros_tui_demo_servers`  | Browse its interfaces (`enter` opens one); change `publish_rate` and set it with space (only the demo parameter changes; nothing reads it). |
 
 ## With turtlesim
 
@@ -55,13 +55,13 @@ xhost -local:
 
 This runs the demo servers **and** turtlesim, so you also get:
 
-| Tab      | Entity                     | Try                                                           |
-| -------- | -------------------------- | ------------------------------------------------------------- |
-| Actions  | `/turtle1/rotate_absolute` | Send `theta: 1.57`; the turtle turns.                         |
-| Services | `/spawn`                   | `x: 5.0`, `y: 5.0`, `name: t2` → a second turtle appears.     |
-| Services | `/clear`                   | Wipes the trail.                                              |
-| Topics   | `/turtle1/cmd_vel`         | **Start rate** with `linear: {x: 1.0}` → it drives.           |
-| Topics   | `/turtle1/pose`            | **Echo** to watch x, y and theta change.                      |
+| Kind    | Entry                      | Try                                                           |
+| ------- | -------------------------- | ------------------------------------------------------------- |
+| action  | `/turtle1/rotate_absolute` | Send `theta: 1.57`; the turtle turns.                         |
+| service | `/spawn`                   | `x: 5.0`, `y: 5.0`, `name: t2` → a second turtle appears.     |
+| service | `/clear`                   | Wipes the trail.                                              |
+| topic   | `/turtle1/cmd_vel`         | Set `linear` to `{x: 1.0}`, then `r` repeats it → it drives; `s` stops it. |
+| topic   | `/turtle1/pose`            | Echo it to watch x, y and theta change.                       |
 
 The plain `docker compose up` stays headless and needs none of this.
 

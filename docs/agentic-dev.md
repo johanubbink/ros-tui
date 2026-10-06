@@ -1,13 +1,14 @@
 # Agentic development
 
-The "Hybrid Keys" redesign is built in steps, each by two agents: an
+The "Hybrid Keys" redesign was built in steps, each by two agents: an
 implementation agent and a verification agent. They work from screenshots,
 because a UI change is only done when it *looks* like the design. This page
-covers the tools they share and the protocol between them. A human can use the
-same tools.
+covers the tools they share and the protocol between them; both still apply to
+any later UI change. A human can use the same tools. How each step was verified
+is recorded in [`verification/`](../verification/).
 
 - The design: [`docs/design/hybrid-keys.html`](design/hybrid-keys.html), a JS
-  simulation of the target UI. Open it in a browser and use the keyboard.
+  simulation of the UI. Open it in a browser and use the keyboard.
 - The rules: [`docs/design-principles.md`](design-principles.md). Read it before
   a step; the verification agent keeps it up to date.
 
@@ -18,7 +19,7 @@ same tools.
 ```bash
 scripts/agent_check.sh                       # flake8 + the whole suite, shots on
 scripts/agent_check.sh -m shots              # flake8 + only the screenshot scenarios
-scripts/agent_check.sh test/ui/test_step00_harness.py -q
+scripts/agent_check.sh test/ui/test_harness.py -q
 ROS_TUI_SHOTS=0 scripts/agent_check.sh       # no artifacts
 ```
 
@@ -36,7 +37,7 @@ SVG, TXT and JSON, with a warning.
 
 ### Writing a scenario
 
-Scenario tests live in `test/ui/test_stepNN_<what>.py` and are marked
+Scenario tests live in `test/ui/test_<what>.py` and are marked
 `ui` and `shots`:
 
 ```python
@@ -47,24 +48,23 @@ pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
 async def test_echo_chatter():
     async with ui_session() as s:                    # FakeBridge.demo(), 124x34
-        await s.type_text('chat')
-        await s.keys('enter', 's', 'ctrl+s')         # textual key names
+        await s.keys('slash', *'chat', 'enter')      # textual key names
+        await s.keys('space')                        # start the echo
         await s.advance(3.0)                         # simulated seconds
-        assert 'chatter 3' in s.text()
-        await s.shot('echo-live', expect='the echo log shows chatter 1, 2 and 3')
+        assert "'chatter 3'" in s.text()
+        await s.shot('echo-live', expect="LATEST MESSAGE shows data 'chatter 3', 3 received · 1.0 Hz")
 ```
 
-- `ui_session(size=(124, 34), bridge=None, app_factory=None, test_id=None)` runs
-  the app headless under Pilot. The default bridge is `FakeBridge.demo()` and the
-  default app is `RosTuiApp`; `app_factory(bridge)` swaps the app in (e.g. the new
-  one while it is built next to the old).
+- `ui_session(size=(124, 34), bridge=None, test_id=None)` runs `RosTuiApp`
+  headless under Pilot. The default bridge is `FakeBridge.demo()`; the
+  end-to-end tests pass the real `RosBridge`.
 - `s.keys(*keys)` presses keys one at a time and lets the app go idle after each
   one, including its workers.
 - `s.type_text('abc')` types characters.
 - `s.advance(seconds)` moves the fake bridge's clock forward in 0.1 s steps.
   After each step the UI drains what was pushed, so a 1 Hz topic shows every
   message. Nothing in the fake world happens until you advance it.
-  An app with a `tick()` (the new UI) gets one per step, so toasts expire on
+  The app's `tick()` runs once per step, so echoes drain and toasts expire on
   the simulated clock too.
 - `s.wait_until(predicate)` polls in real time, for the UI's own timers (e.g. the
   filter debounce).
@@ -81,8 +81,9 @@ async def test_echo_chatter():
 [`test/harness/fake_bridge.py`](../test/harness/fake_bridge.py) has
 `FakeBridge`: the bridge contract without rclpy. It records every call.
 
-- `FakeBridge()` is **canned**: nothing happens on its own. `test_ui_pilot.py`
-  uses it and resolves futures and action events by hand.
+- `FakeBridge()` is **canned**, over the same world: nothing happens on its
+  own. Node requests answer at once, and a test sends action events by hand
+  (`bridge.on_event(...)`). Some entry unit tests use it.
 - `FakeBridge.demo()` is **live** over `DEMO_GRAPH`, the same world as
   `ros_tui/demo/demo_servers.py` and the design. It has six topics, `/add_two_ints`
   and `/set_pose`, `/fibonacci`, and the nodes `/ros_tui_demo_servers` and
@@ -112,15 +113,12 @@ async def test_echo_chatter():
     and advances always give the same screen.
     `time_of_day()` is 09:41:00 plus the clock, so activity lines read `09:41:03`.
 
-Some numbers on screen still come from the real clock in the old UI, such as
-the echo Hz and a service's "response in … ms", so they differ between runs.
-Don't assert on them. The new UI reads time from the bridge's clock instead (see
-the code principles in design-principles.md): a demo service call there always
-takes `50.0 ms`.
+The UI reads time from the bridge's clock (see the code principles in
+design-principles.md), so every number on screen is repeatable: a demo service
+call always takes `50.0 ms`, and activity lines start at `09:41:00`.
 
-The app can add to the JSON state by defining `harness_state()` returning a dict.
-The new UI uses this for its `NavState` (layer, mode, breadcrumb, open tabs,
-register).
+The JSON state includes `NavState.summary()` (layer, mode, breadcrumb, open
+tabs, register).
 
 ### Artifacts
 
@@ -129,10 +127,10 @@ as the `ui-screenshots` build artifact on pull requests.
 
 ```
 test/artifacts/
-  ui__test_step00_harness__test_echo_chatter/     # one folder per test (its node id)
+  ui__test_topic__test_echo_chatter/              # one folder per test (its node id)
     manifest.md                                   # per shot: keys since the last shot, all keys, expect
-    01-start.png  01-start.svg  01-start.txt  01-start.json
-    02-mode-popup.png …
+    01-chatter-open.png  01-chatter-open.svg  01-chatter-open.txt  01-chatter-open.json
+    02-echo-live.png …
   design/                                         # from scripts/design_shots.py
     manifest.md
     home.png  echo-frozen.png …
@@ -143,8 +141,8 @@ test/artifacts/
 - `.svg` is textual's own screenshot.
 - `.txt` is the screen as plain text. Use it to check exact strings.
 - `.json` holds `name`, `expect`, `keys_since_last_shot`, `keys` and `state`.
-  `state` has the screen, the screen stack, the focused widget, the active tab,
-  toasts, and whatever `harness_state()` adds.
+  `state` has the screen, the screen stack, the focused widget (always none)
+  and the `NavState` summary.
 
 A test's folder is wiped when the test starts, so it always shows the latest
 run.
@@ -176,7 +174,7 @@ Input: the step's row from the plan, the design and the line ranges in it to
 mirror, `docs/design-principles.md` and this page.
 
 1. Implement the step.
-2. Write `test/ui/test_stepNN_<what>.py` with named `shot(…, expect=…)`s for every
+2. Write or extend `test/ui/test_<what>.py` with named `shot(…, expect=…)`s for every
    state the step's criteria mention. Assert on `s.text()` and `s.state()` too,
    so the test fails even when nobody looks at the pictures.
 3. Add the step's design references to `reference_shots.json`.
@@ -208,8 +206,7 @@ implementation agent. It has three jobs.
    - Re-run `scripts/agent_check.sh` to prove nothing changed: the same tests
      green and the same shots.
 3. **Principles.** Check the step against `docs/design-principles.md`. Add any
-   new rule or pattern the step introduced, and turn "target" sections into
-   current ones once they are built.
+   new rule or pattern the step introduced.
 
 It writes its verdict to `verification/stepNN.md`:
 

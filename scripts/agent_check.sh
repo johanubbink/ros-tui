@@ -18,7 +18,7 @@
 #
 #   scripts/agent_check.sh                          # lint + the whole suite
 #   scripts/agent_check.sh -m shots                 # lint + only the screenshot scenarios
-#   scripts/agent_check.sh test/ui/test_step00_harness.py -q
+#   scripts/agent_check.sh test/ui/test_harness.py -q
 #   ROS_TUI_SHOTS=0 scripts/agent_check.sh          # same, but write no artifacts
 #
 # Shots land in test/artifacts/<test id>/ on the host (the repo is bind-mounted); the paths of the

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 4: the panels (areas) and the node entry over the live demo world.
+"""The panels (areas) and the node entry over the live demo world.
 
 /ros_tui_demo_servers: picking an area (selected) vs. being inside it, editing a parameter in
 insert mode, a bad value with its errline, a kept change ("5.0 was 10.0"), setting it with space,
@@ -25,7 +25,6 @@ import pytest
 from harness.fake_bridge import SERVICE_DELAY_S
 from harness.screens import ui_session
 from ros_tui.constants import NAV_TOAST_S
-from ros_tui.ui.next_app import NextApp
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
@@ -47,7 +46,7 @@ def where(s) -> tuple:
 
 
 async def test_node_entry():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('G', 'k', 'enter')  # The last two rows of the ☰ list are the nodes.
         assert s.state()['tabs'] == [NODE]
         assert s.text().count('loading…') == 2
@@ -151,7 +150,7 @@ async def test_node_entry():
 
 
 async def test_failed_set_stays_changed():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         s.bridge.rejected_params['frame_id'] = 'frame_id is read-only'
         await s.keys('G', 'k', 'enter')
         await s.advance(SERVICE_DELAY_S * 2)

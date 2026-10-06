@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The widgets of the new UI. Each draws part of a `NavState` and decides nothing (see base.py)."""
+"""The widgets. Each draws part of a `NavState` and decides nothing (see base.py)."""
 
 from ros_tui.ui.widgets.activity_strip import ActivityStrip
 from ros_tui.ui.widgets.command_suggestions import CommandSuggestions

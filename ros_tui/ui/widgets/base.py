@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What every widget of the new UI shares: `NavView` (render the NavState as lines) and text helpers."""
+"""What every widget shares: `NavView` (render the NavState as lines) and text helpers."""
 
 from rich.style import Style
 from rich.text import Text
@@ -27,7 +27,7 @@ BODY_TOP = 3  # Screen rows above the body: the top bar and the two-line tab row
 
 class NavView(Widget):
     """A widget that draws part of a NavState. It never takes focus and has no bindings: the app
-    hands every key to the NavState and then refreshes the views (NextApp.refresh_views)."""
+    hands every key to the NavState and then refreshes the views (RosTuiApp.refresh_views)."""
 
     can_focus = False
 
@@ -48,7 +48,7 @@ class NavView(Widget):
 
 class Overlay(NavView):
     """A NavView drawn on top of the others: on the `overlay` layer, placed absolutely in its
-    parent. After each key the app asks `place` where it goes (NextApp.refresh_views)."""
+    parent. After each key the app asks `place` where it goes (RosTuiApp.refresh_views)."""
 
     DEFAULT_CSS = """
     Overlay { layer: overlay; position: absolute; }

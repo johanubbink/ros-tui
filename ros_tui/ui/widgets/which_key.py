@@ -16,7 +16,7 @@
 """The which-key popups (the design's renderWk): `?` lists the keys right now, `g` what can follow it.
 
 Bottom right, above the footer. Both come from the keymap (`keymap.which_key_items`): a title,
-then each group's heading and its keys in two columns.
+then each group's heading and its keys in two columns (a key whose label is too long takes a line).
 """
 
 from rich.text import Text
@@ -52,12 +52,25 @@ class WhichKeyPopup(Overlay):
         rows = keymap.which_key_items(self.nav)
         for group in dict.fromkeys(row.group for row in rows):
             lines.append(Text(group.upper(), style('feed-head')))
-            cells = [self.cell(row, col) for row in rows if row.group == group]
-            for left in range(0, len(cells), 2):
-                lines.append(Text(' ' * GAP).join(cells[left:left + 2]))
+            lines += self.pairs([self.cell(row) for row in rows if row.group == group], col, width)
         return lines
 
     @staticmethod
-    def cell(row: keymap.KeyRow, width: int) -> Text:
+    def pairs(cells: list[Text], col: int, width: int) -> list[Text]:
+        """Two cells to a line, in order; a cell too long for a column gets a line of its own."""
+        lines, left = [], None
+        for cell in cells:
+            if cell.cell_len > col:
+                lines += ([fit(left, col)] if left else []) + [fit(cell, width)]
+                left = None
+            elif left is None:
+                left = cell
+            else:
+                lines.append(Text(' ' * GAP).join([fit(left, col), fit(cell, col)]))
+                left = None
+        return lines + ([fit(left, col)] if left else [])
+
+    @staticmethod
+    def cell(row: keymap.KeyRow) -> Text:
         key = Text(row.keys, style('key', bold=True))
-        return fit(Text.assemble(fit(key, max(KEY_WIDTH, key.cell_len) + 1), (row.label, style('text'))), width)
+        return Text.assemble(fit(key, max(KEY_WIDTH, key.cell_len) + 1), (row.label, style('text')))

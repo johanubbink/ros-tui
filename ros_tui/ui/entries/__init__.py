@@ -20,7 +20,7 @@ to the provider of the tab's kind (`node.NodeEntry` for nodes, `service.ServiceE
 `topic.TopicEntry` for topics, `action.ActionEntry` for actions) and to the default `EntryProvider`
 for anything else. `running` and `tick` go to every provider. Pure Python: no textual, no rclpy.
 Bridge results reach a provider through `post`, which runs a function on the UI thread, and slow
-imports run through `work`, in a worker thread (see `NextApp`).
+imports run through `work`, in a worker thread (see `RosTuiApp`).
 """
 
 from typing import Any

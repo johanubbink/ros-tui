@@ -18,9 +18,11 @@
 The popup model over real message structures: which rows get which helper, the Quaternion modes
 (yaw 90 is {x: 0.0, y: 0.0, z: 0.707107, w: 0.707107}), the Header and Time modes and the values
 they write, an enum's options, and typing an enum's name or prefix in insert. Then f / enter / esc /
-u through NavState in a topic's message, a service's request and an action's goal.
+u through NavState in a topic's message, a service's request and an action's goal. The pure maths
+(quaternions, stamps, reading a header back) comes first.
 """
 
+import math
 from dataclasses import replace
 
 import pytest
@@ -30,8 +32,12 @@ from ros_tui.ros.message_yaml import message_structure
 from ros_tui.ui.entries import entry_router
 from ros_tui.ui.fields import FieldRows, enum_matches, enum_value
 from ros_tui.ui.helpers import ENUM, HEADER, QUAT, TIME, Helper, helper_kind, helper_name
+from ros_tui.ui.helpers.header import parse_header
+from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler
+from ros_tui.ui.helpers.time import parse_time, seconds_str_to_stamp, stamp_to_seconds_str
 from ros_tui.ui.keymap import KeyRow, key_char, keys_now
 from ros_tui.ui.nav import AREA, EDIT, NavState, Tab
+from ros_tui.ui.widgets.entry_body import row_line
 
 YAW_90 = {'x': 0.0, 'y': 0.0, 'z': 0.707107, 'w': 0.707107}
 IDENTITY = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'w': 1.0}
@@ -66,6 +72,46 @@ def quat_helper(orientation=None) -> Helper:
 
 def header_helper(header) -> Helper:
     return Helper.open(rows('geometry_msgs/msg/PoseStamped', pose(header=header))['header'])
+
+
+# ---------- the pure maths ----------
+def test_quaternion_maths():
+    assert normalize_quat(1.0, 1.0, 1.0, 1.0) == (0.5, 0.5, 0.5, 0.5)
+    assert normalize_quat(0.0, 0.0, 0.0, 0.0) == (0.0, 0.0, 0.0, 1.0)
+    cleaned = clean_quat(1e-9, -0.0, 0.50000049, 0.99999999)
+    assert cleaned == {'x': 0.0, 'y': 0.0, 'z': 0.5, 'w': 1.0}
+    assert math.copysign(1.0, cleaned['y']) == 1.0  # -0.0 became +0.0.
+    assert quat_about_axis(0.0, 0.0, 0.0, 1.5) == (0.0, 0.0, 0.0, 1.0)
+    assert quat_about_axis(0.0, 0.0, 1.0, math.pi / 2) == pytest.approx(quat_from_euler(0.0, 0.0, math.pi / 2))
+    # Reference values from transforms3d (what tf_transformations wraps), sxyz order, xyzw out.
+    assert quat_from_euler(0.5, 0.2, -0.3) == pytest.approx((0.25786, 0.05886, -0.16849, 0.94956), abs=1e-5)
+
+
+@pytest.mark.parametrize('text, stamp', [
+    ('2.5', {'sec': 2, 'nanosec': 500000000}), ('7', {'sec': 7, 'nanosec': 0}),
+    ('.25', {'sec': 0, 'nanosec': 250000000}),
+    ('1.0000000009', {'sec': 1, 'nanosec': 0}),  # Past nanoseconds is cut, not rounded.
+])
+def test_seconds_to_a_stamp(text, stamp):
+    assert seconds_str_to_stamp(text) == stamp
+
+
+@pytest.mark.parametrize('text', ['-1', 'abc'])
+def test_seconds_to_a_stamp_rejects(text):
+    with pytest.raises(ValueError):
+        seconds_str_to_stamp(text)
+
+
+def test_a_stamp_reads_back():
+    assert stamp_to_seconds_str({'sec': 2, 'nanosec': 500000000}) == '2.5'
+    assert stamp_to_seconds_str({'sec': 7, 'nanosec': 0}) == '7'
+    assert stamp_to_seconds_str({'sec': 2, 'nanosec': 7}) == '2.000000007'
+    assert parse_time({'sec': 2, 'nanosec': 500000000}) == ('seconds', '2.5')
+    assert parse_time('now') == parse_time(None) == ('now', '0.0')
+    assert parse_header({'stamp': {'sec': 5, 'nanosec': 7}, 'frame_id': 'map'}) == (
+        'manual', 'map', {'sec': 5, 'nanosec': 7})
+    assert parse_header({'stamp': 'now', 'frame_id': 'odom'}) == ('now', 'odom', None)
+    assert parse_header('auto') == ('auto', '', None)
 
 
 # ---------- which rows have a helper ----------
@@ -256,6 +302,15 @@ def editor(nav, tab=None):
 
 
 GOAL_POSE_ORIENTATION = ['/', *'goal', 'enter', 'enter', 'j', 'j', 'j']  # pose starts unfolded.
+
+
+def test_the_popup_goes_under_the_row_where_it_is_drawn():
+    """Header, toolbar, the panel's border and title, then rows 0–3; a short panel scrolls the row up."""
+    nav = entry_nav(*GOAL_POSE_ORIENTATION)
+    assert row_line(nav, 120, 30) == 7
+    assert row_line(nav, 120, 7) == 5  # Room for two rows: rows 2 and 3 show.
+    nav.handle_key('0')
+    assert row_line(nav, 120, 30) is None
 
 
 def test_f_yaw_90_enter_fills_the_row_and_u_undoes_it():

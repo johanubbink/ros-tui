@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 9: the design's "Try this" steps 1–9, end to end, as one scenario over the live demo world.
+"""The design's "Try this" steps 1–9, end to end, as one scenario over the live demo world.
 
 Each `Step` in STEPS is part of one try-step: its keys (`Wait(s)` lets s seconds pass), the footer
 state it ends in (mode, breadcrumb, active tab, and the toast if it matters),
 a check of what else the screen shows, and one shot whose `expect` quotes the try-step.
 
-Adapted to the decisions taken: no `.` (step 5 steps through the history with [ ] instead), the
+Adapted to the decisions taken: no `.` (try-step 5 steps through the history with [ ] instead), the
 action is /fibonacci (nav2's navigate_to_pose isn't installed), and /goal_pose's orientation is
 j j j away (pose starts unfolded). Design references: register-copied, paste-mismatch,
 activity-strip, log-view-times (docs/design/reference_shots.json).
@@ -29,7 +29,6 @@ from typing import Callable, NamedTuple
 
 import pytest
 from harness.screens import ui_session
-from ros_tui.ui.next_app import NextApp
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
@@ -438,7 +437,7 @@ def test_the_steps_cover_try_steps_1_to_9():
 
 
 async def test_try_steps_1_to_9():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         for step in STEPS:
             await play(s, step.keys)
             check_footer(s, step)
@@ -447,7 +446,7 @@ async def test_try_steps_1_to_9():
 
 
 async def test_paste_mismatch_and_nothing_to_copy():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('y')
         assert s.state()['toast'] is None and s.app.nav.log[0] == ('y', 'open an entry first')
         await s.keys('enter', 'y')  # /chatter, not echoing.

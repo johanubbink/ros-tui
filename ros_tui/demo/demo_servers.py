@@ -15,21 +15,22 @@
 
 """A self-contained set of example servers to exercise and showcase ros_tui.
 
-Brings up, on one node, one entity for each tab:
+Brings up, on one node, something for each kind of entry:
 
 - Actions  — ``example_interfaces/Fibonacci`` on ``/fibonacci`` (streams feedback,
-  honours cancellation), so the Actions tab can send a goal and watch SENDING →
-  EXECUTING → SUCCEEDED/CANCELED.
+  honours cancellation), so a goal can be sent and watched until SUCCEEDED or CANCELED.
 - Services — ``example_interfaces/AddTwoInts`` on ``/add_two_ints``, and
   ``turtlesim/TeleportAbsolute`` on ``/set_pose`` (logs the pose it is asked for).
 - Topics   — ``/chatter`` (``std_msgs/String`` @ ~1 Hz) for a calm echo, ``/counter``
   (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, ``/localisation_pose``
   (``geometry_msgs/PoseWithCovarianceStamped`` @ ~2 Hz) as a richer, nested message type to
   browse and edit, ``/diagnostic_status`` (``diagnostic_msgs/DiagnosticStatus`` @ ~1 Hz, its
-  ``level`` cycling through the OK/WARN/ERROR/STALE enum) as a target for the enum field wizard,
+  ``level`` cycling through the OK/WARN/ERROR/STALE enum) as a target for the Enum helper,
   ``/inbox`` (``std_msgs/String`` subscriber) as a target for the Publish demo — what
   arrives is logged so you can see your published message land — and ``/goal_pose``
   (``geometry_msgs/PoseStamped`` subscriber), a Header + Quaternion target for the field helpers.
+- Parameters — ``publish_rate`` (double) and ``frame_id`` (string), only there to edit and set
+  from the node entry: nothing reads them.
 
 This mirrors the in-process ``FixtureServers`` used by the test suite
 (``test/conftest.py``), but as an installable node with public-looking names. The test harness's
@@ -64,11 +65,11 @@ GOAL_POSE_TOPIC = '/goal_pose'
 CHATTER_PERIOD_S = 1.0
 COUNTER_PERIOD_S = 0.02  # ~50 Hz, fast enough to exercise the echo Hz/drop counters.
 LOCALISATION_POSE_PERIOD_S = 0.5  # ~2 Hz, a nested message type to browse and edit.
-DIAGNOSTIC_STATUS_PERIOD_S = 1.0  # ~1 Hz; cycles the `level` enum for the enum field wizard.
+DIAGNOSTIC_STATUS_PERIOD_S = 1.0  # ~1 Hz; cycles the `level` enum for the Enum helper.
 FIBONACCI_FEEDBACK_PERIOD_S = 0.3  # Slow enough to watch the feedback stream in the UI.
 
 # (level constant, label) cycled by the /diagnostic_status publisher. `level` is an octet enum
-# field; its constants (OK/WARN/ERROR/STALE) are what the enum field wizard offers.
+# field; its constants (OK/WARN/ERROR/STALE) are what the Enum helper offers.
 DIAGNOSTIC_LEVELS = (
     (DiagnosticStatus.OK, 'OK'),
     (DiagnosticStatus.WARN, 'WARN'),
@@ -82,6 +83,9 @@ class DemoServers(Node):
 
     def __init__(self):
         super().__init__('ros_tui_demo_servers')
+        # Parameters to change and set from the node entry. Nothing reads them.
+        self.declare_parameter('publish_rate', 10.0)
+        self.declare_parameter('frame_id', 'map')
         callback_group = ReentrantCallbackGroup()
 
         self._action_server = ActionServer(

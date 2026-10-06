@@ -1,11 +1,12 @@
 # ros_tui
 
 ros_tui is a terminal UI for poking at a running ROS 2 system. Browse its
-**topics, services, actions and nodes**, fill in a message in a prefilled YAML
-editor, and publish, echo, call, send goals or set parameters, without typing
-`ros2 ... "{...}"` one-liners.
+**topics, services, actions and nodes**, fill in a message field by field,
+and echo, publish, call, send goals or set parameters, without typing
+`ros2 ... "{...}"` one-liners. It is driven entirely from the keyboard, with
+vim keys and familiar alternatives.
 
-![ros_tui against the demo servers: filtering the topic list, echoing a topic, calling a service and sending an action goal](assets/ros-tui-demo.gif)
+![ros_tui against the demo servers: echoing a topic, calling a service, sending an action goal and setting a node parameter](assets/ros-tui-demo.gif)
 
 ## Install
 
@@ -32,45 +33,57 @@ apt is far too old. ros_tui is developed and tested on ROS 2 Jazzy (Ubuntu
 ros2 run ros_tui ros_tui
 ```
 
-The lists fill in from the live ROS graph and stay up to date. If a noisy RMW
+The ☰ list fills in from the live ROS graph and stays up to date. If a noisy RMW
 prints warnings over the UI, send them elsewhere:
 `ros2 run ros_tui ros_tui 2>>/tmp/ros_tui.stderr`.
 
 ## Using it
 
-Each tab starts as a list you can filter. Type to filter, then `enter` to open
-an entry. `ctrl+f` takes you back to the list.
+ros_tui opens on the **☰ list** of everything in the graph. `j` `k` (or ↑ ↓)
+pick an entry, `enter` opens it in a tab, `/` finds anything by name, `?`
+shows every key that works right now.
 
-- **Topics**: choose **Publish** or **Subscribe** when you open a topic.
-  Publish once, or at a fixed rate. Echo shows the messages with Hz and drop
-  counters, and you can pick which fields to show.
-- **Services**: edit the request and **Call**. You get the response and the
-  round-trip time.
-- **Actions**: edit the goal and **Send goal**. Feedback streams into the
-  log until the result arrives. **Cancel** cancels it.
-- **Nodes**: see a node's publishers, subscribers, services and actions (jump
-  to any of them), and view or set its parameters.
+**Layers.** The screen is a stack: the tab row › inside a tab › inside an
+area (a panel such as REQUEST) › typing a value. **`esc` always goes up one
+layer, `enter` always goes down one**, and the footer always says where you
+are and what those two will do. Keys never depend on focus.
 
-The editor uses the same YAML as `ros2 topic pub`, prefilled with the
-message's defaults. `stamp: now` and `header: auto` are filled in at send
-time. Everything is checked before it's sent, and errors name the field
-(`pose.position.x: could not convert string to float: 'oops'`). Put the cursor
-on a Header, Time, Quaternion or enum field and press `ctrl+w` for a helper to
-fill it in.
+**Only space sends.** Space (or `^s`) is an entry's one sending key; `r` starts
+a repeating publish, and `s` only stops a repeat or cancels a goal. Moving and
+editing never send, and a value is checked (and the field named) before
+anything goes out.
 
-| Key      | Does                                                         |
-| -------- | ------------------------------------------------------------ |
-| `ctrl+t` | next tab                                                     |
-| `ctrl+f` | back to the list                                             |
-| `ctrl+s` | Publish or Echo / Call / Send goal / Set parameter           |
-| `ctrl+k` | stop publishing or pause echo / Cancel goal / Refresh node   |
-| `ctrl+r` | reset the editor to the message defaults                     |
-| `ctrl+w` | open a helper for the field under the cursor                 |
-| `ctrl+l` | clear the log                                                |
-| `f2`     | help                                                         |
-| `ctrl+q` | quit                                                         |
+- **Topics** open in Echo when someone publishes them, else in Publish (`e`
+  switches). Echo shows the newest message with the count and Hz; `enter`
+  freezes it to read it. Publish sends once, or `r` repeats at a rate.
+- **Services**: edit the request, space calls it, the response and its time
+  appear next to it.
+- **Actions**: edit the goal, space sends it, feedback streams in until the
+  result; `s` cancels. Goals still running are canceled when you quit.
+- **Nodes**: a node's interfaces (`enter` opens one) and its parameters, which
+  you change and then set with space.
 
-The mouse works too. More detail is in [docs/usage.md](docs/usage.md).
+Messages are edited as field rows, prefilled with the defaults. `f` on a
+Header, Time, Quaternion or enum field opens a helper to fill it in, `y` / `p`
+copy and paste a message between entries of the same type, `u` undoes, `[`
+`]` bring back what you sent before.
+
+| Key           | Does                                                      |
+| ------------- | --------------------------------------------------------- |
+| `enter` `esc` | down / up one layer                                       |
+| `j` `k` `h` `l` | move (or the arrows, tab)                               |
+| `space` `^s`  | publish, start / stop the echo, call, send the goal, set parameters |
+| `r` `R` `s`   | repeat a publish, change its rate, stop it / cancel a goal |
+| `e`           | switch a topic between Echo and Publish                   |
+| `i` `c`       | edit the value / clear it and edit                        |
+| `f`           | field helper                                              |
+| `y` `p` `u`   | copy, paste, undo                                         |
+| `0`…`9` `x`   | go to a tab, close it                                     |
+| `/` `:` `?`   | search, commands (`:log`, `:rate 5`, …), all keys         |
+| `:q`          | quit (or `ctrl+q`)                                        |
+
+More detail, and every key, is in [docs/usage.md](docs/usage.md). Why the UI
+works this way is in [docs/design-principles.md](docs/design-principles.md).
 
 ## Try it without a robot
 
@@ -85,14 +98,16 @@ ros2 run ros_tui ros_tui         # ...then run the TUI inside it
 ```
 
 You can also run turtlesim with it (needs X11). See
-[docs/docker.md](docs/docker.md) for that and for what to try in each tab.
+[docs/docker.md](docs/docker.md) for that and for what to try on each entry.
 
 ## Docs
 
-- [docs/usage.md](docs/usage.md): each tab, the editor, the field helpers
-  and every key binding.
+- [docs/usage.md](docs/usage.md): the layers, each kind of entry, the
+  editor, the field helpers and every key.
 - [docs/docker.md](docs/docker.md): the Docker playground, the demo servers
   and turtlesim.
+- [docs/design-principles.md](docs/design-principles.md): the rules behind
+  the UI, its look and its copy, for anyone changing it.
 - [docs/architecture.md](docs/architecture.md): how ros_tui works inside.
 - [docs/testing.md](docs/testing.md): running the tests, and
   `scripts/make_gif.py`, which remakes the GIF above.

@@ -2,16 +2,13 @@
 
 This is the guide for anyone changing the ros_tui UI. It covers why the UI is
 the way it is, the rules that keep it predictable, and how it looks and talks.
-The source of truth for the target UI is the "Hybrid Keys" prototype,
-[`docs/design/hybrid-keys.html`](design/hybrid-keys.html). Open it in a browser
-and use the keyboard.
+The UI follows the "Hybrid Keys" prototype,
+[`docs/design/hybrid-keys.html`](design/hybrid-keys.html); open it in a browser
+and use the keyboard. Where the two differ, this page says so and why.
 
-It is a living document. It was started in Phase 0 of the redesign, while the
-old four-tab UI was still in place. Each step's verification agent checks the
-step against this page and adds what the step introduced (see
-[agentic-dev.md](agentic-dev.md)). Sections marked **(target)** describe code
-that doesn't exist yet. Treat them as the spec until they're built, then drop
-the mark.
+Keep it current: a change that adds a rule, a pattern or a look adds it here
+too. [usage.md](usage.md) is the user's side of the same keys, and
+[architecture.md](architecture.md) the map of the code.
 
 ## Why
 
@@ -114,9 +111,9 @@ Follow these when adding or changing a key.
    - Dispatch takes the first row that matches; two rows that both match must
      agree. Rows with an empty `show` only dispatch, rows without `run` are only
      listed.
-   - The footer, the `?` which-key (`keys_now`), the `g…` popup
-     (`which_key_items`) and the tutorial (`scripts/export_keymap.py`, JSON)
-     are all generated from it.
+   - The footer, the `?` which-key (`keys_now`) and the `g…` popup
+     (`which_key_items`) are generated from it, and the key tables in
+     [usage.md](usage.md) must match it (`test_keymap.py` checks).
    - A key that isn't in the table doesn't exist. Its label is the short phrase
      the prototype uses, e.g. "pick an area", "into the latest message: values
      freeze".
@@ -212,7 +209,7 @@ expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
 - **Echoed floats are cut for display only**: to `ECHO_DISPLAY_DIGITS` (6)
   significant digits, never cutting the whole part (`fields.readable`, used by
   `flat_text`): `1.0806046117362795` shows as `1.0806`. The values the entry
-  keeps are exact, so what is copied from an echo (step 9) is exact too.
+  keeps are exact, so what is copied from an echo is exact too.
 - The type is imported in a worker thread (`MessageEntry.load_types`, through
   `BridgeEntry._work`) the first time the entry opens; until then the editor
   says `loading…`, or `✗ could not load it: …`.
@@ -255,7 +252,8 @@ expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
 fills the value for you (the design's `.hpop`). The model is
 `ros_tui/ui/helpers/` (pure, like `nav.py`); `widgets/helper_popup.py` draws it
 (`HelperPopup`, an `Overlay` in the body, under the row or above it when it
-doesn't fit); `entries/message.py` (`MessageEntry`) opens it and writes its
+doesn't fit; `entry_body.row_line` says where the row is drawn, scrolling
+included); `entries/message.py` (`MessageEntry`) opens it and writes its
 value, so every message editor has the helpers: a topic's MESSAGE, a service's
 REQUEST and an action's GOAL.
 
@@ -318,8 +316,8 @@ values in widget code or CSS; add a token instead.
 |-------|-------|-----|
 | `term` / `term-2` / `term-3` | `#121212` / `#181818` / `#1e1e1e` | terminal background / panel body / panel title |
 | `tline` | `#333333` | panel border at rest |
-| `text` | `#c9d1d9` (terminal text `#dcdcdc`) | body text |
-| `muted` / `faint` | `#7d8794` / `#4d5662` | secondary text / hints, dim lines |
+| `text` | `#dcdcdc` | body text |
+| `muted` | `#7d8794` | secondary text: the type in an entry's header |
 | `accent` | `#3a96dd` | entry names in headers |
 | `accent-fill` | `#0178d4` | primary buttons, the inside-an-area panel border |
 | `key` | `#eceff4` | key caps in hints, the selected-panel border, the tab-row cursor |
@@ -424,14 +422,17 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
 - **Overlays** (search, `:log`, which-key, the command suggestions, the field
   helper, the toast) are `Overlay` views (`widgets/base.py`) on the `overlay`
   layer, placed absolutely: each one's `place(width, height)` returns its box
-  in its parent and `NextApp.refresh_views` applies it, after each key and
+  in its parent and `RosTuiApp.refresh_views` applies it, after each key and
   tick and also whenever the body changes size (`Body.on_resize`: the activity
-  strip grew a line), so a toast never sits below the body. Popups get a rounded border in their
-  edge colour. The border cells are on the popup's background, so the popup has
+  strip grew a line), so a toast never sits below the body. Popups get a
+  rounded border in their edge colour. The border cells are on the popup's background, so the popup has
   a thin frame of its own colour outside the line; there's no shadow. Rules
   inside a popup are a row of `─` in `pop-line` (`rule()`). A popup's picked row
   is a band of `cursor-on` with the `▍` bar (`cursor_bar()`), like the list
-  cursor; the picked command suggestion is a `cmd-sel` band.
+  cursor; the picked command suggestion is a `cmd-sel` band. The `?` popup
+  puts two keys on a line; a key whose label doesn't fit its column gets the
+  whole line rather than being cut (`u undo in this tab (or reopen a closed
+  tab)`).
 - **Veil**: textual doesn't blend a translucent layer with what's under it, so
   the design's `rgba(0,0,0,.5)` veil under search and `:log` is `opacity: 50%`
   on everything but the footer (the screen's `-veiled` class).
@@ -673,9 +674,11 @@ user's bad value. Examples from the prototype to copy the style from:
     on field rows), `undo`, `running` (the markers above) and `tick` (take in
     what arrived on the clock tick, such as an echo's messages). A `Commit` may
     carry an activity line too (a new rate applied to a running repeat). The
-    default has the design's areas, no rows and a topic's Echo / Publish mode
-    (`e`); outside a topic, `e`, `r`, `R` and `:rate` say they are for topics,
-    and other verbs log "not built yet". Entry kinds subclass it.
+    default has the design's areas, no rows, no mode and no verbs: `e`, `r`,
+    `R` and `:rate` say they are for topics, `f` that the field has no helper,
+    and any other verb logs `nothing to do here`. Entry kinds subclass it, and
+    each owns its own state: a topic's Echo / Publish mode (`mode()`, `e`) is
+    `TopicEntry`'s.
   - **The provider router.** `NavState` holds one provider. In the app that is
     `entries.EntryRouter` (`entry_router(bridge, post)`): it hands each call to
     the provider of the tab's kind (`NodeEntry`, `ServiceEntry`, `TopicEntry`,
@@ -719,7 +722,7 @@ user's bad value. Examples from the prototype to copy the style from:
     (`Tab.of(owner)` gives the tab back), or `*` for a closed tab, the one
     entry any tab can undo.
   - Widgets render the model and pass on keys; they make no decisions.
-    Every view of the new UI is a `NavView` (`ros_tui/ui/widgets/base.py`): it
+    Every view is a `NavView` (`ros_tui/ui/widgets/base.py`): it
     holds the `NavState`, never takes focus, has no bindings, and implements
     `lines(width, height)`, returning one Rich `Text` per screen row, which
     `render()` crops to the width. After each key and each graph update the app
@@ -732,11 +735,11 @@ user's bad value. Examples from the prototype to copy the style from:
     takes in its parent, or `None` while the model has it closed. Whether it is
     open, and everything in it, comes from the model (`nav.search`, `nav.cmd`,
     `nav.which_key`, `nav.logv`, `nav.helper`, `nav.toast`). To add one, subclass `Overlay`
-    and yield it in `NextApp.compose`; `refresh_views` places it.
-  - Everything the footer, the tests and the tutorial need to know comes from
-    the model. The harness reads it through `app.harness_state()`.
+    and yield it in `RosTuiApp.compose`; `refresh_views` places it.
+  - Everything the footer and the tests need to know comes from the model.
+    The harness reads it through `NavState.summary()`.
 - **One key router.**
-  - The app (`ros_tui/ui/next_app.py`, `ros_tui --next` until step 10) has one
+  - The app (`RosTuiApp` in `ros_tui/ui/app.py`) has one
     `on_key` that hands every key to `NavState.handle_key`, which looks it up in
     `keymap.py`. The app and its screen don't inherit textual's bindings (tab
     focus cycling, the ctrl+p palette), so tab, shift+tab and ctrl+p reach the
@@ -745,10 +748,10 @@ user's bad value. Examples from the prototype to copy the style from:
     `normalize_key` makes them one canonical name. There are no per-widget
     bindings and no focus-dependent behaviour.
   - Per-layer predictability is the point of the design. Focus-driven bindings
-    are what made the old UI hard to reason about.
+    are what made the first, four-tab UI (0.1.0) hard to reason about.
 - **The keymap is the single source of truth.** Dispatch, the footer labels,
-  `?`, the `g…` popup and `scripts/export_keymap.py` (the tutorial) all read the
-  same table.
+  `?` and the `g…` popup all read the same table, and docs/usage.md is checked
+  against it.
 - **State is per entry and per tab.** Edits, undo, send history, area and row
   cursors and the echo's shown/hidden fields belong to the entry they were made
   in. Switching tabs never loses them.
@@ -780,8 +783,7 @@ user's bad value. Examples from the prototype to copy the style from:
   reads the real time. Call timings read the same clock (a demo service call
   takes `50.0 ms` under the FakeBridge), and so do rates: an `EchoBuffer` takes
   the bridge's `now` as its `clock`, and a repeat's `N sent` is counted from
-  the clock. The old UI still reads the real clock (the echo Hz and "response
-  in … ms").
+  the clock.
 - **Live data is drained, bounded.** An echo pushes into an `EchoBuffer` on the
   ROS thread (it drops the oldest past `ECHO_BUFFER_MAXLEN`); each tick drains
   it on the UI thread and keeps only the newest message, converted once with
@@ -794,7 +796,7 @@ user's bad value. Examples from the prototype to copy the style from:
   other tabs, because its spinner turns in the top bar: at most
   `ACTION_SPINNER_HZ` (4) times a second there, and on its own tab when the
   time (to a tenth of a second) or the feedback changes.
-- **Every step ships a scenario test with shots** (`test/ui/test_stepNN_*.py`).
+- **Every UI change ships a scenario test with shots** (`test/ui/test_<what>.py`).
   See [agentic-dev.md](agentic-dev.md).
 
 ### Checklist: adding an entry kind
@@ -832,8 +834,7 @@ user's bad value. Examples from the prototype to copy the style from:
 `helpers/__init__.py` with `helpers/quaternion.py` is the worked example.
 
 - [ ] Write the maths or parsing as pure functions in `helpers/<kind>.py`, and
-      unit-test them (`test/test_helpers.py`). The old wizard screens import
-      theirs from there until step 10 deletes them.
+      unit-test them (`test/test_helpers.py`).
 - [ ] Give the kind a name in `NAMES` and register its rows: by type label in
       `BY_TYPE` (a compact type, so the row is typed on one line), or by
       shape in `helper_kind`. That gives the row its `[f <Name>]` badge and the
@@ -857,16 +858,35 @@ user's bad value. Examples from the prototype to copy the style from:
 - [ ] Add the vim key and the familiar alias, if there is one.
 - [ ] If it sends, stop: only the verbs above send. Rethink the key, or make it
       an explicit verb with a flash and an activity line.
-- [ ] Add it to `keymap.py` with a label and a group, which updates the footer,
-      `?` and the tutorial. Its action goes in `nav.ACTIONS`.
-- [ ] Add it to the design prototype too, if it's user-visible, so the reference
-      shots and the tutorial stay in step.
+- [ ] Add it to `keymap.py` with a label and a group, which updates the footer
+      and `?`. Its action goes in `nav.ACTIONS`.
+- [ ] Add it to the key tables in [usage.md](usage.md) (`test_keymap.py` fails
+      until you do), and to the design prototype too if it's user-visible, so the
+      reference shots stay in step.
 - [ ] Add a transition test in the nav model tests, and a shot if it changes
       the screen.
 
 ## Screenshots
 
-Screenshots of the key states are added here from the harness
-(`scripts/agent_check.sh`) when the new UI switches over (step 10). Until then,
-compare with the design's reference shots (`scripts/design_shots.py`, written to
-`test/artifacts/design/`).
+Four key states, from the scenario tests (`scripts/agent_check.sh -m shots`
+writes them all to `test/artifacts/`; copy one here when its look changes).
+Compare new work with these and with the design's reference shots
+(`scripts/design_shots.py`, written to `test/artifacts/design/`).
+
+The ☰ list, with every kind and the Here column:
+
+![The ☰ list](images/home.png)
+
+A frozen echo: inside LATEST MESSAGE (blue border), `❄ FROZEN` and `+3 new
+since`, the footer's `esc go live`:
+
+![A frozen echo of /chatter](images/echo-frozen.png)
+
+A service call: REQUEST and RESPONSE side by side, `✓ OK` with its time, the
+activity strip:
+
+![/add_two_ints called](images/service-called.png)
+
+The Quaternion helper under the row it fills, with the HELPER badge:
+
+![The Quaternion helper on /goal_pose](images/quat-helper.png)

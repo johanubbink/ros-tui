@@ -77,6 +77,12 @@ class MessageData:
     hpos: int = -1  # The history entry shown in the editor (-1: your own edit).
     draft: dict | None = None  # Your own edit, kept while [ ] show older sends.
 
+    def not_loaded(self) -> str:
+        """Why there is no editor yet: the type is still loading, or why it failed to."""
+        if not self.error:
+            return 'still loading the message type'
+        return f'could not load {self.type}: {self.error}' if self.type else self.error
+
 
 class MessageEntry(BridgeEntry):
     """An entry kind with a message editor (area EDITOR) in field rows."""
@@ -231,7 +237,7 @@ class MessageEntry(BridgeEntry):
         """The editor, or None (with a toast) while its type is still loading or failed to load."""
         data = self.data(tab)
         if data.editor is None:
-            text = f'could not load {data.type}: {data.error}' if data.error else 'still loading the message type'
+            text = data.not_loaded()
             nav.show_toast(text, 'bad')
             nav.log_line(how, text)
         return data.editor
@@ -348,7 +354,7 @@ class MessageEntry(BridgeEntry):
         data = self.data(tab)
         form = data.editor
         if form is None or data.build is None:
-            text = f'could not load {data.type}: {data.error}' if data.error else 'still loading the message type'
+            text = data.not_loaded()
             nav.show_toast(text, 'bad')
             nav.log_line(how, f'{text} — nothing sent')
             return None

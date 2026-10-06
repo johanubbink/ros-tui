@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 6: the topic entry over the live demo world, following the design's try-steps 1–4.
+"""The topic entry over the live demo world, following the design's try-steps 1–4.
 
 /chatter opens in Echo (it has a publisher): space starts the echo (◉ in the tab, the top bar and
 the Here column), enter freezes the values ("❄ FROZEN +N new since" rising as the clock moves),
@@ -25,7 +25,6 @@ echo-live, echo-frozen, publish-open, publish-repeating, rate-editing (docs/desi
 
 import pytest
 from harness.screens import ui_session
-from ros_tui.ui.next_app import NextApp
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
@@ -45,7 +44,7 @@ def where(s) -> tuple:
 
 
 async def test_echo_chatter():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('enter')  # /chatter is the first row of the list.
         assert where(s) == ('in', 'normal', ['tabs', '/chatter'])
         for expected in ('≋ TOPIC', '/chatter', 'std_msgs/msg/String', '1 pub · 0 sub', ' Echo ', ' Publish ',
@@ -98,7 +97,7 @@ async def test_echo_chatter():
 
 
 async def test_publish_inbox():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('slash', *'inbox', 'enter')
         assert where(s) == ('in', 'normal', ['tabs', '/inbox'])
         for expected in ('0 pub · 1 sub', '▶ Publish once space', '↻ Repeat at 10 Hz r', 'default · R changes it',
@@ -162,7 +161,7 @@ async def test_publish_inbox():
 
 
 async def test_echo_a_nested_message():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('slash', *'locali', 'enter', 'space')
         await s.advance(1.0)
         for field in ('header', 'pose.pose.position', 'pose.pose.orientation', 'pose.covariance'):

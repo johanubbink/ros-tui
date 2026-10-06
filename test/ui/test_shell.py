@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 2: the app shell of the new UI (`ros_tui --next`) over the live demo world.
+"""The app shell over the live demo world.
 
-The ☰ list with its chips, opening entries as tabs (a placeholder body with the entry's areas),
+The ☰ list with its chips, opening entries as tabs,
 the tab-row layer, the overflow of many tabs, closing and reopening a tab, and H / L. Design
 references: home, topic-chip, chatter-open, tab-row, many-tabs (docs/design/reference_shots.json).
 """
@@ -24,7 +24,6 @@ import pytest
 from harness.fake_bridge import FakeBridge
 from harness.screens import ui_session
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry
-from ros_tui.ui.next_app import NextApp
 from ros_tui.ui.widgets.tab_row import fit_tabs
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
@@ -38,7 +37,7 @@ def footer(s) -> str:
 
 
 async def test_shell():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         state = s.state()
         assert (state['layer'], state['mode'], state['path']) == ('in', 'normal', ['tabs', '☰ list'])
         text = s.text()
@@ -142,8 +141,8 @@ async def test_shell():
 
 async def test_quit_and_textual_keys():
     """tab never moves focus (it's the chip filter), ctrl+p isn't the command palette, the overlay and
-    send keys reach the nav model (their overlays are drawn from step 3), :q quits."""
-    async with ui_session(app_factory=NextApp) as s:
+    send keys reach the nav model, :q quits."""
+    async with ui_session() as s:
         assert s.app.focused is None
         await s.keys('tab', 'ctrl+p')
         assert s.app.focused is None and s.state()['chip'] == 0 and len(s.app.screen_stack) == 1
@@ -164,7 +163,7 @@ async def test_quit_and_textual_keys():
 async def test_graph_updates_and_publishers():
     """The ☰ list follows the graph; a topic without publishers opens in Publish."""
     bridge = FakeBridge.demo()
-    async with ui_session(app_factory=NextApp, bridge=bridge) as s:
+    async with ui_session(bridge=bridge) as s:
         assert '/inbox' in s.text()
         bridge.listener(GraphSnapshot(2, actions=(), services=(), nodes=(),
                                       topics=(InterfaceEntry('/inbox', ('std_msgs/msg/String',)),)))

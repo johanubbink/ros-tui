@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 7: the action entry over the live demo world, plus /turtle1/rotate_absolute (rotate_demo()).
+"""The action entry over the live demo world, plus /turtle1/rotate_absolute (rotate_demo()).
 
 /fibonacci: edit the order, space sends the goal (EXECUTING, the feedback sequence growing as the
 clock moves, the ◐◓◑◒ spinner in the tab, the top bar and the Here column), a second goal is blocked
@@ -27,7 +27,6 @@ import pytest
 from harness.fake_bridge import ROTATE_ACTION, rotate_demo
 from harness.screens import ui_session
 from rich.text import Text
-from ros_tui.ui.next_app import NextApp
 from ros_tui.ui.widgets.panel import wrapped
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
@@ -46,7 +45,7 @@ def line_with(s, *parts) -> str:
 
 
 async def test_action_entry():
-    async with ui_session(bridge=rotate_demo(), app_factory=NextApp) as s:
+    async with ui_session(bridge=rotate_demo()) as s:
         await s.keys('slash', *'fib', 'enter')
         assert s.state()['path'] == ['tabs', FIB]
         for expected in ('▷ ACTION', 'example_interfaces/action/Fibonacci', '▶ Send goal space', '■ Cancel goal s',

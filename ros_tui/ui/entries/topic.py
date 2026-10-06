@@ -98,6 +98,7 @@ class TopicData(MessageData):
     rate: float | None = None  # The repeat rate the user set (None: not set).
     measured: float = 0.0  # The publisher's rate, as the echo last measured it.
     repeat: Repeat | None = None
+    mode: str = ''  # 'echo' or 'publish', from the first time the tab opens.
     seen: tuple = ()  # What the toolbar last showed (echo counts, repeat sent), so a tick redraws only on a change.
 
 
@@ -128,6 +129,10 @@ class TopicEntry(MessageEntry):
     def on_open(self, nav: NavState, tab: Tab) -> None:
         """Load the message type (MessageEntry) and ask how many publish and subscribe, each time it opens.
         The mode it first opens in (Echo when someone publishes) comes from the ☰ list's counts."""
+        data = self.data(tab)
+        if not data.mode:
+            item = nav.item(tab)
+            data.mode = 'echo' if item and item.publishers > 0 else 'publish'
         super().on_open(nav, tab)
         future = self._bridge.topic_endpoint_counts(tab.name)
         future.add_done_callback(lambda done: self._counts_done(tab, done))
@@ -136,6 +141,18 @@ class TopicEntry(MessageEntry):
         if not future.cancelled() and future.exception() is None:
             counts = tuple(future.result())
             self._post(lambda: setattr(self.data(tab), 'counts', counts))
+
+    def mode(self, tab: Tab) -> str | None:
+        return self.data(tab).mode or None
+
+    def toggle_mode(self, nav: NavState, tab: Tab, how: str, to: str | None) -> None:
+        """e, :echo, :pub: switch between Echo and Publish; the message stays."""
+        if nav.layer == EDIT:
+            nav.commit_edit(how)
+        data = self.data(tab)
+        data.mode = to or ('publish' if data.mode == 'echo' else 'echo')
+        nav.layer = IN
+        nav.log_line(how, f'now in {data.mode}')
 
     def publishers(self, nav: NavState, tab: Tab) -> int:
         counts = self.data(tab).counts
@@ -188,7 +205,7 @@ class TopicEntry(MessageEntry):
     def edit_rate(self, nav: NavState, tab: Tab, how: str) -> None:
         """R: type a new rate in place of the shown one (from Echo, switch to Publish first)."""
         if self.mode(tab) != 'publish':
-            self._modes[tab.name] = 'publish'
+            self.data(tab).mode = 'publish'
             nav.layer = IN
         text = rate_text(self.rate(tab))
         nav.editing = Editing(RATE, 0, text, old=text, fresh=True, field='repeat rate',
@@ -437,6 +454,8 @@ class TopicEntry(MessageEntry):
             (self.toggle_echo if self.mode(tab) == 'echo' else self.publish)(nav, tab, how)
         elif name == 'secondary':
             self.stop(nav, tab, how)
+        elif name == 'toggle_mode':
+            self.toggle_mode(nav, tab, how, arg)
         elif name == 'repeat':
             self.start_repeat(nav, tab, how)
         elif name == 'rate':

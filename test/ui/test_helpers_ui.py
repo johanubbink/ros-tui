@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 8: the field helpers, over the live demo world, following the design's try-steps 7 and 8.
+"""The field helpers, over the live demo world, following the design's try-steps 7 and 8.
 
 /goal_pose (Publish): the [f Header] and [f Quaternion] badges, f on pose.orientation, tab tab to
 "yaw only (°)", 90, enter writes {x: 0.0, y: 0.0, z: 0.707107, w: 0.707107}; u undoes it, esc in a
@@ -25,7 +25,6 @@ enum-helper, enum-typed (docs/design/reference_shots.json).
 
 import pytest
 from harness.screens import ui_session
-from ros_tui.ui.next_app import NextApp
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
@@ -43,7 +42,7 @@ def line_with(s, *parts) -> str:
 
 
 async def test_quaternion_and_header_helpers():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('slash', *'goal', 'enter', 'enter')
         assert s.state()['path'] == ['tabs', '/goal_pose', 'message']
         assert line_with(s, 'header: auto', '[f Header]', '# Header')
@@ -113,7 +112,7 @@ async def test_quaternion_and_header_helpers():
 
 
 async def test_enum_helper():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('slash', *'diag', 'enter', 'e')
         assert s.state()['path'] == ['tabs', '/diagnostic_status'] and line_with(s, 'level: 0 OK', '[f Enum]')
         await s.keys('f')

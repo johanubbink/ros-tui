@@ -56,8 +56,8 @@ class NodeInfo:
 EMPTY_GRAPH = GraphSnapshot(version=0, actions=(), services=(), topics=(), nodes=())
 
 # Services rclpy auto-creates on every node for parameter handling and type
-# introspection. The Nodes tab already exposes these, so the Services tab
-# hides them to cut noise. Matched by type (package/srv/TypeName) so node
+# introspection. A node entry already exposes the parameters, so the ☰ list
+# hides these to cut noise. Matched by type (package/srv/TypeName) so node
 # naming is irrelevant.
 BUILTIN_SERVICE_TYPES = frozenset({
     'rcl_interfaces/srv/DescribeParameters',
@@ -130,8 +130,8 @@ def build_node_info(node: Any, full_name: str) -> NodeInfo:
     """Introspect ``full_name``'s endpoints via ``node``. Call on the node's spin thread.
 
     Hidden names (the action's internal ``/foo/_action/*`` topics & services) and the node's
-    auto-created parameter services are dropped, matching what the Services/Nodes tabs show —
-    so a jump from here always lands on an entity the destination tab actually lists.
+    auto-created parameter services are dropped, matching what the ☰ list shows, so opening an
+    interface from a node entry always lands on an entry the list has.
     """
     name, namespace = split_node_name(full_name)
     return NodeInfo(

@@ -23,7 +23,6 @@ from ros_tui.ros.message_yaml import (
     FieldError,
     IntrospectionError,
     build_message,
-    default_yaml,
     import_type,
     interface_label,
     message_structure,
@@ -62,26 +61,29 @@ ROUNDTRIP_TYPES = [
 ]
 
 
+def seed(kind: str, type_name: str) -> dict:
+    """What an editor starts from: the default message as plain data, a nested Header as 'auto'."""
+    return message_to_plain(request_class(kind, import_type(kind, type_name))(), seed=True)
+
+
 @pytest.mark.parametrize(('kind', 'type_name'), ROUNDTRIP_TYPES)
 def test_default_seed_round_trips(kind, type_name):
-    seed = default_yaml(kind, type_name)
-    loaded = yaml.safe_load(seed)
+    values = seed(kind, type_name)
     fillable = request_class(kind, import_type(kind, type_name))
-    message, time_setters = build_message(fillable, loaded)
-    if 'header: auto' in seed:
+    message, time_setters = build_message(fillable, values)
+    if 'auto' in values.values():
         # A nested header seeds as the 'auto' magic value: it builds cleanly but leaves a
         # deferred stamp setter, so it does not round-trip to the same plain dict.
         assert time_setters
     else:
         assert time_setters == []
-        assert message_to_plain(message) == (loaded or {})
+        assert message_to_plain(message) == values
 
 
 def test_nested_header_seeds_as_auto():
-    seed = default_yaml('msg', 'geometry_msgs/msg/PoseStamped')
-    assert 'header: auto' in seed
+    assert seed('msg', 'geometry_msgs/msg/PoseStamped')['header'] == 'auto'
     # A top-level Header topic has no nested header field, so it stays expanded.
-    assert 'auto' not in default_yaml('msg', 'std_msgs/msg/Header')
+    assert seed('msg', 'std_msgs/msg/Header') == {'stamp': {'sec': 0, 'nanosec': 0}, 'frame_id': ''}
 
 
 def test_unknown_type_raises_introspection_error():
@@ -90,25 +92,15 @@ def test_unknown_type_raises_introspection_error():
 
 
 def test_interface_label():
-    pose_class = import_type('msg', 'geometry_msgs/msg/Pose')
-    assert interface_label(pose_class) == 'geometry_msgs/msg/Pose'
+    assert interface_label(import_type('msg', 'geometry_msgs/msg/Pose')) == 'geometry_msgs/msg/Pose'
 
 
 def test_empty_request_seed_and_build():
     trigger = import_type('srv', 'std_srvs/srv/Trigger')
-    seed = default_yaml('srv', 'std_srvs/srv/Trigger')
-    assert '(no fields)' in seed
-    assert yaml.safe_load(seed) is None
-    message, time_setters = build_message(trigger.Request, yaml.safe_load(seed))
+    assert seed('srv', 'std_srvs/srv/Trigger') == {}
+    message, time_setters = build_message(trigger.Request, {})
     assert time_setters == []
     assert message == trigger.Request()
-
-
-def test_constants_listed_in_seed_comment():
-    seed = default_yaml('msg', 'action_msgs/msg/GoalStatus')
-    assert '# constants:' in seed
-    assert 'STATUS_SUCCEEDED=4' in seed
-    assert yaml.safe_load(seed) is not None
 
 
 def test_uint8_out_of_range_rejected_with_range_text():

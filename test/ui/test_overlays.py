@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step 3: the overlays of the new UI over the live demo world.
+"""The overlays over the live demo world.
 
 Search (/ and ^f), the command line (:), the which-key popups (? and g…), toasts and the :log
 view. Every overlay closes back to exactly the layer it was opened on. Design references:
@@ -24,7 +24,6 @@ toast-info, log-view (docs/design/reference_shots.json).
 import pytest
 from harness.screens import ui_session
 from ros_tui.constants import NAV_TOAST_S
-from ros_tui.ui.next_app import NextApp
 from ros_tui.ui.nav import Tab
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
@@ -57,7 +56,7 @@ def line_with(s, *parts) -> str:
 
 
 async def test_search():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('/')
         state = s.state()
         assert (state['mode'], state['search'], state['layer']) == ('search', '', 'in')
@@ -119,7 +118,7 @@ async def test_search():
 
 
 async def test_command_line():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys(':')
         state = s.state()
         assert (state['mode'], state['cmd']) == ('command', '')
@@ -172,13 +171,13 @@ async def test_command_line():
 
 
 async def test_which_key_and_g_prefix():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('?')
         text = s.text()
         assert s.state()['which_key'] == 'all'
         for expected in ('Keys right now · any key closes', 'LAYERS', 'down one layer / do it', 'up one layer',
                          'MOVE', 'pick an entry', 'GO', 'search everything', ':log', 'all activity', 'HELP',
-                         'all keys right now'):
+                         'all keys right now', 'undo in this tab (or reopen a closed tab)'):  # Too long for a column.
             assert expected in text, expected
         assert 'esc tab row' not in footer(s)  # The esc / enter labels hide under the popup.
         await s.shot('which-key', expect='bottom right, above the footer: "Keys right now · any key closes", '
@@ -220,7 +219,7 @@ async def test_which_key_and_g_prefix():
 
 
 async def test_log_view():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys(':', 'l', 'o', 'g', 'enter')
         assert s.app.nav.logv is not None and 'All activity' in s.text() and line_with(s, '│ nothing yet ')
         await s.shot('log-empty', expect='the :log box over the dimmed list: "All activity  0 entries, newest '
@@ -228,7 +227,7 @@ async def test_log_view():
         await s.keys('escape')
         assert s.app.nav.logv is None
 
-        # Nothing sends yet (steps 5–7), so put activity lines in the model directly, newest first.
+        # Put activity lines in the model directly, newest first.
         nav = s.app.nav
         for tab, text, cls in ((Tab('topics', '/chatter'), '▶ published once', ''),
                                (Tab('actions', '/fibonacci'), '▶ goal sent · order: 12', ''),
@@ -278,7 +277,7 @@ async def test_log_view():
 async def test_esc_returns_to_the_exact_layer(opens, closes):
     """Each overlay, opened deep inside an entry (the MESSAGE area of /goal_pose, a second tab), closes
     back to the same layer, tab, area, row and list cursor."""
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('j', 'enter', '0', 'tab', 'j', 'j', 'j', 'j', 'j', 'enter', 'enter')
         before = where(s)
         assert (before['layer'], before['path'], before['active']) == ('area', ['tabs', '/goal_pose', 'message'], 1)
@@ -289,7 +288,7 @@ async def test_esc_returns_to_the_exact_layer(opens, closes):
 
 
 async def test_close_tab_toast():
-    async with ui_session(app_factory=NextApp) as s:
+    async with ui_session() as s:
         await s.keys('enter', 'x')
         toast = 'closed /chatter · u undoes'
         assert s.state()['toast'] == [toast, 'info']

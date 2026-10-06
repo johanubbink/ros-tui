@@ -22,7 +22,7 @@ footer helpers modeName / pathParts / upLabel / downLabel), in its world (harnes
 
 import pytest
 from harness.fake_bridge import DEMO_GRAPH
-from harness.nav_world import DESIGN_CATALOG, RowsProvider, design_nav, nav_after
+from harness.nav_world import DESIGN_CATALOG, DesignProvider, RowsProvider, design_nav, nav_after
 from ros_tui.constants import NAV_ERRLINE_S, NAV_TOAST_S
 from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, NavState, Tab, short_type
 
@@ -541,8 +541,8 @@ def test_full_stop_does_nothing():
     assert last_log(nav) == ('.', 'nothing on "." here — ? shows the keys')
 
 
-def test_default_provider_says_not_built_yet():
-    assert last_log(nav_after(INBOX + ['space'])) == ('space', 'not built yet')
+def test_a_verb_nobody_handles_does_nothing():
+    assert last_log(nav_after(INBOX + ['space'])) == ('space', 'nothing to do here')
     assert last_log(nav_after(['y'])) == ('y', 'open an entry first')
 
 
@@ -652,7 +652,7 @@ def test_breadcrumb_override_for_a_custom_editor():
 
 
 def test_set_catalog_from_a_graph_snapshot():
-    nav = NavState()
+    nav = NavState(DesignProvider())
     nav.set_catalog(DEMO_GRAPH, publishers={'/chatter': 1})
     assert [item.name for _, item in nav.home_rows()][:2] == ['/chatter', '/counter']
     assert nav.catalog['services'][0].type == 'example_interfaces/srv/AddTwoInts'

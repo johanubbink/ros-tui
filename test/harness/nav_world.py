@@ -15,14 +15,15 @@
 
 """The design prototype's world for the pure nav-model tests (test_nav.py, test_keymap.py).
 
-``DESIGN_CATALOG`` is KINDS from docs/design/hybrid-keys.html. ``RowsProvider`` is a stand-in
-``EntryProvider`` with three editable number rows per editable area, so the AREA and EDIT layers and
-per-tab undo can be tested before the real entries exist.
+``DESIGN_CATALOG`` is KINDS from docs/design/hybrid-keys.html. ``DesignProvider`` is the default
+``EntryProvider`` plus a topic's Echo / Publish mode (as ``TopicEntry`` has it). ``RowsProvider`` adds
+three editable number rows per editable area, so the AREA and EDIT layers and per-tab undo are tested
+without the real entries.
 """
 
 from types import SimpleNamespace
 
-from ros_tui.ui.nav import CatalogItem, Commit, Editing, EntryProvider, NavState, UndoEntry
+from ros_tui.ui.nav import EDIT, IN, CatalogItem, Commit, Editing, EntryProvider, NavState, UndoEntry
 
 DESIGN_CATALOG = SimpleNamespace(
     topics=[CatalogItem('/chatter', 'std_msgs/msg/String', 1),
@@ -40,7 +41,33 @@ DESIGN_CATALOG = SimpleNamespace(
 FIELDS = ('a', 'b', 'c')
 
 
-class RowsProvider(EntryProvider):
+class DesignProvider(EntryProvider):
+    """No rows and no verbs, but a topic opens in Echo when someone publishes it, else in Publish, and
+    e / :echo / :pub switch it, as in TopicEntry."""
+
+    def __init__(self):
+        super().__init__()
+        self.modes: dict[str, str] = {}
+
+    def on_open(self, nav, tab):
+        if tab.kind == 'topics' and tab.name not in self.modes:
+            self.modes[tab.name] = 'echo' if nav.item(tab).publishers > 0 else 'publish'
+
+    def mode(self, tab):
+        return self.modes.get(tab.name) if tab.kind == 'topics' else None
+
+    def verb(self, nav, tab, name, how, arg=None):
+        if name != 'toggle_mode' or tab is None or tab.kind != 'topics':
+            return super().verb(nav, tab, name, how, arg)
+        if nav.layer == EDIT:
+            nav.commit_edit(how)
+        self.modes[tab.name] = arg or ('publish' if self.modes[tab.name] == 'echo' else 'echo')
+        nav.layer = IN
+        nav.log_line(how, f'now in {self.modes[tab.name]}')
+        return True
+
+
+class RowsProvider(DesignProvider):
     """Every area has three rows; editable ones hold numbers a, b, c (1, 2, 3) per entry. Row c of a
     message has a Quaternion helper, enter on an interface row opens /chatter, and verbs are recorded."""
 
@@ -96,7 +123,7 @@ class RowsProvider(EntryProvider):
 
 
 def design_nav(provider=None) -> NavState:
-    nav = NavState(provider=provider or EntryProvider())
+    nav = NavState(provider=provider or DesignProvider())
     nav.set_catalog(DESIGN_CATALOG)
     return nav
 
