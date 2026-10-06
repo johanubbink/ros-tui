@@ -16,9 +16,9 @@
 """The entry kinds: one `EntryProvider` per kind, and the router NavState talks to.
 
 `NavState` holds a single provider. `EntryRouter` is that provider in the app: it hands each call
-to the provider of the tab's kind (`node.NodeEntry` for nodes, `service.ServiceEntry` for services)
-and to the default `EntryProvider` for the kinds that aren't built yet (the default also keeps a
-topic's Echo / Publish mode). Pure Python: no textual, no rclpy. Bridge results reach a provider
+to the provider of the tab's kind (`node.NodeEntry` for nodes, `service.ServiceEntry` for services,
+`topic.TopicEntry` for topics) and to the default `EntryProvider` for the kinds that aren't built
+yet. `running` and `tick` go to every provider. Pure Python: no textual, no rclpy. Bridge results reach a provider
 through `post`, which runs a function on the UI thread, and slow imports run through `work`, in a
 worker thread (see `NextApp`).
 """
@@ -28,7 +28,8 @@ from typing import Any
 from ros_tui.ui.entries.base import Post, Work
 from ros_tui.ui.entries.node import NodeEntry
 from ros_tui.ui.entries.service import ServiceEntry
-from ros_tui.ui.nav import Area, Commit, Editing, EntryProvider, NavState, Tab, UndoEntry
+from ros_tui.ui.entries.topic import TopicEntry
+from ros_tui.ui.nav import Area, Commit, Editing, EntryProvider, NavState, Running, Tab, UndoEntry
 
 
 class EntryRouter(EntryProvider):
@@ -88,7 +89,17 @@ class EntryRouter(EntryProvider):
         kind = entry.owner.split(':', 1)[0]
         return self.providers.get(kind, self.default).undo(nav, entry)
 
+    def _all(self) -> list[EntryProvider]:
+        return [*self.providers.values(), self.default]
+
+    def running(self) -> dict[Tab, tuple[Running, ...]]:
+        return {tab: markers for provider in self._all() for tab, markers in provider.running().items()}
+
+    def tick(self, nav: NavState) -> bool:
+        return any([provider.tick(nav) for provider in self._all()])  # A list: every provider ticks.
+
 
 def entry_router(bridge: Any, post: Post | None = None, work: Work | None = None) -> EntryRouter:
     """The app's provider: the built entry kinds over `bridge`, the default for the rest."""
-    return EntryRouter({'nodes': NodeEntry(bridge, post), 'services': ServiceEntry(bridge, post, work)})
+    return EntryRouter({'nodes': NodeEntry(bridge, post), 'services': ServiceEntry(bridge, post, work),
+                        'topics': TopicEntry(bridge, post, work)})

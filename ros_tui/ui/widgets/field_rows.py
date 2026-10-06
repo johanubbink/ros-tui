@@ -24,13 +24,17 @@
 the row number, the indent of its depth, ▸ / ▾ on a row that folds, the field name, then its
 value coloured by type (numbers, strings), a dim enum name, and the type hint. The row being typed
 shows the edit box instead of its value; a value the last send check rejected is red.
+
+`editor_panel` is the whole editor area of a `MessageEntry`: a service's REQUEST, a topic's MESSAGE.
 """
 
 from rich.text import Text
 
+from ros_tui.ui.entries.message import EDITOR, MessageData
 from ros_tui.ui.fields import FieldRows, within
-from ros_tui.ui.nav import Editing
+from ros_tui.ui.nav import EDIT, Area, Editing, NavState, Tab
 from ros_tui.ui.widgets.base import edit_value, style
+from ros_tui.ui.widgets.panel import Panel, hint, waiting
 
 NUMBER_WIDTH = 3  # The row number column (the design's .ln, 24px).
 HINT_GAP = '    '  # Between a value and its "# type" hint.
@@ -62,3 +66,18 @@ def field_lines(form: FieldRows, editing: Editing | None = None) -> list[Text]:
         line.append(f'{HINT_GAP}# {row.hint}', style('syn-hint'))
         lines.append(line)
     return lines
+
+
+def editor_panel(nav: NavState, tab: Tab, data: MessageData, area: Area) -> Panel:
+    """The message editor as a panel: its rows, the history and the keys in the title, its errline."""
+    count = len(data.history)
+    history = f'history #{data.hpos + 1}/{count}' if data.hpos >= 0 else f'history ({count})'
+    parts = ((('[ ]', history),) if count else ()) + (('i', 'edit'), ('p', 'paste'))
+    panel = Panel(area.title, hint=hint(*parts), errline=nav.errline(tab))
+    if data.editor is None:
+        panel.lines = waiting(data.error)
+        return panel
+    editing = nav.editing if nav.layer == EDIT and nav.editing and nav.editing.area == EDITOR else None
+    panel.lines = field_lines(data.editor, editing) or [Text('(no fields)', style('dim'))]
+    panel.cursor = nav.row_index(area) if data.editor.rows() else None
+    return panel

@@ -217,6 +217,11 @@ def message_to_plain(message: Any, seed: bool = False) -> dict:
     return _plain_message(message, max_array=None, max_str=None, seed=seed)
 
 
+def message_to_display(message: Any) -> dict:
+    """Like message_to_plain, but long arrays and strings are cut for display (as to_truncated_yaml)."""
+    return _plain_message(message, max_array=TRUNCATE_ARRAY_ELEMENTS, max_str=TRUNCATE_STRING_CHARS)
+
+
 def build_message(message_class: type, values: Any) -> tuple[Any, list[TimeSetter]]:
     """
     Build a checked message instance from ``yaml.safe_load`` output.

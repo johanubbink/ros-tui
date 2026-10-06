@@ -42,6 +42,8 @@ from typing import Any, Callable, NamedTuple
 
 import yaml
 
+from ros_tui.constants import ECHO_DISPLAY_DIGITS
+
 # Messages small enough to be typed on one row as flow YAML. Keep this set small.
 COMPACT_TYPES = frozenset({
     'geometry_msgs/Point', 'geometry_msgs/Point32', 'geometry_msgs/Vector3', 'geometry_msgs/Quaternion',
@@ -141,7 +143,7 @@ def parse_path(text: str) -> Path:
 
 def flow_yaml(value: Any) -> str:
     """`value` as one line of YAML that parses back to it: '5.0', '[1, 2]', "{x: 1.0, y: 'a b'}"."""
-    text = yaml.safe_dump(value, default_flow_style=True, sort_keys=False, width=math.inf).strip()
+    text = yaml.safe_dump(value, default_flow_style=True, sort_keys=False, width=math.inf, allow_unicode=True).strip()
     if text.endswith('\n...'):  # safe_dump ends a bare scalar with a document-end marker.
         text = text[:-len('\n...')].rstrip()
     return text
@@ -261,8 +263,9 @@ def _load(text: str) -> Any:
         return None
 
 
-def _scalar(label: str, field: str, text: str) -> Any:
-    """`text` read as a value of the primitive type `label`, or ValueError naming the field."""
+def parse_scalar(label: str, field: str, text: str) -> Any:
+    """`text` read as a value of the primitive type `label`, or ValueError naming the field. Node
+    parameters are read by it too (entries/node.parse_value)."""
     shown = text.strip()
     if is_string(label):
         return _parse_string(text)
@@ -336,9 +339,48 @@ def parse(row: Row, text: str) -> Any:
         if not isinstance(value, list):
             raise ValueError(f'{field} needs a list like [1, 2], got "{shown}"')
         element = array_info(label).element
-        return [_scalar(element, f'{field}[{index}]', flow_yaml(item) if not isinstance(item, str) else item)
+        return [parse_scalar(element, f'{field}[{index}]', flow_yaml(item) if not isinstance(item, str) else item)
                 for index, item in enumerate(value)]
-    return _scalar(label, field, text)
+    return parse_scalar(label, field, text)
+
+
+def flat_rows(fields: tuple, values: dict | None) -> list[Row]:
+    """A received message as an echo shows it: nested messages (not compact ones) are opened down to
+    their fields, so every row is a value, a compact message or a list, named by its path
+    ('pose.pose.position'). A field missing from `values` has the value None (nothing received)."""
+    rows: list[Row] = []
+
+    def walk(node: Any, path: Path, value: Any) -> None:
+        shape = shape_of(node)
+        if shape != MESSAGE or not node.children:
+            rows.append(Row(path, node, 0, shape, value))
+            return
+        for child in node.children:
+            walk(child, path + (child.name,), value.get(child.name) if isinstance(value, dict) else None)
+
+    for node in fields:
+        walk(node, (node.name,), (values or {}).get(node.name))
+    return rows
+
+
+def readable(value: Any) -> Any:
+    """`value` with every float cut to ECHO_DISPLAY_DIGITS significant digits, for display only
+    (1.0806046117362795 -> 1.0806); a float's whole part is never cut (1728036001.5 -> 1728036002.0)."""
+    if isinstance(value, dict):
+        return {key: readable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [readable(item) for item in value]
+    if isinstance(value, float) and math.isfinite(value) and value != 0.0:
+        return round(value, max(0, ECHO_DISPLAY_DIGITS - 1 - math.floor(math.log10(abs(value)))))
+    return value
+
+
+def flat_text(row: Row) -> str:
+    """A flat row's value on one line, as an echo shows it: a list as its items, `[1.0, 2.0, …]`, and
+    floats cut to readable digits (`readable`; the row's value keeps them all)."""
+    if row.shape == LEAF and is_string(row.label):
+        return row.text
+    return flow_yaml(readable(row.value))
 
 
 def _get(values: dict, path: Path) -> Any:

@@ -24,7 +24,7 @@ from rich.text import Text
 
 from ros_tui.ui.nav import short_type
 from ros_tui.ui.theme import KINDS
-from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, cursor_cell, glyph, rule, spread, style
+from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, cursor_cell, glyph, markers, rule, spread, style
 
 WIDTH = 84  # The design's 660 px box.
 MAX_ROWS = 13  # Matches shown at once, as the design's r.slice(0, 13).
@@ -84,7 +84,11 @@ class SearchPopup(Overlay):
     def row(self, kind: str, item, query: str, sel: bool, width: int) -> Text:
         left = Text.assemble(cursor_bar(sel), glyph(kind), highlight(item.name, query),
                              '  ', (short_type(kind, item.type), style('type')))
-        right = Text('open tab ', style('dim')) if self.nav.is_open(kind, item.name) else Text()
+        right = markers(self.nav.running(kind, item.name), labels=True)
+        if self.nav.is_open(kind, item.name):
+            right.append((' ' if right else '') + 'open tab', style('dim'))
+        if right:
+            right.append(' ')
         line = spread(left, right, width)
         line.stylize_before(style('bright' if sel else 'text'))
         return band(line, width, 'cursor-on') if sel else line

@@ -19,7 +19,7 @@ from rich.style import Style
 from rich.text import Text
 from textual.widget import Widget
 
-from ros_tui.ui.nav import NavState
+from ros_tui.ui.nav import NavState, Running
 from ros_tui.ui.theme import KINDS, TOKENS
 
 BODY_TOP = 3  # Screen rows above the body: the top bar and the two-line tab row.
@@ -92,6 +92,14 @@ def glyph(kind: str) -> Text:
     return Text(KINDS[kind].glyph + ' ', style(KINDS[kind].color))
 
 
+def markers(running: tuple[Running, ...], labels: bool = False) -> Text:
+    """What an entry has running, in each marker's tone: " ◉ ↻" after a tab's name, or with
+    `labels` "◉ echoing ↻ 10 Hz" (the Here column, search rows)."""
+    if labels:
+        return Text(' ').join(Text(f'{m.glyph} {m.label}', style(m.tone)) for m in running)
+    return Text.assemble(*((' ' + m.glyph, style(m.tone)) for m in running))
+
+
 def cursor_bar(on: bool) -> Text:
     """The first cell of a row: the cursor's `▍` bar in the key colour when `on`, else a space."""
     return Text('▍' if on else ' ', style('key'))
@@ -117,3 +125,20 @@ def edit_value(value: str, fresh: bool = False) -> Text:
     the text cursor at its end. The value is underlined, standing in for the design's outline."""
     return Text.assemble((value, style('bright', 'edit-fresh' if fresh else 'edit') + Style(underline=True)),
                          cursor_cell())
+
+
+BUTTON_LOOKS = {  # The design's .btn looks -> (text colour, background, its key's colour).
+    '': ('btn-text', 'btn', 'key'),
+    'pri': ('bright', 'accent-fill', 'key'),
+    'stop': ('warn', 'stop-bg', 'warn'),
+}
+
+
+def button(label: Text | str, key: str, look: str = '') -> Text:
+    """A button with its key, as the design's `<button class="btn pri">▶ Call<span class="k">space`:
+    the label (a Text may style parts of itself) and the key on the look's background."""
+    color, bg, key_color = BUTTON_LOOKS[look]
+    text = Text.assemble(' ', label, ' ')
+    text.stylize_before(style(color, bg, bold=look != ''))
+    text.append(f'{key} ', style(key_color, bg))
+    return text

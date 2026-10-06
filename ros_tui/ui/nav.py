@@ -59,6 +59,11 @@ class Tab:
         """The entry key ('topics:/chatter') that per-entry state is stored under."""
         return f'{self.kind}:{self.name}'
 
+    @staticmethod
+    def of(key: str) -> 'Tab':
+        """The tab of an entry key ('topics:/chatter'), e.g. an UndoEntry's owner."""
+        return Tab(*key.split(':', 1))
+
 
 @dataclass(frozen=True)
 class Area:
@@ -109,6 +114,7 @@ class Commit:
     ok: bool
     text: str
     undo: UndoEntry | None = None
+    activity: tuple[str, str] = ()  # (text, cls) of an activity line it causes, e.g. a running repeat's new rate.
 
 
 @dataclass
@@ -155,6 +161,14 @@ class ActivityLine:
     name: str
     text: str
     cls: str = ''
+
+
+class Running(NamedTuple):
+    """Something an entry has running, as the tab row, the top bar and the Here column show it."""
+
+    glyph: str  # '◉' an echo, '↻' a repeating publish (step 7: the action spinner).
+    label: str  # The Here column's words: 'echoing', '10 Hz'.
+    tone: str  # The theme token it is drawn in: 'live' or 'ok'.
 
 
 class Footer(NamedTuple):
@@ -236,6 +250,14 @@ class EntryProvider:
         """Values for keymap labels, e.g. the repeat rate in "repeat at {rate} Hz"."""
         return {'rate': f'{PUBLISH_DEFAULT_RATE_HZ:g}'}
 
+    def running(self) -> dict[Tab, tuple[Running, ...]]:
+        """What runs in this provider's entries (echoes, repeats, goals), by entry, open or not."""
+        return {}
+
+    def tick(self, nav: 'NavState') -> bool:
+        """The clock ticked: take in what arrived (an echo's messages). True when the views should redraw."""
+        return False
+
     def verb(self, nav: 'NavState', tab: Tab | None, name: str, how: str, arg: Any = None) -> bool:
         """Run an entry verb: primary, secondary, repeat, rate, set_rate, toggle_mode, helper,
         helper_apply, helper_key, history_older, history_newer, yank, paste, and on field rows fold,
@@ -245,6 +267,11 @@ class EntryProvider:
         if name == 'helper':
             nav.show_toast('no helper for this field — fields with one show [f …]', 'bad')
             nav.log_line(how, 'no helper on this field')
+            return True
+        if name in ('repeat', 'rate', 'set_rate') and (tab is None or tab.kind != 'topics'):
+            nav.log_line(how, 'repeating is for topics')
+            if name == 'set_rate':
+                nav.show_toast(':rate works in a topic tab', 'bad')
             return True
         return False
 
@@ -362,6 +389,14 @@ class NavState:
     def set_row(self, index: int, area: Area | None = None) -> None:
         area = area or self.area()
         self.row_idx[(self.tab.key, area.id)] = index
+
+    def running(self, kind: str, name: str) -> tuple[Running, ...]:
+        """What the entry has running (◉ echoing, ↻ 10 Hz), for its tab, list row and search row."""
+        return self.provider.running().get(Tab(kind, name), ())
+
+    def running_all(self) -> list[tuple[Tab, Running]]:
+        """Everything running, for the top bar."""
+        return [(tab, marker) for tab, markers in self.provider.running().items() for marker in markers]
 
     def helper_name(self) -> str | None:
         """The helper of the field under the cursor (message areas only), as the design's helperAt()."""
@@ -481,15 +516,17 @@ class NavState:
         self.add_activity(tab, f'✗ {message}', 'r')
 
     def tick(self) -> bool:
-        """Expire what is timed (the toast, errlines). True when something changed, so the views redraw."""
+        """Let the entries take in what arrived (echoes), and expire what is timed (the toast,
+        errlines). True when something changed, so the views redraw."""
+        changed = self.provider.tick(self)
         now = self.clock()
         expired = [key for key, line in self.errlines.items() if now >= line.until]
         for key in expired:
             del self.errlines[key]
         if self.toast and now >= self.toast.until:
             self.toast = None
-            return True
-        return bool(expired)
+            changed = True
+        return changed or bool(expired)
 
     def add_activity(self, tab: Tab | None, text: str, cls: str = '') -> None:
         self.activity.insert(0, ActivityLine(tab.kind if tab else '', tab.name if tab else '', text, cls))
@@ -672,6 +709,8 @@ class NavState:
             return self._bad_value(how, result.text)
         if result.undo:
             self.push_undo(result.undo)
+        if result.activity:
+            self.add_activity(self.tab, *result.activity)
         self.errlines.pop(self.tab.key, None)
         self.log_line(how, result.text)
         self.editing = None

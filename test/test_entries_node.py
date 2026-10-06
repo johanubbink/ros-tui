@@ -213,12 +213,10 @@ def test_reopening_keeps_changes_that_are_not_set():
 
 
 def test_the_router_keeps_the_default_for_other_kinds():
-    nav, _ = node_nav('enter')  # /chatter has a publisher: it opens in Echo.
-    assert isinstance(nav.provider, EntryRouter) and nav.entry_mode() == 'echo'
+    nav, _ = node_nav('/', *'fib', 'enter')  # Actions are built in step 7.
+    assert isinstance(nav.provider, EntryRouter) and nav.tab.kind == 'actions'
     assert nav.provider.for_tab(nav.tab) is nav.provider.default
     assert isinstance(nav.provider.for_tab(NODE_TAB), NodeEntry)
-    press(nav, 'e')
-    assert nav.entry_mode() == 'publish'
     press(nav, 'space')
     assert nav.log[0] == ('space', 'not built yet')
 

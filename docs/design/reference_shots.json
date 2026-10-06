@@ -143,5 +143,20 @@
     "name": "service-history",
     "keys": ["/", "a", "d", "d", "enter", "space", "wait800", "enter", "enter", "backspace", "backspace", "5", "esc", "space", "wait800", "[", "["],
     "shows": "two calls sent (a 19, then a 5): [ [ shows the older one again, a: 19, and the REQUEST title says '[ ] history #2/2'"
+  },
+  {
+    "name": "publish-open",
+    "keys": ["/", "i", "n", "b", "o", "x", "enter"],
+    "shows": "/inbox open in Publish (nobody publishes it): '0 pub · 1 sub', the switch on Publish, '▶ Publish once space' and '↻ Repeat at 10 Hz r' with 'default · R changes it', MESSAGE selected with data 'hello'"
+  },
+  {
+    "name": "publish-repeating",
+    "keys": ["/", "i", "n", "b", "o", "x", "enter", "r", "wait1500"],
+    "shows": "/inbox repeating: '■ Stop repeating at 10 Hz s' (orange), 'N sent' in green, ↻ after /inbox in the tab and '≋ ↻ /inbox' in the top bar, ACTIVITY '↻ repeating at 10 Hz'"
+  },
+  {
+    "name": "rate-editing",
+    "keys": ["/", "i", "n", "b", "o", "x", "enter", "R", "5"],
+    "shows": "R on /inbox: the rate in the Repeat button is an edit box holding 5, 'type a rate · enter keeps · 0.1–100 Hz', no panel highlighted, footer INSERT tabs › /inbox › repeat rate › editing"
   }
 ]

@@ -23,9 +23,9 @@ from rich.text import Text
 
 from ros_tui.ui.nav import IN, KINDS as NAV_KINDS
 from ros_tui.ui.theme import KINDS
-from ros_tui.ui.widgets.base import NavView, cursor_bar, fit, glyph, spread, style
+from ros_tui.ui.widgets.base import NavView, cursor_bar, fit, glyph, markers, spread, style
 
-HERE_WIDTH = 16  # The Here column: '◉ echoing open'.
+HERE_WIDTH = 26  # The Here column: '◉ echoing ↻ 10 Hz open'.
 NAME_SHARE = 0.3  # The Name column's share of the width, when the names are shorter.
 
 
@@ -77,12 +77,14 @@ class HomeList(NavView):
             sel = index == nav.list_cur
             if sel:
                 keep = (len(lines) - (1 if first else 0), len(lines))
-            here = 'open' if nav.is_open(kind, item.name) else ''
+            here = markers(nav.running(kind, item.name), labels=True)
+            if nav.is_open(kind, item.name):
+                here.append((' ' if here else '') + 'open', style('dim'))
             line = Text.assemble(
                 cursor_bar(sel and on), glyph(kind),
                 fit(Text(item.name, style('bright') if sel else ''), name_w - 3),
                 fit(Text(item.type, style('bright' if sel else 'type')), type_w),
-                fit(Text(here, style('dim')), HERE_WIDTH))
+                fit(here, HERE_WIDTH))
             if sel:
                 line.stylize(style(bg=bg))
             lines.append(line)

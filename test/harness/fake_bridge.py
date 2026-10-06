@@ -25,7 +25,8 @@ of two modes:
   ``ManualClock``. Services and node requests (info, parameters, sets) answer after
   ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum; a name in ``failing_services`` fails),
   actions are accepted, stream feedback and then succeed (or cancel), and echo subscriptions get
-  messages pushed into their ``EchoBuffer`` at each topic's rate. Time only moves when the test
+  messages pushed into their ``EchoBuffer`` at each topic's rate. What the UI publishes (once, or
+  repeated at its rate) loops back into an echo on the same topic. Time only moves when the test
   calls ``bridge.clock.advance(seconds)``, so screenshots are deterministic.
 
 Everything runs on the caller's thread (the UI thread under Pilot). That is fine for the UI: its
@@ -340,6 +341,8 @@ class FakeBridge:
         self.failing_services: dict[str, str] = {}  # Service name -> why calling it fails (a TimeoutError).
         self._node_params: dict[str, list[tuple[str, str, Any]]] = {}  # Live: params after sets.
         self._feed_timers: dict[str, _Timer] = {}
+        self._periodic_timers: dict[str, _Timer] = {}  # Live: the repeating publishes.
+        self.periodic_sent: dict[str, int] = {}  # Live: how many each repeating publish sent.
         self._goals: dict[str, '_LiveGoal'] = {}
 
     @classmethod
@@ -441,15 +444,40 @@ class FakeBridge:
 
     def publish_once(self, name, type_name, message, time_setters=()):
         self.published.append((name, type_name, message))
+        if self.live:
+            self._loop_back(name, message)
         return completed_future()
 
     def start_periodic_publish(self, name, type_name, message, rate_hz, time_setters=()):
+        """Recorded; live, it publishes every 1 / rate_hz (replacing a repeat on the same topic)."""
         self.periodic_started.append((name, rate_hz))
+        if self.live:
+            self._stop_periodic(name)
+
+            def tick():
+                self.periodic_sent[name] = self.periodic_sent.get(name, 0) + 1
+                self._loop_back(name, message)
+            self._periodic_timers[name] = self.clock.call_every(1.0 / rate_hz, tick)
         return completed_future()
 
     def stop_periodic_publish(self, name):
         self.periodic_stopped.append(name)
+        self._stop_periodic(name)
         return completed_future()
+
+    def periodic_topics(self):
+        return tuple(self._periodic_timers)
+
+    def _stop_periodic(self, name):
+        timer = self._periodic_timers.pop(name, None)
+        if timer is not None:
+            timer.cancel()
+
+    def _loop_back(self, name, message):
+        """What the UI publishes reaches an echo on the same topic, as it would through ROS."""
+        buffer = self.subscriptions.get(name)
+        if buffer is not None:
+            buffer.push(message)
 
     def subscribe(self, name, type_name, buffer):
         self.subscriptions[name] = buffer
@@ -475,14 +503,15 @@ class FakeBridge:
     def topic_endpoint_counts(self, name):
         self.topic_counts_requests.append(name)
         if self.live:
-            publishers = 1 if name in self.feeds else 0
+            publishers = 1 if name in self.feeds or name in self._periodic_timers else 0
             return completed_future((publishers, 0 if publishers else 1))
         return completed_future((1, 2))
 
     def shutdown(self):
-        for timer in self._feed_timers.values():
+        for timer in [*self._feed_timers.values(), *self._periodic_timers.values()]:
             timer.cancel()
         self._feed_timers.clear()
+        self._periodic_timers.clear()
 
 
 class _LiveGoal:

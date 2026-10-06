@@ -21,31 +21,15 @@ from rich.text import Text
 
 from ros_tui.ui.entries.message import EDITOR
 from ros_tui.ui.entries.service import ServiceData
-from ros_tui.ui.nav import EDIT, Area, NavState, Tab
-from ros_tui.ui.widgets.base import spread, style
-from ros_tui.ui.widgets.field_rows import field_lines
-from ros_tui.ui.widgets.panel import Panel, hint, pill, waiting
+from ros_tui.ui.nav import Area, NavState, Tab
+from ros_tui.ui.widgets.base import button, keyed, spread, style
+from ros_tui.ui.widgets.field_rows import editor_panel, field_lines
+from ros_tui.ui.widgets.panel import Panel, pill
 
 
 def service_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
     """The button row: the Call button with its key, and where earlier requests are."""
-    button = Text.assemble((' ▶ Call ', style('bright', 'accent-fill', bold=True)),
-                           ('space ', style('key', 'accent-fill')))
-    return spread(button, Text.assemble(('[ ]', style('key', bold=True)), (' earlier requests', style('dim'))), width)
-
-
-def request_panel(nav: NavState, tab: Tab, data: ServiceData, area: Area) -> Panel:
-    count = len(data.history)
-    history = f'history #{data.hpos + 1}/{count}' if data.hpos >= 0 else f'history ({count})'
-    parts = ((('[ ]', history),) if count else ()) + (('i', 'edit'), ('p', 'paste'))
-    panel = Panel(area.title, hint=hint(*parts), errline=nav.errline(tab))
-    if data.editor is None:
-        panel.lines = waiting(data.error)
-        return panel
-    editing = nav.editing if nav.layer == EDIT and nav.editing and nav.editing.area == EDITOR else None
-    panel.lines = field_lines(data.editor, editing) or [Text('(no fields)', style('dim'))]
-    panel.cursor = nav.row_index(area) if data.editor.rows() else None
-    return panel
+    return spread(button('▶ Call', 'space', 'pri'), keyed('[ ]', 'earlier requests', 'dim'), width)
 
 
 def response_panel(nav: NavState, tab: Tab, data: ServiceData, area: Area) -> Panel:
@@ -73,5 +57,5 @@ def response_panel(nav: NavState, tab: Tab, data: ServiceData, area: Area) -> Pa
 def service_panels(nav: NavState, tab: Tab) -> list[Panel]:
     """REQUEST and RESPONSE, in the order of the entry's areas."""
     data = nav.provider.for_tab(tab).data(tab)
-    makers = {EDITOR: request_panel, 'out': response_panel}
+    makers = {EDITOR: editor_panel, 'out': response_panel}
     return [makers[area.id](nav, tab, data, area) for area in nav.areas()]

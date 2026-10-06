@@ -22,11 +22,11 @@ from ros_tui.ui.widgets.base import NavView, fit, glyph, spread, style
 
 FEED_LINES = 3
 WHO_WIDTH = 26  # The kind glyph and the entry name.
-LINE_COLORS = {'r': 'bad', 'g': 'ok'}  # By ActivityLine.cls, as the design's .r / .g classes.
+LINE_COLORS = {'r': 'bad', 'g': 'ok', 'c': 'live', 'dim': 'dim'}  # By ActivityLine.cls, as the design's classes.
 
 
 def activity_row(line: ActivityLine) -> Text:
-    """One activity line: the kind glyph and entry, then what happened (in red or green for .r / .g)."""
+    """One activity line: the kind glyph and entry, then what happened (coloured by its cls)."""
     who = Text.assemble(glyph(line.kind) if line.kind else '', line.name)
     return Text.assemble(fit(who, WHO_WIDTH), (line.text, style(LINE_COLORS.get(line.cls, ''))))
 

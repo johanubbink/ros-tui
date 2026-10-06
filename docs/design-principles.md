@@ -96,8 +96,11 @@ Follow these when adding or changing a key.
      In Insert, `^s` keeps the value and sends; a value that doesn't validate
      is never sent.
    - `r` (topic Publish only) starts repeating the publish at the shown rate,
-     with `↻`, until `s` stops it. `R` (or `:rate 5`) changes the rate.
-   - `s` only ever stops: it stops a repeat or cancels a goal.
+     with `↻`, until `s` stops it. `r` on a running repeat only says so
+     (`already repeating at 10 Hz — s stops it`); in Echo it sends nothing and
+     says `e` switches to Publish. `R` (or `:rate 5`) changes the rate.
+   - `s` only ever stops: it stops a repeat or cancels a goal. In Echo it
+     explains that space stops the echo.
    - No other key sends, and no navigation or editing key ever does. A send
      always flashes its button and adds an activity line.
    - In `keymap.py`, `primary` is dispatched by space and `^s` only, and the
@@ -134,8 +137,8 @@ Follow these when adding or changing a key.
 
 ## The field-row editor
 
-Every message the user fills in (a service request now, a topic's message and
-an action's goal next) is edited as **field rows**, one row per field, that
+Every message the user fills in (a service request, a topic's message, and an
+action's goal next) is edited as **field rows**, one row per field, that
 expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
 (`FieldRows`); `widgets/field_rows.py` draws it; `entries/message.py`
 (`MessageEntry`) holds it per entry and does the keys.
@@ -194,6 +197,14 @@ expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
   `[` skips the newest send when the editor already shows it, and says `that
   was the oldest send` at the end. The REQUEST title shows `[ ] history (n)`,
   or `[ ] history #i/n` while an older send is shown.
+- **Echoed messages** use the same structure, flattened (`fields.flat_rows`):
+  nested messages that aren't compact open down to their fields, so each
+  LATEST MESSAGE row is one value, one compact message or one list, named by
+  its path (`pose.pose.position: {x: 1.0, y: 2.0, z: 0.0}`).
+- **Echoed floats are cut for display only**: to `ECHO_DISPLAY_DIGITS` (6)
+  significant digits, never cutting the whole part (`fields.readable`, used by
+  `flat_text`): `1.0806046117362795` shows as `1.0806`. The values the entry
+  keeps are exact, so what is copied from an echo (step 9) is exact too.
 - The type is imported in a worker thread (`MessageEntry.load_types`, through
   `BridgeEntry._work`) the first time the entry opens; until then the editor
   says `loading…`, or `✗ could not load it: …`.
@@ -226,6 +237,8 @@ values in widget code or CSS; add a token instead.
 | `panel-hint` | `#9a9a9a` | the hints after a panel's title |
 | `err-bg` | `#201414` | the errline under a panel |
 | `edit` / `edit-fresh` | `#1c2733` / `#2f4f73` | a value being typed / one the first key replaces (a bool) |
+| `btn` / `btn-text` | `#1f1f1f` / `#e6e6e6` | a button at rest (the design's `.btn`), e.g. `↻ Repeat at 10 Hz r` |
+| `stop-bg` | `#4a2a12` | a stop button (`■ Stop echo`, `■ Stop repeating`); its text is `warn` |
 
 Syntax colours in message rows (`widgets/field_rows.py`): field keys `syn-key`
 `#9cdcfe`, numbers and bools `syn-num` `#b5cea8`, strings `syn-str` `#ce9178`,
@@ -350,22 +363,54 @@ The command line replaces the footer while it's open: COMMAND, the typed
 - **Running**:
   - `◉` (`live`) is a topic being echoed and `↻` (`ok`) a topic repeating.
   - The `◐◓◑◒` spinner (`live`) is an action executing.
-  - Markers show in the tab, in the top bar's running list, and in the list's
-    Here column (`◉ echoing`, `↻ 10 Hz`, `◐ running`, `open`).
+  - Markers show after the name in the tab (`/chatter ◉`), in the top bar's
+    running list (`≋ ◉ /chatter  ≋ ↻ /inbox`), in the list's Here column
+    (`◉ echoing`, `↻ 10 Hz`, `◐ running`, then `open`) and in search rows
+    (before `open tab`).
+  - They show whether the entry's tab is open or not: an echo or a repeat
+    keeps running when you switch or close its tab, as in the design, until
+    space or `s` stops it. A closed tab's echo or repeat stays in the top bar
+    and the Here column, so it is never invisible; reopen the entry to stop it.
+    Quitting stops everything: `bridge.shutdown()` destroys the node, with its
+    subscriptions and repeat timers.
+  - One hook feeds all of them: an entry kind's `running()` returns its
+    `nav.Running(glyph, label, tone)` markers by entry; `NavState.running(kind,
+    name)` and `running_all()` read them, and `widgets.base.markers` draws them.
+    A new running thing (step 7's goal spinner) only adds a marker there.
 - **Echo live vs. frozen**:
-  - The LATEST MESSAGE title says `● live · enter freezes it`.
+  - The LATEST MESSAGE title says `● live · enter freezes it`, or `not echoing ·
+    space starts`. Not echoing, every value is `–`.
   - Going inside freezes the values: a `❄ FROZEN` pill, then `+N new since`
-    (`warn`), then `esc goes live`.
-  - Leaving the area makes it live again. With nobody publishing, it says
-    `waiting — nobody publishes this yet`.
+    (`warn`, counting what arrived since), then `esc goes live · enter shows /
+    hides a field`. The footer's esc says `go live`.
+  - **Frozen is where the cursor is, not a flag**: an echo is frozen exactly
+    while the cursor is inside its LATEST MESSAGE (`TopicEntry.frozen`).
+    Leaving the area by any key (esc, a tab switch, `e`) makes it live again;
+    nothing can stay frozen by accident.
+  - With nobody publishing, a value says `waiting — nobody publishes this
+    yet`; with a publisher but no message yet, `waiting for the first message…`.
+  - enter on a field hides it (`[ ] data  hidden`) or shows it (`[x]`), per entry.
+  - The echo's row is the button and what it counted: `■ Stop echo space
+    3 received · 1.0 Hz`, then `· N dropped` in `warn` when the buffer dropped
+    some.
+- **Repeat rate**: the rate shows in the Repeat button, underlined, with a note
+  after it: `matches the publisher` (the rate the echo measured), `your rate`
+  (set with `R` or `:rate`) or `default` (`PUBLISH_DEFAULT_RATE_HZ`), then
+  `R changes it`. While repeating, `N sent` follows in `ok`. `R` types the new
+  rate in place (`type a rate · enter keeps · 0.1–100 Hz`, no panel
+  highlighted); a bad one gets the errline `rate must be 0.1–100 Hz, got "500"`.
+  A change is one undo step, and a change (or its undo) while repeating
+  restarts the repeat at the new rate, with the activity line
+  `↻ rate now 5 Hz`.
 - **Pills** in panel titles:
   - `calling…` (running, `live` on `#0f3a40`)
   - `✓ OK` / `SUCCEEDED` (`ok` on `#173a17`)
   - `CANCELED` (`warn` on `#3a3010`)
   - each followed by the timing, e.g. `4.0 ms` or `3.5 s · live feedback`.
-- **Buttons** carry their key:
-  - `▶ Publish once space` is primary (`accent-fill`).
-  - `■ Stop echo space` is the stop style (orange on `#4a2a12`).
+- **Buttons** carry their key (`widgets.base.button(label, key, look)`):
+  - `▶ Publish once space` is primary (`pri`: `bright` on `accent-fill`).
+  - `■ Stop echo space` is the stop style (`stop`: `warn` on `stop-bg`).
+  - `↻ Repeat at 10 Hz r` is a plain button (`btn-text` on `btn`).
   - Disabled buttons are dim and say why next to them ("a goal is running on
     /fibonacci").
 - **Flash**: a send outlines its button white for 0.5 s.
@@ -414,9 +459,13 @@ user's bad value. Examples from the prototype to copy the style from:
 | set result (activity) | `✓ set publish_rate = 5.0`, `✗ set frame_id: <the node's reason>` |
 | an empty state | `nothing yet — what you send shows up here`, `waiting — nobody publishes this yet` |
 | a successful action | `✓ response · sum: 42 (4.0 ms)`, `↻ repeating at 10 Hz`, `■ goal canceled after 2.5 s` |
+| topic activity | `◉ echo started`, `■ echo stopped`, `✓ published · data: hello`, `↻ rate now 5 Hz`, `■ repeat stopped after 40 sent` |
+| a running thing asked to start again | `already repeating at 10 Hz — s stops it` |
 
 - Activity lines start with a glyph: `✓` for done, `▶` for sent or called,
-  `↻` for repeating, `■` for stopped or canceled, `✗` for failed.
+  `↻` for repeating, `◉` for an echo started, `■` for stopped or canceled, `✗`
+  for failed. Their colour comes from the line's `cls`: `g` green, `r` red,
+  `c` cyan (`live`), `dim`.
 - Mention the undo when there is one: "(u undoes)".
 - Use the field's path as the user sees it (`pose.orientation`, `points[1].x`),
   never an internal name.
@@ -443,11 +492,14 @@ user's bad value. Examples from the prototype to copy the style from:
     (enter's own action on a row, tried before editing it: open an interface,
     fold a list), the esc label and log line for leaving an area, the enter label of a row
     (`enter_label`, e.g. `unfold`), the helper of a row, label values like the
-    rate, `verb` (primary, secondary, repeat, rate, history, yank, paste,
-    helper, and fold / unfold / add_item / delete_item on field rows) and
-    `undo`. The default has the design's areas, no
-    rows and a topic's Echo / Publish mode (`e`); other verbs log "not built
-    yet". Entry kinds subclass it.
+    rate, `verb` (primary, secondary, repeat, rate, set_rate, toggle_mode,
+    history, yank, paste, helper, and fold / unfold / add_item / delete_item
+    on field rows), `undo`, `running` (the markers above) and `tick` (take in
+    what arrived on the clock tick, such as an echo's messages). A `Commit` may
+    carry an activity line too (a new rate applied to a running repeat). The
+    default has the design's areas, no rows and a topic's Echo / Publish mode
+    (`e`); outside a topic, `e`, `r`, `R` and `:rate` say they are for topics,
+    and other verbs log "not built yet". Entry kinds subclass it.
   - **The provider router.** `NavState` holds one provider. In the app that is
     `entries.EntryRouter` (`entry_router(bridge, post)`): it hands each call to
     the provider of the tab's kind (`entries/node.py`'s `NodeEntry` for nodes),
@@ -487,8 +539,9 @@ user's bad value. Examples from the prototype to copy the style from:
     `nav.ACTIONS`, a flat table of one-line calls into `NavState` methods. Keys
     an overlay or insert doesn't use are swallowed; an unused typing key in
     normal mode logs a hint ("nothing on "z" here").
-  - Undo entries carry an owner: the tab key they were made in, or `*` for a
-    closed tab, the one entry any tab can undo.
+  - Undo entries carry an owner: the tab key they were made in
+    (`Tab.of(owner)` gives the tab back), or `*` for a closed tab, the one
+    entry any tab can undo.
   - Widgets render the model and pass on keys; they make no decisions.
     Every view of the new UI is a `NavView` (`ros_tui/ui/widgets/base.py`): it
     holds the `NavState`, never takes focus, has no bindings, and implements
@@ -533,17 +586,32 @@ user's bad value. Examples from the prototype to copy the style from:
   types, ranges and sizes. It reports each problem as a `FieldError` with the
   field path, and the UI maps that path to a row and an errline. Don't add a
   second validator in a widget.
+- **One parser for typed values.** A number, bool or string typed into a
+  field row is read by `fields.parse_scalar`, and so is a node parameter
+  (`entries/node.parse_value` maps `bool` / `int` / `double` onto it). Both say
+  `<name> needs a whole number, got "x"` the same way.
 - **Every tunable number lives in `ros_tui/constants.py`.**
 - **Time on screen comes from an injectable clock.** `NavState.clock` is the
   bridge's `now()` (`time.monotonic()` in `RosBridge`, the `ManualClock` in
   `FakeBridge`), so every shot is repeatable. The app's `tick()` runs every
-  `UI_TICK_PERIOD_S` and lets the model expire what is timed (`NavState.tick()`:
-  the toast and errlines). It redraws only when `tick()` says something changed. The
-  harness calls it after each `advance()` step. A `NavState` built without a
+  `UI_TICK_PERIOD_S` (0.1 s) and lets the entries take in what arrived and the
+  model expire what is timed (`NavState.tick()`: the providers' `tick`, then the
+  toast and errlines). It redraws only when `tick()` says something changed.
+  The harness calls it after each `advance()` step. A `NavState` built without a
   clock (the unit tests) has one that stands still, so nothing in the model
   reads the real time. Call timings read the same clock (a demo service call
-  takes `50.0 ms` under the FakeBridge); rates and elapsed times will too. The
-  old UI still reads the real clock (the echo Hz and "response in … ms").
+  takes `50.0 ms` under the FakeBridge), and so do rates: an `EchoBuffer` takes
+  the bridge's `now` as its `clock`, and a repeat's `N sent` is counted from
+  the clock. The old UI still reads the real clock (the echo Hz and "response
+  in … ms").
+- **Live data is drained, bounded.** An echo pushes into an `EchoBuffer` on the
+  ROS thread (it drops the oldest past `ECHO_BUFFER_MAXLEN`); each tick drains
+  it on the UI thread and keeps only the newest message, converted once with
+  long arrays and strings cut (`message_to_display`). So a 1 kHz topic costs one
+  conversion per tick, and the count, drops and rate still add up. The tick
+  asks for a redraw only when the active tab shows something new (its echo's
+  count or rate, its repeat's `N sent`): an idle app, or an echo running in
+  another tab, never redraws on the tick.
 - **Every step ships a scenario test with shots** (`test/ui/test_stepNN_*.py`).
   See [agentic-dev.md](agentic-dev.md).
 

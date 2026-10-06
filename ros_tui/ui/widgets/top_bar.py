@@ -17,7 +17,7 @@
 
 from rich.text import Text
 
-from ros_tui.ui.widgets.base import NavView, spread, style
+from ros_tui.ui.widgets.base import NavView, glyph, spread, style
 
 
 class TopBar(NavView):
@@ -32,5 +32,8 @@ class TopBar(NavView):
         return [spread(left, self.running(), width)]
 
     def running(self) -> Text:
-        """The running echoes, repeats and goals (◉ ↻ ◐); none exist before step 6."""
-        return Text(' ')
+        """The running echoes, repeats and goals: "≋ ◉ /chatter  ≋ ↻ /inbox"."""
+        text = Text()
+        for tab, marker in self.nav.running_all():
+            text.append_text(Text.assemble(glyph(tab.kind), (f'{marker.glyph} {tab.name}', style(marker.tone)), '  '))
+        return text or Text(' ')

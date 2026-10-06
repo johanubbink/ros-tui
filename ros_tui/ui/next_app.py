@@ -31,7 +31,7 @@ thread worker and posts its result the same way.
 The overlays (search, :log, the command suggestions, which-key, the toast) are `Overlay` views on
 the `overlay` layer; each says where it goes and `refresh_views` places it. Search and :log veil
 what is under them by dimming it. The model's clock is the bridge's `now()`; a UI_TICK_PERIOD_S
-timer calls `tick()`, which lets the model expire the toast.
+timer calls `tick()`, which lets the entries take in their echoes and the model expire the toast.
 """
 
 from textual import events

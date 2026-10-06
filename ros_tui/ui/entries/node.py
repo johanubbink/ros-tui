@@ -25,14 +25,13 @@ its own thread; `post` brings each answer to the UI thread (the app posts a mess
 touches the model. Until an answer is in, the area says "loading…".
 """
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 import yaml
 
 from ros_tui.ui.entries.base import BridgeEntry, Post
-from ros_tui.ui.fields import flow_yaml
+from ros_tui.ui.fields import BOOL_TYPE, flow_yaml, parse_scalar
 from ros_tui.ui.nav import Area, Commit, Editing, NavState, Tab, UndoEntry
 
 PARAM = 'par'  # UndoEntry kind of a parameter change.
@@ -47,7 +46,6 @@ INTERFACE_GROUPS = (
     ('Action client', 'action_clients', 'actions'),
 )
 
-_BOOL = re.compile(r'^(true|false)$', re.IGNORECASE)
 _NO_CHANGE = object()  # Undo data: the parameter had no change before.
 
 
@@ -90,40 +88,26 @@ def edit_text(param: Param, value: Any) -> str:
     return value if param.type == 'string' else render_value(value)
 
 
-def _bool(text: str) -> bool:
-    if not _BOOL.match(text):
-        raise ValueError(text)
-    return text.lower() == 'true'
+# The parameter types read as a message field of the same type (fields.parse_scalar).
+_SCALAR_LABELS = {'bool': BOOL_TYPE, 'int': 'int64', 'double': 'double'}
 
 
-def _list(text: str) -> list:
+def parse_value(param: Param, text: str) -> Any:
+    """The value typed for `param`, checked against its type. Raises ValueError with the message
+    the user sees, which names the parameter and quotes what was typed. Numbers and bools are read
+    as message fields are; a string is the text as typed; an array type takes a YAML list."""
+    text = text.strip()
+    if param.type in _SCALAR_LABELS:
+        return parse_scalar(_SCALAR_LABELS[param.type], param.name, text)
+    if param.type == 'string':
+        return text
     try:
         value = yaml.safe_load(text)
     except yaml.YAMLError:
         value = None
     if not isinstance(value, list):
-        raise ValueError(text)
+        raise ValueError(f'{param.name} needs a list like [1, 2], got "{text}"')
     return value
-
-
-# Parameter type -> (parse the typed text, what it needs, for the error). Array types parse as lists.
-_PARSERS = {
-    'bool': (_bool, 'true or false'),
-    'int': (int, 'a whole number'),
-    'double': (float, 'a number'),
-    'string': (str, ''),
-}
-
-
-def parse_value(param: Param, text: str) -> Any:
-    """The value typed for `param`, checked against its type. Raises ValueError with the message
-    the user sees, which names the parameter and quotes what was typed."""
-    text = text.strip()
-    parse, needs = _PARSERS.get(param.type, (_list, 'a list like [1, 2]'))
-    try:
-        return parse(text)
-    except ValueError:
-        raise ValueError(f'{param.name} needs {needs}, got "{text}"') from None
 
 
 class NodeEntry(BridgeEntry):
@@ -213,7 +197,7 @@ class NodeEntry(BridgeEntry):
 
     def undo(self, nav: NavState, entry: UndoEntry) -> str:
         name, before = entry.data
-        tab = Tab(*entry.owner.split(':', 1))
+        tab = Tab.of(entry.owner)
         changes = self.data(tab).changes
         if before is _NO_CHANGE:
             changes.pop(name, None)

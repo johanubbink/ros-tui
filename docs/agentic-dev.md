@@ -99,7 +99,10 @@ async def test_echo_chatter():
     gives `CANCEL_ACCEPTED`, then a `CANCELED` result.
   - Echo subscriptions get messages at each topic's rate: /chatter 1 Hz,
     /counter 50 Hz, /diagnostic_status 1 Hz, /localisation_pose 2 Hz. Topics
-    nobody publishes stay silent.
+    nobody publishes stay silent, but what the UI publishes on a topic (once,
+    or repeated at its rate) loops back into an echo on it, and a repeating
+    topic counts as published. `bridge.periodic_sent` counts each repeat's
+    sends.
   - Everything is driven by `bridge.clock` (a `ManualClock`), so the same keys
     and advances always give the same screen.
 

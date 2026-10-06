@@ -95,6 +95,7 @@ class MessageEntry(BridgeEntry):
     # ---------- loading ----------
     def on_open(self, nav: NavState, tab: Tab) -> None:
         """Import the entry's type in a worker the first time its tab opens."""
+        super().on_open(nav, tab)
         data = self.data(tab)
         if data.editor is not None or data.loading:
             return
@@ -180,7 +181,7 @@ class MessageEntry(BridgeEntry):
 
     def undo(self, nav: NavState, entry: UndoEntry) -> str:
         what, before = entry.data
-        tab = Tab(*entry.owner.split(':', 1))
+        tab = Tab.of(entry.owner)
         self.data(tab).editor.load(before)
         return f'undid {what} on {tab.name}'
 

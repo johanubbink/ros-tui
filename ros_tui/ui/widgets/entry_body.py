@@ -32,14 +32,18 @@ from ros_tui.ui.widgets.base import NavView, fit, spread, style
 from ros_tui.ui.widgets.node_entry import node_panels
 from ros_tui.ui.widgets.panel import Panel, draw_panel, panel_state, side_by_side, split
 from ros_tui.ui.widgets.service_entry import service_panels, service_toolbar
+from ros_tui.ui.widgets.topic_entry import topic_counts, topic_panels, topic_toolbar
 
 PANEL_WEIGHTS = {'actions': (2, 1), 'nodes': (10, 11)}  # Width shares of the panels side by side (else equal).
 PLACEHOLDER = 'nothing here yet — this entry is built in a later step'
 
 # Entry kind -> its panels, one per area in the order of nav.areas().
-RENDERERS: dict[str, Callable[[NavState, Tab], list[Panel]]] = {'nodes': node_panels, 'services': service_panels}
+RENDERERS: dict[str, Callable[[NavState, Tab], list[Panel]]] = {
+    'nodes': node_panels, 'services': service_panels, 'topics': topic_panels}
 # Entry kind -> its button row under the header (else a blank line).
-TOOLBARS: dict[str, Callable[[NavState, Tab, int], Text]] = {'services': service_toolbar}
+TOOLBARS: dict[str, Callable[[NavState, Tab, int], Text]] = {'services': service_toolbar, 'topics': topic_toolbar}
+# Entry kind -> a note after the type in the header (a topic's "1 pub · 0 sub").
+NOTES: dict[str, Callable[[NavState, Tab], Text]] = {'topics': topic_counts}
 
 
 def placeholder_panels(nav: NavState, tab: Tab) -> list[Panel]:
@@ -59,6 +63,10 @@ class EntryBody(NavView):
         left = Text.assemble(
             (f' {kind.glyph} {kind.one.upper()} ', style(kind.color, kind.tag_bg)), '  ',
             (tab.name, style('accent', bold=True)), '  ', (item.type if item else '', style('muted')))
+        note = NOTES.get(tab.kind)
+        if note:
+            left.append('  ')
+            left.append_text(note(nav, tab))
         mode = nav.entry_mode()
         if mode is None:
             return fit(left, width)

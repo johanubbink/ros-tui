@@ -16,7 +16,8 @@
 """The tab row (the design's renderTabRow and fitTabs): ☰ plus one tab per open entry.
 
 Two lines: the tabs, and under them a rule that underlines the active tab in its kind's colour.
-On the tab-row layer the cursor tab is outlined in the key colour. When the tabs don't fit, the
+On the tab-row layer the cursor tab is outlined in the key colour. A tab whose entry runs something
+shows its markers after the name (◉ echoing, ↻ repeating). When the tabs don't fit, the
 row scrolls by whole tabs to keep the active (or cursor) tab in view and says how many are hidden
 on each side ("‹ 2 more", "3 more ›").
 """
@@ -74,7 +75,8 @@ class EntryTabRow(NavView):
         for index, tab in enumerate(nav.tabs):
             kind = KINDS[tab.kind]
             parts = [(f'{index + 1} ', 'number')] if index < 9 else []
-            parts += [(kind.glyph + ' ', kind.color), (tab.name, ''), (' ×', 'dim')]
+            parts += [(kind.glyph + ' ', kind.color), (tab.name, '')]
+            parts += [(' ' + m.glyph, m.tone) for m in nav.running(tab.kind, tab.name)] + [(' ×', 'dim')]
             segments.append(_segment(parts, index == nav.active, cursor == index, 'grey', kind.color))
         return segments
 
