@@ -24,12 +24,14 @@ and `constants`) and its value as plain data (`message_yaml.message_to_plain`). 
 - COMPACT: a small message on one row as flow YAML, `{x: 1.0, y: 2.0, z: 0.0}` (COMPACT_TYPES).
   `header: auto` and `stamp: now` pass through as message_yaml's stamp-at-send magic.
 - MESSAGE: any other nested message, `▸ pose {…}`. Unfolding it lists its fields one level deeper.
+  It starts unfolded when it is the only field, or when all its fields are compact (a Pose).
 - ARRAY: a list or fixed array, `▸ points [3 items]`. Unfolding it lists `[0]`, `[1]` …; elements
   are added and deleted in place. A list of numbers or strings can also be typed whole, `[1, 2]`.
 
-Typed text is parsed per row (`parse`): a string field takes bare text as the string, the other
-fields read it as YAML and check its type, with a message that names the field and quotes the text
-("a needs a whole number, got "x""). Ranges, sizes and keys are checked by the message's own
+Typed text is parsed per row (`parse`): a string field takes bare text as the string, an enum
+field (a whole number with constants) a constant's name or the start of one ('err' is ERROR), the
+other fields read it as YAML and check its type, with a message that names the field and quotes the
+text ("a needs a whole number, got "x""). Ranges, sizes and keys are checked by the message's own
 validator (`build_message`, passed in as `validate`): its `FieldError.path` is mapped back to a row
 (`reveal`), so validation stays in one place.
 """
@@ -284,6 +286,33 @@ def parse_scalar(label: str, field: str, text: str) -> Any:
     return number
 
 
+def enum_value(constants: tuple, field: str, text: str) -> int:
+    """`text` typed into an enum field: a constant's name or the start of one, in any case ('err'
+    is ERROR), or a number. ValueError naming the field and its names otherwise."""
+    typed = text.strip()
+    lowered = typed.lower()
+    match = (next((number for name, number in constants if name.lower() == lowered), None)
+             if lowered else None)
+    if match is None and lowered:
+        match = next((number for name, number in constants if name.lower().startswith(lowered)), None)
+    if match is not None:
+        return match
+    number = _whole_number(typed)
+    if number is None:
+        names = ' / '.join(name for name, _ in constants)
+        raise ValueError(f'{field} needs {names} or a number, got "{typed}"')
+    return number
+
+
+def enum_matches(constants: tuple, text: str) -> str:
+    """The completion next to an enum field being typed: the constants that `text` could mean,
+    'OK=0  WARN=1  ERROR=2  STALE=3 · type a name or number'."""
+    typed = text.strip().lower()
+    matches = [f'{name}={number}' for name, number in constants
+               if not typed or name.lower().startswith(typed) or str(number) == typed]
+    return ('  '.join(matches) if matches else 'no match') + ' · type a name or number'
+
+
 def _whole_number(text: str) -> int | None:
     """Decimal, so a typed 019 is 19 (YAML would read 017 as octal); 5.0 is whole too."""
     try:
@@ -341,6 +370,8 @@ def parse(row: Row, text: str) -> Any:
         element = array_info(label).element
         return [parse_scalar(element, f'{field}[{index}]', flow_yaml(item) if not isinstance(item, str) else item)
                 for index, item in enumerate(value)]
+    if row.node.constants:
+        return enum_value(row.node.constants, field, text)
     return parse_scalar(label, field, text)
 
 
@@ -393,6 +424,21 @@ def _put(values: dict, path: Path, value: Any) -> None:
     _get(values, path[:-1])[path[-1]] = value
 
 
+def _compact_parents(nodes: tuple, path: Path) -> list[Path]:
+    """The nested messages (not inside a list) whose fields are all compact rows, such as a Pose's
+    position and orientation: they start unfolded, so the compact rows read as one flat form."""
+    found = []
+    for node in nodes:
+        if shape_of(node) != MESSAGE or not node.children:
+            continue
+        here = path + (node.name,)
+        if all(shape_of(child) == COMPACT for child in node.children):
+            found.append(here)
+        else:
+            found += _compact_parents(node.children, here)
+    return found
+
+
 class FieldRows:
     """The rows of one message: its value, which rows are unfolded, and the edits to them."""
 
@@ -405,6 +451,7 @@ class FieldRows:
         top = self.rows()
         if len(top) == 1 and top[0].folds and self._has_children(top[0]):  # One nested message: unfolded.
             self.opened.add(top[0].path)
+        self.opened.update(_compact_parents(self.fields, ()))
 
     # ---------- rows ----------
     def rows(self) -> list[Row]:

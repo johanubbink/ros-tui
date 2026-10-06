@@ -34,6 +34,7 @@ from typing import Any, Callable, Mapping, NamedTuple
 
 from ros_tui.constants import NAV_ACTIVITY_MAX, NAV_ERRLINE_S, NAV_LOG_LINES, NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ
 from ros_tui.ui import keymap
+from ros_tui.ui.helpers import Helper
 from ros_tui.ui.keymap import COMMANDS, MAX_SUGGESTIONS, key_char, key_display, normalize_key
 
 TABS, IN, AREA, EDIT = LAYERS = ('tabs', 'in', 'area', 'edit')
@@ -134,14 +135,6 @@ class CommandLine:
 @dataclass
 class LogView:
     cur: int = 0
-
-
-@dataclass
-class Helper:
-    """Placeholder for a field helper popup (step 8): the provider owns everything but the kind."""
-
-    kind: str  # 'enum', 'quat' or 'header'.
-    data: Any = None
 
 
 @dataclass(frozen=True)
@@ -407,7 +400,8 @@ class NavState:
         return self.provider.helper_name(self.tab, area, self.row_index(area))
 
     def label_vars(self) -> dict[str, Any]:
-        return {'rate': '', 'helper': self.helper_name() or '', **self.provider.label_vars(self.tab)}
+        return {'rate': '', 'helper': self.helper_name() or '', 'jump': self.helper.jump_keys() if self.helper else '',
+                **self.provider.label_vars(self.tab)}
 
     def list_mode(self) -> str:
         """The keymap mode whose keys "Keys right now" lists: the topmost overlay, insert or normal."""
@@ -481,7 +475,7 @@ class NavState:
 
     def footer(self) -> Footer:
         hide = self.search is not None or self.which_key == 'all'
-        helper = self.helper_name() if not self.helper and not self.logv and self.layer != EDIT else None
+        helper = self.helper_name() if not (hide or self.helper or self.logv or self.layer == EDIT) else None
         return Footer(self.mode_name(), self.path(), '' if hide else self.esc_label(),
                       '' if hide else self.enter_label(), self.pending, helper or '')
 
@@ -983,7 +977,7 @@ ACTIONS: dict[str, Callable[[NavState, Press], None]] = {
     'which_key_close': _set('which_key', None),
     'g_prefix': lambda nav, p: nav.g_prefix(),
     'g_cancel': lambda nav, p: nav.log_line('esc', 'g canceled'),
-    # helper (step 8: the provider does the work)
+    # field helper: the entry opens it, hands it its keys and writes its value (entries/message.py)
     'helper_key': lambda nav, p: nav.verb('helper_key', p.how, p.key),
     'helper_apply': lambda nav, p: nav.verb('helper_apply', p.how),
     'helper_close': lambda nav, p: nav.helper_close(),

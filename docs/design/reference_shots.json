@@ -100,6 +100,21 @@
     "shows": "/goal_pose in Publish, the Quaternion helper on pose.orientation in 'yaw only (°)' mode with yaw 90, preview {z: 0.707107, w: 0.707107}, HELPER badge"
   },
   {
+    "name": "header-helper",
+    "keys": ["/", "g", "o", "a", "l", "enter", "enter", "f"],
+    "shows": "/goal_pose in Publish, the Header helper on header: modes auto / now / manual with 'now' on, 'stamped at send, with a frame', the field frame_id = map, preview 'stamp: now · frame_id: map', HELPER badge"
+  },
+  {
+    "name": "enum-helper",
+    "keys": ["/", "d", "i", "a", "g", "enter", "e", "f", "j"],
+    "shows": "/diagnostic_status in Publish, the Enum helper on level: ○ 0 OK = 0, ● 1 WARN = 1 (picked), ○ 2 ERROR = 2, ○ 3 STALE = 3, preview '= 1  (WARN)', HELPER badge"
+  },
+  {
+    "name": "enum-typed",
+    "keys": ["/", "d", "i", "a", "g", "enter", "e", "i", "e", "r", "r", "esc"],
+    "shows": "level typed as 'err' in insert and kept with esc: the row reads 'level: 2 ERROR' (the name dim) with its [f Enum] badge"
+  },
+  {
     "name": "node-open",
     "keys": ["G", "k", "enter"],
     "shows": "/ros_tui_demo_servers open: ◆ NODE header with namespace /, INTERFACES selected (white border) with ▾ Publishes / Subscribes / Serves / Action server groups, PARAMETERS at rest with use_sim_time bool false, publish_rate double 10, frame_id string map"

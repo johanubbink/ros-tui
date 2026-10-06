@@ -160,6 +160,12 @@ expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
   line and is usually typed in one go.
 - A message whose only field is a nested message starts unfolded (a service
   request of one message would otherwise be a single folded row).
+- A nested message whose fields are all compact rows starts unfolded too, at
+  any depth outside a list (`fields._compact_parents`): a Pose (position,
+  orientation), a Twist, a Transform. So /goal_pose reads `header`, `▾ pose`,
+  `position`, `orientation`, and orientation is `j j j` away, as in the design
+  (which shows `pose.position` flat). A message with any other field stays
+  folded.
 - **Folding keys.** esc still means "up one layer" on every row, so folding
   has its own keys, as a file tree does: enter on a folded row unfolds it and
   on an unfolded row folds it; `h` / ← folds an unfolded row and on any other
@@ -211,6 +217,59 @@ expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
   `BridgeEntry._work`) the first time the entry opens; until then the editor
   says `loading…`, or `✗ could not load it: …`.
 
+## Field helpers
+
+`f` on a field row with a helper opens a small popup right under the row that
+fills the value for you (the design's `.hpop`). The model is
+`ros_tui/ui/helpers/` (pure, like `nav.py`); `widgets/helper_popup.py` draws it
+(`HelperPopup`, an `Overlay` in the body, under the row or above it when it
+doesn't fit); `entries/message.py` (`MessageEntry`) opens it and writes its
+value, so every message editor has the helpers: a topic's MESSAGE, a service's
+REQUEST and an action's GOAL.
+
+| Kind | Rows | Modes (tab / shift+tab) | Writes |
+|------|------|-------------------------|--------|
+| Quaternion | `geometry_msgs/Quaternion` | `x y z w` (normalised), `roll pitch yaw (°)`, `yaw only (°)`, `axis + angle (°)` | `{x: 0.0, y: 0.0, z: 0.707107, w: 0.707107}`, rounded to 6 digits |
+| Header | `std_msgs/Header` | `auto`, `now` (frame_id), `manual` (frame_id, stamp in seconds) | `auto`, `{stamp: now, frame_id: map}`, `{stamp: {sec: 2, nanosec: 500000000}, frame_id: map}` |
+| Time | `builtin_interfaces/Time` | `now`, `seconds`, `sec + nanosec` | `now`, `{sec: 2, nanosec: 500000000}` |
+| Enum | a whole number with enum constants (`FieldNode.constants`, e.g. DiagnosticStatus `level`) | none: a list of options, `● 1 WARN = 1` | the number |
+
+- **The popup**, top to bottom: the field (bold) and `<type> · <Name> helper`
+  (dim); the mode strip (the mode that is on in `bright` bold on `cursor-on`)
+  or an enum's options (the picked one on a `cursor-on` band with the `▍`
+  bar); for Header and Time a dim line saying what the mode does; the mode's
+  fields (`nothing to fill in` when it has none), each a grey name and its
+  value right-aligned in 8 cells, underlined, the one being typed on `hb-on`
+  with the text cursor; the preview `= …` in `ok`, or `= fix the values first`
+  in `bad`; a rule; the keys in `help-field`. It is as wide as its key line
+  (at least `MIN_WIDTH`).
+- **Keys** (keymap mode `helper`; the popup takes every key, nothing moves
+  underneath): enum: `j` `k` `↑` `↓` (and tab / shift+tab) pick, a digit jumps
+  to that option; the key line and `?` say `0–3` for the real count (the
+  keymap's `{jump}`, `Helper.jump_keys()`; only 0–9 jump). Others: tab / shift+tab the next / previous mode (its
+  fields start afresh), `↑` `↓` `←` `→` the field, typing changes it (the
+  first key replaces the value, as `edit-fresh` does), backspace edits.
+  enter applies, esc cancels. While it is open the badge is HELPER and the
+  footer says `esc cancel  enter apply`. `f` from the area pick goes into the
+  area first, as `i` does.
+- **Applying** writes the value as typed text through the row
+  (`FieldRows.accept(flow_yaml(value))`), so it is parsed and checked by
+  `build_message` like an edit, and is one undo step (`undid the Quaternion
+  helper on pose.orientation on /goal_pose`). The log says `filled
+  pose.orientation = {…} (u undoes)`; the same value again is no undo step.
+  While the fields make no value, enter keeps the popup open with the toast
+  `fix the highlighted values first`. esc says `helper closed, nothing
+  changed`.
+- **Enums in insert.** Typing into an enum field takes a constant's name or
+  the start of one, in any case, or a number (`fields.enum_value`): `err` is
+  2, `w` is 1. While it is typed, the completion (`fields.enum_matches`, in
+  `comp`) replaces the type hint: `OK=0  WARN=1  ERROR=2  STALE=3 · type a
+  name or number`, narrowed as you type. Anything else is `level needs OK /
+  WARN / ERROR / STALE or a number, got "hot"`. At rest the row shows the
+  number and the name dim, `level: 2 ERROR`.
+- `f` on a row without one says `no helper for this field — fields with one
+  show [f …]` (a bad toast), and nothing opens.
+
 ## Visual language
 
 ### Colour tokens
@@ -242,6 +301,9 @@ values in widget code or CSS; add a token instead.
 | `btn` / `btn-text` | `#1f1f1f` / `#e6e6e6` | a button at rest (the design's `.btn`), e.g. `↻ Repeat at 10 Hz r` |
 | `stop-bg` | `#4a2a12` | a stop button (`■ Stop echo`, `■ Stop repeating`, `■ Cancel goal`); its text is `warn` |
 | `btn-off` / `btn-off-bg` | `#5a5a5a` / `#181818` | a disabled button's text and background (the design's `.btn[disabled]`) |
+| `hb-edge` / `hb-text` / `hb-on` | `#4a5568` / `#aab4c3` / `#2a313b` | a row's `[f …]` helper badge (the design's `.hb`); `hb-on` is the badge on the cursor row and the helper field being typed |
+| `help-field` | `#6a7382` | the helper popup's key line (the design's `.hf`) |
+| `comp` | `#7f8a99` | an enum's completion while it is typed (the design's `.comp`) |
 
 Syntax colours in message rows (`widgets/field_rows.py`): field keys `syn-key`
 `#9cdcfe`, numbers and bools `syn-num` `#b5cea8`, strings `syn-str` `#ce9178`,
@@ -325,10 +387,10 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
   a whole row each is too much at 34 lines. The strip and the footer keep their
   own backgrounds (`strip`, `foot`) instead. So is the command line's magenta
   top rule.
-- **Overlays** (search, `:log`, which-key, the command suggestions, the toast)
-  are `Overlay` views (`widgets/base.py`) on the `overlay` layer, placed
-  absolutely: each one's `place(width, height)` returns its box in its parent
-  and `NextApp.refresh_views` applies it. Popups get a rounded border in their
+- **Overlays** (search, `:log`, which-key, the command suggestions, the field
+  helper, the toast) are `Overlay` views (`widgets/base.py`) on the `overlay`
+  layer, placed absolutely: each one's `place(width, height)` returns its box
+  in its parent and `NextApp.refresh_views` applies it. Popups get a rounded border in their
   edge colour. The border cells are on the popup's background, so the popup has
   a thin frame of its own colour outside the line; there's no shadow. Rules
   inside a popup are a row of `─` in `pop-line` (`rule()`). A popup's picked row
@@ -472,8 +534,15 @@ The command line replaces the footer while it's open: COMMAND, the typed
     red for a failure) for about 1.6 s.
   - `:log` shows them all.
 - **Helper badges**: a field with a helper shows `[f Quaternion]`,
-  `[f Header]` or `[f Enum]` at the end of its row. When the cursor is on such a
-  row, the panel title and the footer say `f opens the Quaternion helper`.
+  `[f Header]`, `[f Time]` or `[f Enum]` after its value, before the type
+  hint: brackets in `hb-edge`, `f` in `key` bold, the name in `hb-text`; on the
+  row under the cursor the brackets are `key`, the name `bright`, on `hb-on`.
+  Only rows of a message being edited have one (not an echo or a response).
+  While the cursor is inside the area on such a row, the panel title starts
+  with `f opens the Quaternion helper` (`f` bold, the rest `bright`), and the
+  footer shows `f Quaternion helper` in `bright` before `? keys`. The footer
+  drops it while `f` does something else: in a popup (search, `?`, `:log`,
+  the helper itself) and in insert. (The design still shows it under search.)
 
 ## Copy and tone
 
@@ -484,7 +553,9 @@ user's bad value. Examples from the prototype to copy the style from:
 | Situation | Text |
 |-----------|------|
 | undo with nothing here | `nothing to undo here` |
-| helper can't apply | `fix the highlighted values first` |
+| helper can't apply | `fix the highlighted values first` (toast); the popup's preview says `= fix the values first` |
+| a helper applied (log) | `filled pose.orientation = {x: 0.0, y: 0.0, z: 0.707107, w: 0.707107} (u undoes)` |
+| a helper closed with esc | `helper closed, nothing changed` |
 | closed a tab | `closed /chatter · u undoes` |
 | wrong type in the register | `copied a String, this needs a PoseStamped` |
 | field error (name the field) | `level needs OK / WARN / ERROR / STALE or a number, got "hot"` |
@@ -600,7 +671,7 @@ user's bad value. Examples from the prototype to copy the style from:
   - A popup is an `Overlay`, a `NavView` with `place(width, height)`: the box it
     takes in its parent, or `None` while the model has it closed. Whether it is
     open, and everything in it, comes from the model (`nav.search`, `nav.cmd`,
-    `nav.which_key`, `nav.logv`, `nav.toast`). To add one, subclass `Overlay`
+    `nav.which_key`, `nav.logv`, `nav.helper`, `nav.toast`). To add one, subclass `Overlay`
     and yield it in `NextApp.compose`; `refresh_views` places it.
   - Everything the footer, the tests and the tutorial need to know comes from
     the model. The harness reads it through `app.harness_state()`.
@@ -694,19 +765,28 @@ user's bad value. Examples from the prototype to copy the style from:
 - [ ] Write a scenario test with shots, and add design references to
       `docs/design/reference_shots.json`.
 
-### Checklist: adding a field helper (target)
+### Checklist: adding a field helper
 
-- [ ] Write the maths or parsing as pure functions, reusing `wizards/`
-      (quaternion, header, time) where possible. Unit-test them.
-- [ ] Register the helper for its type, so the row shows `[f <Name>]` and the
-      footer and panel title advertise `f`.
-- [ ] Follow the popup rules: a mode strip, tab for the next mode, ↑↓ between
-      fields, typing changes the value, a live preview line (`= …`, or `= fix
-      the values first` in `bad`), enter applies, esc cancels and changes
-      nothing.
-- [ ] An applied helper is one undo step.
-- [ ] Write a scenario test with shots: open, change mode, apply, and esc
-      leaving the value unchanged.
+`helpers/__init__.py` with `helpers/quaternion.py` is the worked example.
+
+- [ ] Write the maths or parsing as pure functions in `helpers/<kind>.py`, and
+      unit-test them (`test/test_helpers.py`). The old wizard screens import
+      theirs from there until step 10 deletes them.
+- [ ] Give the kind a name in `NAMES` and register its rows: by type label in
+      `BY_TYPE` (a compact type, so the row is typed on one line), or by
+      shape in `helper_kind`. That gives the row its `[f <Name>]` badge and the
+      title and footer hints.
+- [ ] Add its modes to `MODES` (a name, its fields, a note when the mode needs
+      saying), an opener that reads the row's value into the fields and picks
+      the mode (`OPENERS`), and a result that turns the fields into the value
+      and its preview label, or None while they don't make one (`RESULTS`).
+      The value must be what `fields.parse` and `build_message` accept.
+- [ ] Keep the popup rules above: tab for the next mode, ↑↓ between fields,
+      typing replaces then edits, a live preview, enter applies, esc changes
+      nothing. Don't add keys of its own; if it needs one, it goes in
+      `keymap.py` under the `helper` mode.
+- [ ] Write a scenario test with shots: open, change mode, apply, `u`, and esc
+      leaving the value unchanged; and add design references.
 
 ### Checklist: adding a key
 

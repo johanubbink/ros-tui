@@ -70,12 +70,10 @@ def test_rows_round_trip(kind, type_name):
 
 def test_compact_types_are_one_row():
     form, _ = form_for('msg', 'geometry_msgs/msg/PoseStamped')
-    assert [(row.field, row.shape, row.text) for row in form.rows()] == [
-        ('header', COMPACT, 'auto'), ('pose', MESSAGE, '{…}')]
-    form.toggle(1)
-    assert [(row.field, row.depth, row.text, row.hint) for row in form.rows()[2:]] == [
-        ('pose.position', 1, '{x: 0.0, y: 0.0, z: 0.0}', 'Point'),
-        ('pose.orientation', 1, '{x: 0.0, y: 0.0, z: 0.0, w: 1.0}', 'Quaternion')]
+    assert [(row.field, row.depth, row.shape, row.text, row.hint) for row in form.rows()] == [
+        ('header', 0, COMPACT, 'auto', 'Header'), ('pose', 0, MESSAGE, '', 'Pose'),
+        ('pose.position', 1, COMPACT, '{x: 0.0, y: 0.0, z: 0.0}', 'Point'),
+        ('pose.orientation', 1, COMPACT, '{x: 0.0, y: 0.0, z: 0.0, w: 1.0}', 'Quaternion')]
 
 
 def test_a_single_nested_message_starts_unfolded():
@@ -84,15 +82,25 @@ def test_a_single_nested_message_starts_unfolded():
     assert form.row(0).open
 
 
+def test_a_message_of_compact_fields_starts_unfolded():
+    """pose (Pose: position, orientation) is open at any depth; one with other fields stays folded."""
+    form, _ = form_for('msg', 'geometry_msgs/msg/PoseWithCovarianceStamped')
+    assert [(row.field, row.open) for row in form.rows()] == [('header', False), ('pose', False)]
+    form.toggle(1)
+    assert [row.field for row in form.rows()][2:5] == ['pose.pose', 'pose.pose.position', 'pose.pose.orientation']
+    form, _ = form_for('msg', 'geometry_msgs/msg/TwistStamped')
+    assert [row.field for row in form.rows()] == ['header', 'twist', 'twist.linear', 'twist.angular']
+
+
 def test_fold_unfold_and_up_to_the_parent():
-    form, _ = form_for('msg', 'geometry_msgs/msg/PoseStamped')
+    form, _ = form_for('msg', 'geometry_msgs/msg/PoseStamped')  # pose starts unfolded.
     assert form.unfold(0) is None  # header is a compact row: nothing inside it.
-    assert form.unfold(1) == (1, 'unfolded pose') and form.row(1).open
     assert form.unfold(1) == (2, 'into pose')
     assert form.fold(3) == (1, 'up to pose')  # h on a field goes to its parent …
     assert form.fold(1) == (1, 'folded pose') and len(form.rows()) == 2  # … and h there folds it.
+    assert form.unfold(1) == (1, 'unfolded pose') and form.row(1).open
     assert form.fold(0) is None  # Top level: nothing above.
-    assert form.toggle(0) is None and form.toggle(1) == 'unfolded pose' and form.toggle(1) == 'folded pose'
+    assert form.toggle(0) is None and form.toggle(1) == 'folded pose' and form.toggle(1) == 'unfolded pose'
 
 
 def test_arrays_add_and_delete():
@@ -199,7 +207,6 @@ def test_parse_errors_name_the_field(label, text, message):
 
 def test_compact_rows_parse_flow_maps():
     form, validate = form_for('msg', 'geometry_msgs/msg/PoseStamped')
-    form.toggle(1)
     assert form.accept(2, '{x: 1, y: 2}', validate)[1] == {'x': 1.0, 'y': 2.0, 'z': 0.0}  # Merged, made floats.
     assert form.row(2).text == '{x: 1.0, y: 2.0, z: 0.0}'
     with pytest.raises(ValueError) as error:

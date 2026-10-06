@@ -28,10 +28,11 @@ bridge's thread; the router's `post` wraps each in a `UiCall` message, so it is 
 thread, and the views redraw after it. Its `work` (importing a message type) runs in a textual
 thread worker and posts its result the same way.
 
-The overlays (search, :log, the command suggestions, which-key, the toast) are `Overlay` views on
-the `overlay` layer; each says where it goes and `refresh_views` places it. Search and :log veil
-what is under them by dimming it. The model's clock is the bridge's `now()`; a UI_TICK_PERIOD_S
-timer calls `tick()`, which lets the entries take in their echoes and the model expire the toast.
+The overlays (search, :log, the command suggestions, which-key, the field helper, the toast) are
+`Overlay` views on the `overlay` layer; each says where it goes and `refresh_views` places it.
+Search and :log veil what is under them by dimming it. The model's clock is the bridge's `now()`;
+a UI_TICK_PERIOD_S timer calls `tick()`, which lets the entries take in their echoes and the model
+expire the toast.
 """
 
 from textual import events
@@ -46,8 +47,8 @@ from ros_tui.ui import theme
 from ros_tui.ui.entries import entry_router
 from ros_tui.ui.messages import GraphUpdated, PublisherCount, UiCall
 from ros_tui.ui.nav import NavState
-from ros_tui.ui.widgets import (ActivityStrip, CommandSuggestions, EntryBody, EntryTabRow, Footer, HomeList,
-                                LogPopup, SearchPopup, ToastView, TopBar, WhichKeyPopup)
+from ros_tui.ui.widgets import (ActivityStrip, CommandSuggestions, EntryBody, EntryTabRow, Footer, HelperPopup,
+                                HomeList, LogPopup, SearchPopup, ToastView, TopBar, WhichKeyPopup)
 from ros_tui.ui.widgets.base import NavView, Overlay
 
 
@@ -92,6 +93,7 @@ class NextApp(App, inherit_bindings=False):
         with Vertical(id='body'):
             yield HomeList(nav)
             yield EntryBody(nav)
+            yield HelperPopup(nav)
             yield ToastView(nav)
         yield ActivityStrip(nav)
         yield Footer(nav)

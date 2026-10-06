@@ -48,9 +48,9 @@ class Footer(NavView):
             last = index == len(foot.path) - 1
             left.append(part, style('bright', bold=True) if last else style('head'))
         right = Text()
-        for key, label in (('esc', foot.esc), ('enter', foot.enter), ('f', foot.helper and f'{foot.helper} helper'),
-                           ('?', 'keys')):
+        for key, label, color in (('esc', foot.esc, 'grey'), ('enter', foot.enter, 'grey'),
+                                  ('f', foot.helper and f'{foot.helper} helper', 'bright'), ('?', 'keys', 'grey')):
             if label:
-                right.append_text(keyed(key, label))
+                right.append_text(keyed(key, label, color))
                 right.append('  ')
         return [spread(left, right, width)]

@@ -96,7 +96,7 @@ class Binding:
     mode: str  # One of MODES.
     group: str  # Heading in `?` and the tutorial.
     show: str  # The key as the design prints it; '' keeps the row out of the lists.
-    label: str  # What it does, in the design's words; may hold {rate} or {helper}.
+    label: str  # What it does, in the design's words; may hold {rate} or {helper} (and `show` {jump}).
     alias: str = ''  # The familiar alternative, listed as "also …".
     when: tuple[str, ...] = ()  # Context predicates (PREDICATES, '!' negates) that must all hold.
     shown: tuple[str, ...] = ()  # Extra predicates for listing the row; dispatch ignores them.
@@ -159,7 +159,7 @@ KEYMAP = (
 
     _b('helper', 'Helper', 'j k ↑ ↓', 'next option / way to enter it', when='enum_helper'),
     _b('helper', 'Helper', 'tab', 'next option / way to enter it', when='!enum_helper'),
-    _b('helper', 'Helper', '0–3', 'jump / next field', when='enum_helper'),
+    _b('helper', 'Helper', '{jump}', 'jump / next field', when='enum_helper'),
     _b('helper', 'Helper', '↑ ↓', 'jump / next field', when='!enum_helper'),
     _b('helper', 'Helper', 'type', 'change the value', when='!enum_helper'),
     _b('helper', 'Helper', 'enter', 'apply (u undoes)', run=[('enter', 'helper_apply')]),
@@ -300,7 +300,7 @@ def lookup(nav, mode: str, key: str) -> str | None:
 def rows_for(nav, mode: str) -> list[KeyRow]:
     """The listed rows of one mode that apply now, grouped by first appearance like keyList()."""
     values = nav.label_vars()
-    rows = [KeyRow(b.group, b.show, b.label.format(**values), b.alias) for b in KEYMAP
+    rows = [KeyRow(b.group, b.show.format(**values), b.label.format(**values), b.alias) for b in KEYMAP
             if b.mode == mode and b.show and holds(nav, b.when) and holds(nav, b.shown)]
     groups = list(dict.fromkeys(row.group for row in rows))
     return [row for group in groups for row in rows if row.group == group]

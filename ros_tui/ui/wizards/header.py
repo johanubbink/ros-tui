@@ -22,6 +22,7 @@ from textual.containers import Horizontal
 from textual.widget import Widget
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
+from ros_tui.ui.helpers.header import parse_header as _parse_header
 from ros_tui.ui.wizards.base import WizardScreen
 from ros_tui.ui.wizards.components import pressed_key
 from ros_tui.ui.wizards.registry import register
@@ -137,22 +138,3 @@ class HeaderWizardPopup(WizardScreen):
             self._set_error('stamp: enter seconds (e.g. 2.5) or "now" — or use Fill')
             return None
         return {'stamp': stamp, 'frame_id': frame_id}
-
-
-def _parse_header(value: Any) -> tuple[str, str, Any]:
-    """Best-effort (mode, frame_id, stamp) prefill from a parsed header field value.
-
-    ``stamp`` is a ``{'sec', 'nanosec'}`` dict for a manual header, else ``None``.
-    """
-    if not isinstance(value, dict):
-        return 'auto', '', None
-    frame_id = str(value.get('frame_id', ''))
-    stamp = value.get('stamp')
-    if stamp == 'now':
-        return 'now', frame_id, None
-    if isinstance(stamp, dict):
-        return 'manual', frame_id, {
-            'sec': int(stamp.get('sec', 0)),
-            'nanosec': int(stamp.get('nanosec', 0)),
-        }
-    return 'auto', frame_id, None

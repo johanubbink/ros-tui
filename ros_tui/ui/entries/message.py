@@ -27,6 +27,8 @@ the design's 'msg' branches of startEdit / commitEdit / undo and its hist():
 - o adds a list element after the cursor and starts editing it; d deletes one. Each is one undo step.
 - [ and ] step through what was sent from this entry, newest first; ] past the newest brings back
   what you were typing (the draft).
+- f on a row with a field helper (helpers/) opens it; enter writes its value into the row, as one
+  undo step, and esc leaves the row as it was.
 
 Subclasses send (`verb('primary')`) and may show more areas (`form`).
 """
@@ -38,7 +40,9 @@ from typing import Any, Callable
 from ros_tui.constants import SEND_HISTORY_MAX
 from ros_tui.ros.message_yaml import build_message, import_type, message_structure, message_to_plain, request_class
 from ros_tui.ui.entries.base import BridgeEntry, Post, Work
-from ros_tui.ui.fields import FieldRows, describe, path_text
+from ros_tui.ui.fields import FieldRows, Row, describe, flow_yaml, path_text
+from ros_tui.ui.helpers import Helper, helper_name
+from ros_tui.ui.keymap import key_char
 from ros_tui.ui.nav import Area, Commit, Editing, NavState, Tab, UndoEntry
 
 FIELDS = 'fields'  # UndoEntry kind of a change to an entry's field rows; data is (what, values before).
@@ -153,31 +157,42 @@ class MessageEntry(BridgeEntry):
             return None
         return 'fold' if current.open else 'unfold'
 
+    def helper_name(self, tab: Tab, area: Area, row: int) -> str | None:
+        return helper_name(self._edit_row(tab, area, row))
+
     # ---------- editing ----------
+    def _edit_row(self, tab: Tab, area: Area | None, row: int) -> Row | None:
+        """Row `row` of an area you edit (the message, the request, the goal), or None."""
+        form = self.form(tab, area) if area is not None and area.editable else None
+        return form.row(row) if form else None
+
     def start_edit(self, tab: Tab, area: Area, row: int, clear: bool) -> Editing | None:
-        form = self.form(tab, area) if area.editable else None
-        current = form.row(row) if form else None
+        current = self._edit_row(tab, area, row)
         if current is None or not current.editable:
             return None
         text = '' if clear else current.edit_text()
         return Editing(area.id, row, text, old=text, fresh=current.fresh, field=current.field)
 
     def commit_edit(self, tab: Tab, editing: Editing) -> Commit:
-        data = self.data(tab)
-        form = data.editor
-        index = form.index_of(editing.field) if form else None  # By field: rows can fold meanwhile.
-        if index is None:
-            return Commit(False, f'{editing.field} is no longer in the message')
-        before = form.to_plain()
         try:
-            old, new = form.accept(index, editing.value, data.build)
+            shown, undo = self._write(tab, editing.field, editing.value, 'the edit of')
         except ValueError as error:
             return Commit(False, str(error))
-        shown = form.row(index).text
-        if new == old:
-            return Commit(True, f'kept {editing.field} = {shown}')
-        return Commit(True, f'kept {editing.field} = {shown} (u undoes)',
-                      UndoEntry(tab.key, FIELDS, (f'the edit of {editing.field}', before)))
+        return Commit(True, f'kept {editing.field} = {shown}' + (' (u undoes)' if undo else ''), undo)
+
+    def _write(self, tab: Tab, field: str, text: str, what: str) -> tuple[str, UndoEntry | None]:
+        """Keep `text` as the value of `field` (by field: rows can fold meanwhile): (the value as
+        its row shows it, the undo step, or None when nothing changed). ValueError with the user's
+        message when it doesn't parse or validate."""
+        data = self.data(tab)
+        form = data.editor
+        index = form.index_of(field) if form else None
+        if index is None:
+            raise ValueError(f'{field} is no longer in the message')
+        before = form.to_plain()
+        old, new = form.accept(index, text, data.build)
+        undo = UndoEntry(tab.key, FIELDS, (f'{what} {field}', before)) if new != old else None
+        return form.row(index).text, undo
 
     def undo(self, nav: NavState, entry: UndoEntry) -> str:
         what, before = entry.data
@@ -195,9 +210,44 @@ class MessageEntry(BridgeEntry):
             self._change_list(nav, tab, how, add=False)
         elif name in ('history_older', 'history_newer'):
             self.step_history(nav, tab, how, older=name == 'history_older')
-        else:
+        elif name == 'helper_key' and nav.helper:
+            nav.helper.press(arg, key_char(arg))
+        elif name == 'helper_apply' and nav.helper:
+            self.apply_helper(nav, tab, how)
+        elif not (name == 'helper' and self.open_helper(nav, tab, how)):
             return super().verb(nav, tab, name, how, arg)
         return True
+
+    # ---------- field helpers ----------
+    def open_helper(self, nav: NavState, tab: Tab, how: str) -> bool:
+        """f on a row with a helper opens its popup (the design's openHelper). False without one."""
+        helper = Helper.open(self._edit_row(tab, nav.area(), nav.row_index()))
+        if helper is None:
+            return False
+        nav.helper = helper
+        nav.log_line(how, f'opened the {helper.name} helper for {helper.field}')
+        return True
+
+    def apply_helper(self, nav: NavState, tab: Tab, how: str) -> None:
+        """enter in the helper writes its value into the row, as one undo step (the design's
+        applyHelper). While its fields make no value it stays open."""
+        helper = nav.helper
+        result = helper.result()
+        if result is None:
+            nav.show_toast('fix the highlighted values first', 'bad')
+            nav.log_line(how, '✗ the helper has no value yet — fix the values first')
+            return
+        try:
+            shown, undo = self._write(tab, helper.field, flow_yaml(result.value), f'the {helper.name} helper on')
+        except ValueError as error:
+            nav.show_toast(str(error), 'bad')
+            nav.log_line(how, f'✗ {error}')
+            return
+        nav.helper = None  # It opened on this row inside the area, so the cursor is where it was.
+        nav.errlines.pop(tab.key, None)
+        if undo:
+            nav.push_undo(undo)
+        nav.log_line(how, f'filled {helper.field} = {shown}' + (' (u undoes)' if undo else ''))
 
     def _fold(self, nav: NavState, tab: Tab, how: str, unfold: bool) -> None:
         area = nav.area()

@@ -15,9 +15,8 @@
 
 """Time wizard — fill a builtin_interfaces/Time value several ways.
 
-The pure conversions between a Time value (``{'sec', 'nanosec'}``) and the ways the wizard lets
-you enter one never read the wall clock (the popup passes ``time.time()`` in), so they stay
-deterministic and unit-testable without a running app.
+The pure conversions between a Time value and the ways to enter one live in
+ros_tui.ui.helpers.time, shared with the new UI's Time and Header helpers.
 """
 
 import time
@@ -28,61 +27,13 @@ from textual import on
 from textual.widget import Widget
 from textual.widgets import Static
 
+from ros_tui.ui.helpers.time import WALLCLOCK_FORMAT as _WALLCLOCK_FORMAT
+from ros_tui.ui.helpers.time import stamp_to_seconds_str  # noqa: F401 - re-exported for header.py and __init__
+from ros_tui.ui.helpers.time import epoch_to_stamp, parse_wallclock, seconds_str_to_stamp
+from ros_tui.ui.helpers.time import parse_time as _parse_time
 from ros_tui.ui.wizards.base import WizardScreen
 from ros_tui.ui.wizards.components import ModeForm
 from ros_tui.ui.wizards.registry import register
-
-_WALLCLOCK_FORMAT = '%Y-%m-%d %H:%M:%S'  # Local time; the time wizard's wall-clock mode.
-
-
-def seconds_str_to_stamp(text: str) -> dict[str, int]:
-    """Parse a non-negative decimal-seconds string into ``{'sec', 'nanosec'}``.
-
-    Splits on ``.`` so precision survives float rounding: ``'2.5'`` -> ``{'sec': 2, 'nanosec':
-    500000000}``. The fractional part is padded/truncated to 9 digits. Raises ``ValueError`` on
-    a negative value or non-numeric text.
-    """
-    text = text.strip()
-    if text.startswith('-'):
-        raise ValueError('time must not be negative')
-    whole, dot, frac = text.partition('.')
-    whole = whole or '0'
-    if not whole.isdigit() or (dot and frac and not frac.isdigit()):
-        raise ValueError('not a number')
-    nanosec = int((frac + '000000000')[:9]) if frac else 0
-    return {'sec': int(whole), 'nanosec': nanosec}
-
-
-def epoch_to_stamp(epoch: float) -> dict[str, int]:
-    """Convert a POSIX epoch (float seconds) into ``{'sec', 'nanosec'}``, clamped at zero."""
-    epoch = max(epoch, 0.0)
-    sec = int(epoch)
-    nanosec = int(round((epoch - sec) * 1_000_000_000))
-    if nanosec >= 1_000_000_000:  # rounding can carry into the next second.
-        sec += 1
-        nanosec -= 1_000_000_000
-    return {'sec': sec, 'nanosec': nanosec}
-
-
-def parse_wallclock(text: str) -> float:
-    """Parse a local ``YYYY-MM-DD HH:MM:SS`` string into a POSIX epoch (float seconds)."""
-    return datetime.strptime(text.strip(), _WALLCLOCK_FORMAT).timestamp()
-
-
-def stamp_to_seconds_str(stamp: dict[str, int]) -> str:
-    """Render ``{'sec', 'nanosec'}`` as a trimmed decimal-seconds string (inverse of parse)."""
-    sec = int(stamp.get('sec', 0))
-    nanosec = int(stamp.get('nanosec', 0))
-    if nanosec == 0:
-        return str(sec)
-    return f'{sec}.{nanosec:09d}'.rstrip('0')
-
-
-def _parse_time(value: Any) -> tuple[str, str]:
-    """Best-effort (mode, seconds_str) prefill from a parsed time field value."""
-    if isinstance(value, dict) and ('sec' in value or 'nanosec' in value):
-        return 'seconds', stamp_to_seconds_str(value)
-    return 'now', '0.0'
 
 
 @register('builtin_interfaces/Time')

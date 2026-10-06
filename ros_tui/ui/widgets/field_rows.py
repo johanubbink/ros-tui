@@ -22,8 +22,9 @@
     4    ▸ d [0 items]    # double[]
 
 the row number, the indent of its depth, ▸ / ▾ on a row that folds, the field name, then its
-value coloured by type (numbers, strings), a dim enum name, and the type hint. The row being typed
-shows the edit box instead of its value; a value the last send check rejected is red.
+value coloured by type (numbers, strings), a dim enum name, the `[f Quaternion]` badge of a row with
+a field helper, and the type hint. The row being typed shows the edit box instead of its value (an
+enum's completion instead of the hint); a value the last send check rejected is red.
 
 `editor_panel` is the whole editor area of a `MessageEntry`: a service's REQUEST, a topic's MESSAGE.
 """
@@ -31,9 +32,10 @@ shows the edit box instead of its value; a value the last send check rejected is
 from rich.text import Text
 
 from ros_tui.ui.entries.message import EDITOR, MessageData
-from ros_tui.ui.fields import FieldRows, Row, flat_text, within
-from ros_tui.ui.nav import EDIT, Area, Editing, NavState, Tab
-from ros_tui.ui.widgets.base import edit_value, style
+from ros_tui.ui.fields import FieldRows, Row, enum_matches, flat_text, within
+from ros_tui.ui.helpers import helper_name
+from ros_tui.ui.nav import AREA, EDIT, Area, Editing, NavState, Tab
+from ros_tui.ui.widgets.base import edit_value, keyed, style
 from ros_tui.ui.widgets.panel import Panel, hint, waiting
 
 NUMBER_WIDTH = 3  # The row number column (the design's .ln, 24px).
@@ -41,8 +43,9 @@ HINT_GAP = '    '  # Between a value and its "# type" hint.
 VALUE_COLORS = {'num': 'syn-num', 'str': 'syn-str', '': 'text'}
 
 
-def field_lines(form: FieldRows, editing: Editing | None = None) -> list[Text]:
-    """The rows of `form`; `editing` is the edit in this area, if any (its row shows the edit box)."""
+def field_lines(form: FieldRows, editing: Editing | None = None, current: int | None = None) -> list[Text]:
+    """The rows of `form`; `editing` is the edit in this area, if any (its row shows the edit box),
+    and `current` the row under the cursor while inside the area (its helper badge lights up)."""
     fold_slot = form.has_folds()  # Keep names aligned when some rows have ▸ / ▾ in front.
     lines = []
     for index, row in enumerate(form.rows()):
@@ -51,9 +54,14 @@ def field_lines(form: FieldRows, editing: Editing | None = None) -> list[Text]:
             line.append(('▾ ' if row.open else '▸ ') if row.folds else '  ', style('grey'))
         line.append(row.key, style('syn-key'))
         bad = bool(form.bad) and within(form.bad, row.field) and not row.open
-        if editing is not None and editing.row == index:
+        typing = editing is not None and editing.row == index
+        if typing:
             line.append(': ')
             line.append_text(edit_value(editing.value, editing.fresh))
+            if row.node.constants:  # An enum: what the typed text could mean, instead of the type.
+                line.append('  ' + enum_matches(row.node.constants, editing.value), style('comp'))
+                lines.append(line)
+                continue
         elif row.folds:
             if row.text:
                 line.append(' ' + row.text, style('bad' if bad else 'dim'))
@@ -62,10 +70,28 @@ def field_lines(form: FieldRows, editing: Editing | None = None) -> list[Text]:
             line.append(row.text, style('bad' if bad else VALUE_COLORS[row.style]))
             if row.enum_name:
                 line.append(' ' + row.enum_name, style('dim'))
-        # Step 8 adds the "[f …]" badge of a row with a field helper here.
+        name = helper_name(row) if form.editable and not typing else None
+        if name:
+            line.append('  ')
+            line.append_text(helper_badge(name, index == current))
         line.append(f'{HINT_GAP}# {row.hint}', style('syn-hint'))
         lines.append(line)
     return lines
+
+
+def helper_badge(name: str, on: bool) -> Text:
+    """A row's "[f Quaternion]" (the design's .hb): brighter on the row under the cursor."""
+    edge, text = ('key', 'bright') if on else ('hb-edge', 'hb-text')
+    badge = Text.assemble(('[', style(edge)), ('f', style('key', bold=True)), (f' {name}', style(text)),
+                          (']', style(edge)))
+    if on:
+        badge.stylize(style(bg='hb-on'))
+    return badge
+
+
+def helper_hint(name: str) -> Text:
+    """The panel title's "f opens the Quaternion helper", while inside the area on such a row."""
+    return keyed('f', f'opens the {name} helper', 'bright')
 
 
 def shown_value(row: Row) -> Text:
@@ -82,11 +108,15 @@ def editor_panel(nav: NavState, tab: Tab, data: MessageData, area: Area) -> Pane
     count = len(data.history)
     history = f'history #{data.hpos + 1}/{count}' if data.hpos >= 0 else f'history ({count})'
     parts = ((('[ ]', history),) if count else ()) + (('i', 'edit'), ('p', 'paste'))
-    panel = Panel(area.title, hint=hint(*parts), errline=nav.errline(tab))
+    inside = nav.layer == AREA and nav.area() == area
+    helper = nav.helper_name() if inside else None
+    title = Text.assemble(helper_hint(helper), '  ') if helper else Text()
+    panel = Panel(area.title, hint=title + hint(*parts), errline=nav.errline(tab))
     if data.editor is None:
         panel.lines = waiting(data.error)
         return panel
     editing = nav.editing if nav.layer == EDIT and nav.editing and nav.editing.area == EDITOR else None
-    panel.lines = field_lines(data.editor, editing) or [Text('(no fields)', style('dim'))]
+    current = nav.row_index(area) if inside else None
+    panel.lines = field_lines(data.editor, editing, current) or [Text('(no fields)', style('dim'))]
     panel.cursor = nav.row_index(area) if data.editor.rows() else None
     return panel

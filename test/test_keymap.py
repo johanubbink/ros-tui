@@ -35,7 +35,7 @@ INBOX = ['j', 'j', 'j', 'enter']
 DYNAMIC_ROWS = [
     ('Helper', 'j k ↑ ↓', 'next option / way to enter it'),
     ('Helper', 'tab', 'next option / way to enter it'),
-    ('Helper', '0–3', 'jump / next field'),
+    ('Helper', '{jump}', 'jump / next field'),
     ('Helper', '↑ ↓', 'jump / next field'),
     ('Insert', '^s', 'keep it and set it'),
     ('Insert', '^s', 'keep it and send'),

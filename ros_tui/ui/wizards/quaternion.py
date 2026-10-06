@@ -15,10 +15,8 @@
 
 """Quaternion wizard — enter a geometry_msgs/Quaternion as raw / euler / yaw / axis-angle.
 
-The rotation math is delegated to tf_transformations (the ROS wrapper over transforms3d) so the
-conventions match the rest of the ROS ecosystem. It is imported lazily inside each helper so
-this module still imports without a ROS environment (the pure math and registry are unit-tested
-with no rclpy/tf present).
+The rotation maths lives in ros_tui.ui.helpers.quaternion, shared with the new UI's Quaternion
+helper.
 """
 
 import math
@@ -28,44 +26,10 @@ from textual import on
 from textual.widget import Widget
 from textual.widgets import RadioButton, RadioSet, Static
 
+from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler
 from ros_tui.ui.wizards.base import WizardScreen
 from ros_tui.ui.wizards.components import ModeForm, pressed_key
 from ros_tui.ui.wizards.registry import register
-
-
-def quat_from_euler(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
-    """(x, y, z, w) from ROS RPY: roll=X, pitch=Y, yaw=Z, intrinsic ZYX ('sxyz'), radians."""
-    from tf_transformations import quaternion_from_euler
-
-    x, y, z, w = quaternion_from_euler(roll, pitch, yaw)  # default axes='sxyz'
-    return float(x), float(y), float(z), float(w)
-
-
-def quat_about_axis(ax: float, ay: float, az: float, angle: float) -> tuple[float, float, float, float]:
-    """(x, y, z, w) for a rotation of ``angle`` rad about axis (ax, ay, az); zero axis -> identity."""
-    if ax == 0.0 and ay == 0.0 and az == 0.0:
-        return 0.0, 0.0, 0.0, 1.0
-    from tf_transformations import quaternion_about_axis
-
-    x, y, z, w = quaternion_about_axis(angle, (ax, ay, az))
-    return float(x), float(y), float(z), float(w)
-
-
-def normalize_quat(x: float, y: float, z: float, w: float) -> tuple[float, float, float, float]:
-    """Scale (x, y, z, w) to unit length; a zero-length quaternion becomes the identity."""
-    norm = math.sqrt(x * x + y * y + z * z + w * w)
-    if norm == 0.0:
-        return 0.0, 0.0, 0.0, 1.0
-    return x / norm, y / norm, z / norm, w / norm
-
-
-def clean_quat(x: float, y: float, z: float, w: float, ndigits: int = 6) -> dict[str, float]:
-    """Round to ``ndigits`` and collapse ``-0.0`` to ``0.0`` so the dumped YAML stays tidy."""
-    def clean(value: float) -> float:
-        rounded = round(value, ndigits)
-        return 0.0 if rounded == 0.0 else rounded
-
-    return {'x': clean(x), 'y': clean(y), 'z': clean(z), 'w': clean(w)}
 
 
 @register('geometry_msgs/Quaternion')

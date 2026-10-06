@@ -91,6 +91,12 @@ TOKENS = {
     'ok-bg': '#173a17',  # an ok toast (and ✓ OK pills)
     'bad-bg': '#3a1515',  # a bad toast
     'info': '#8fc3ec',  # an info toast's text, on panel-in
+    # Field helpers (the design's .hb badge, .hpop popup and .comp enum completion).
+    'hb-edge': '#4a5568',  # a row's [f …] badge at rest
+    'hb-text': '#aab4c3',
+    'hb-on': '#2a313b',  # the badge on the row under the cursor, the helper field being typed
+    'help-field': '#6a7382',  # a helper field's underline colour, the popup's key hint line
+    'comp': '#7f8a99',  # an enum's completion while typing it
 }
 
 

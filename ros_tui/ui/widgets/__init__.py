@@ -19,6 +19,7 @@ from ros_tui.ui.widgets.activity_strip import ActivityStrip
 from ros_tui.ui.widgets.command_suggestions import CommandSuggestions
 from ros_tui.ui.widgets.entry_body import EntryBody
 from ros_tui.ui.widgets.footer import Footer
+from ros_tui.ui.widgets.helper_popup import HelperPopup
 from ros_tui.ui.widgets.home_list import HomeList
 from ros_tui.ui.widgets.log_popup import LogPopup
 from ros_tui.ui.widgets.search_popup import SearchPopup
@@ -27,5 +28,5 @@ from ros_tui.ui.widgets.toast import ToastView
 from ros_tui.ui.widgets.top_bar import TopBar
 from ros_tui.ui.widgets.which_key import WhichKeyPopup
 
-__all__ = ['ActivityStrip', 'CommandSuggestions', 'EntryBody', 'EntryTabRow', 'Footer', 'HomeList', 'LogPopup',
+__all__ = ['ActivityStrip', 'CommandSuggestions', 'EntryBody', 'EntryTabRow', 'Footer', 'HelperPopup', 'HomeList', 'LogPopup',
            'SearchPopup', 'ToastView', 'TopBar', 'WhichKeyPopup']
