@@ -20,14 +20,18 @@ from typing import Any, Callable
 from ros_tui.ui.nav import EntryProvider
 
 Post = Callable[[Callable[[], None]], None]
+Work = Post
 
 
 class BridgeEntry(EntryProvider):
     """An entry kind over `bridge` (a RosBridge or FakeBridge). The bridge answers on its own thread;
-    wrap every answer in `self._post(fn)`, which runs `fn` on the UI thread. Without a `post` (unit
-    tests over a bridge that answers in place) `fn` runs straight away."""
+    wrap every answer in `self._post(fn)`, which runs `fn` on the UI thread. Slow work that isn't a
+    bridge call (importing an interface type) goes to `self._work(fn)`, which runs `fn` in a worker
+    thread; `fn` posts its result too. Without a `post` or `work` (unit tests over a bridge that
+    answers in place) `fn` runs straight away."""
 
-    def __init__(self, bridge: Any, post: Post | None = None):
+    def __init__(self, bridge: Any, post: Post | None = None, work: Work | None = None):
         super().__init__()
         self._bridge = bridge
         self._post = post or (lambda fn: fn())
+        self._work = work or (lambda fn: fn())

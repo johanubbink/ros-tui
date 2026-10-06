@@ -48,7 +48,7 @@ serves one of them.
 |---|-------|-----------|------|-----|-------|
 | 1 | **Tab row** (`tabs`) | the row of open tabs (☰ list, 1…9) | `h` `l`, ← →, tab / shift+tab | nothing ("top layer — :q quits") | go into the tab under the cursor |
 | 2 | **Inside a tab** (`in`) | on ☰: the mixed list; on an entry: its areas (panels) | ☰: `j` `k`, ↑ ↓, tab cycles the kind chips. Entry: `h` `j` `k` `l`, arrows, tab pick an area | up to the tab row | ☰: open the entry under the cursor. Entry: into the picked area |
-| 3 | **Inside an area** (`area`) | the rows of one panel: message fields, parameters, interfaces, echoed fields | `j` `k`, ↑ ↓, tab; `gg` `G` | up to the area pick ("back out", or "go live" on a frozen echo) | do the row's thing: edit a field or parameter, open an interface in a tab, show or hide an echoed field |
+| 3 | **Inside an area** (`area`) | the rows of one panel: message fields, parameters, interfaces, echoed fields | `j` `k`, ↑ ↓, tab; `gg` `G`; on field rows `h` `l`, ← → fold and unfold | up to the area pick ("back out", or "go live" on a frozen echo), however deep the row | do the row's thing: edit a field or parameter, unfold or fold a nested message or list, open an interface in a tab, show or hide an echoed field |
 | 4 | **Insert** (`edit`) | typing into one value | typing; tab keeps it and edits the next field | keep it (if it's invalid: drop it and keep the old value, with a toast) | keep it (if it's invalid: stay, with an errline) |
 
 `i` and `a` edit the field under the cursor, `c` clears it and edits. From the
@@ -123,13 +123,80 @@ Follow these when adding or changing a key.
    - Sending: `space` `^s` `r` `s` (`.` is free: nothing resends)
    - Moving: `h` `j` `k` `l` and the arrows, `tab` `shift+tab`, `gg` `G`
    - Tabs: `0`–`9` `H` `L` `gt` `gT` `x`
-   - Editing: `u` `y` `p` `i` `a` `c` `f` `e` `R` `[` `]`
+   - Editing: `u` `y` `p` `i` `a` `c` `f` `e` `R` `[` `]`, and on field rows
+     `o` `d` (add / delete a list element)
    - Overlays: `/` `^f` `:` `?` `g`
    - Quitting: `:q`
 6. **Undo is per tab.** `u` undoes only changes made in the current tab: edits,
    pastes, rate changes, parameter changes and applied helpers. The one
    exception is reopening a closed tab. If there is nothing to undo here, say
    so, and mention changes in other tabs that are being kept.
+
+## The field-row editor
+
+Every message the user fills in (a service request now, a topic's message and
+an action's goal next) is edited as **field rows**, one row per field, that
+expand in place. There is no YAML mode. The model is `ros_tui/ui/fields.py`
+(`FieldRows`); `widgets/field_rows.py` draws it; `entries/message.py`
+(`MessageEntry`) holds it per entry and does the keys.
+
+**Row shapes.**
+
+| Shape | Looks like | enter | Typed as |
+|-------|-----------|-------|----------|
+| leaf (number, bool, string) | `1  a: 19    # int64` | edit it | the value; a string field takes bare text as the string (`hello world`), quotes only when you want them read as YAML (`'42'`) |
+| compact message | `3  header: auto    # Header` | edit it | one flow map, `{x: 1.0, y: 2.0, z: 0.0}`; keys you leave out keep their old value; `header: auto` and `stamp: now` stamp at send time |
+| other nested message | `▸ pose {…}` / `▾ pose` | unfold / fold | (its fields, one level in) |
+| list or fixed array | `▸ points [3 items]` | unfold / fold | its elements `[0]`, `[1]` … one level in; a list of numbers or strings can also be typed whole on its own row (`i`), `[1, 2.5]` |
+
+- **Compact types** are a short, fixed list: `COMPACT_TYPES` in `fields.py`
+  (Point, Point32, Vector3, Quaternion, Pose2D, Header, Time, Duration). Keep
+  it small: a compact row is only worth it when the whole value fits on one
+  line and is usually typed in one go.
+- A message whose only field is a nested message starts unfolded (a service
+  request of one message would otherwise be a single folded row).
+- **Folding keys.** esc still means "up one layer" on every row, so folding
+  has its own keys, as a file tree does: enter on a folded row unfolds it and
+  on an unfolded row folds it; `h` / ← folds an unfolded row and on any other
+  row jumps up to its parent row; `l` / → unfolds a folded row and on an
+  unfolded one steps into its first field. Folds are remembered per entry.
+  The footer's enter label says `unfold` or `fold` on such a row.
+- **List keys.** `o` adds an element after the one under the cursor (on the
+  list's own row: at the end) and starts editing it, as vim's `o` opens a line;
+  `d` deletes the element under the cursor (or the one the cursor is inside).
+  Each is one undo step. A fixed array can't grow or shrink ("k always has 9
+  elements"), a bounded list stops at its bound ("holds at most 3 elements").
+  `x` is not used: it closes the tab everywhere.
+- enter always does what the footer's enter label says: on a list of numbers it
+  unfolds or folds, and `i` / `c` type the whole list.
+- tab and shift+tab in insert keep the value and edit the next / previous row
+  that can be typed, skipping nested messages and lists of messages (a list of
+  numbers is typed whole).
+- A number that is still `0`, like a bool, starts **fresh**: the first key
+  replaces it (shown on `edit-fresh`). Whole numbers are read as decimal, so
+  `019` is 19.
+- **Validation copy.** A typed value is parsed by its row first: `a needs a
+  whole number, got "abc"`, `x needs a number, got "5x"`, `flag needs true or
+  false, got "1"`, `pose.position needs {x: …, y: …, z: …}, got "1, 2"`. Then
+  the whole message is checked by `build_message`; its `FieldError` is shown
+  only when its path is the edited row or inside it, as `<path> must be …`
+  (`status[0].level must be an integer in [0, 255], got 300`). As everywhere,
+  enter on a bad value stays in insert with an errline; esc drops it with a
+  toast.
+- **Before a send** the message is built once more. If that fails (a value set
+  some other way), nothing is sent: the folds open to show the field
+  (`FieldRows.reveal` maps the `FieldError.path` to the deepest row that is
+  shown), the cursor goes to it, its value turns red, the errline names it and
+  the toast says `fix the highlighted values first`.
+- **History.** Every send goes to the front of the entry's history
+  (`SEND_HISTORY_MAX`). `[` shows the previous send in the editor and `]` the
+  next one; `]` past the newest brings back what you were typing (the draft).
+  `[` skips the newest send when the editor already shows it, and says `that
+  was the oldest send` at the end. The REQUEST title shows `[ ] history (n)`,
+  or `[ ] history #i/n` while an older send is shown.
+- The type is imported in a worker thread (`MessageEntry.load_types`, through
+  `BridgeEntry._work`) the first time the entry opens; until then the editor
+  says `loading…`, or `✗ could not load it: …`.
 
 ## Visual language
 
@@ -160,8 +227,12 @@ values in widget code or CSS; add a token instead.
 | `err-bg` | `#201414` | the errline under a panel |
 | `edit` / `edit-fresh` | `#1c2733` / `#2f4f73` | a value being typed / one the first key replaces (a bool) |
 
-Syntax colours in message rows: field keys `#9cdcfe`, numbers `#b5cea8`,
-strings `#ce9178`, type hints `#5c6f5c`.
+Syntax colours in message rows (`widgets/field_rows.py`): field keys `syn-key`
+`#9cdcfe`, numbers and bools `syn-num` `#b5cea8`, strings `syn-str` `#ce9178`,
+type hints `syn-hint` `#5c6f5c`, row numbers `line-no` `#4a4a4a`. Compact rows
+are in `text`; `▸ {…}` and `[3 items]` are `dim`; a value the send check
+rejected is `bad`. Pill backgrounds: `live-bg` (calling…), `ok-bg` (✓ OK),
+`warn-bg` (CANCELED), `bad-bg` (✗ FAILED).
 
 ### Entry kinds
 
@@ -330,7 +401,10 @@ user's bad value. Examples from the prototype to copy the style from:
 | field error (name the field) | `level needs OK / WARN / ERROR / STALE or a number, got "hot"` |
 | range error | `rate must be 0.1–100 Hz, got "500"` |
 | esc on an invalid value | `rate must be 0.1–100 Hz, got "500" — kept the old value` |
-| blocked send | `a goal is already running on /fibonacci — s cancels it` |
+| blocked send | `a goal is already running on /fibonacci — s cancels it`, `still calling /add_two_ints — wait for the response` |
+| a send that doesn't build | `fix the highlighted values first` (toast) and the field's errline |
+| a list that can't change | `k always has 9 elements`, `bool_values holds at most 3 elements`, `o adds to a list — move the cursor to one ([…] rows)` |
+| a failed call (activity) | `✗ call failed: service /add_two_ints not available (50.0 ms)` |
 | nothing to act on | `start the echo first (space)`, `change a value first (enter edits it)` |
 | no helper | `no helper for this field — fields with one show [f …]` |
 | unknown command | `unknown command :foo — : then tab lists them` |
@@ -352,9 +426,11 @@ user's bad value. Examples from the prototype to copy the style from:
 - **A pure model with thin widgets.**
   - `ros_tui/ui/nav.py` and `ros_tui/ui/keymap.py` are plain Python: no
     textual, no rclpy (`test_keymap.py` checks). So is `ros_tui/ui/fields.py`,
-    the row model of a message **(target)**. They are unit-tested on their own
-    (`test/test_nav.py`, `test/test_keymap.py`, over the design's world in
-    `test/harness/nav_world.py`).
+    the row model of a message (`test_fields.py` checks; it doesn't even import
+    the ROS layer: `build_message` comes in as a `validate` callable). They are
+    unit-tested on their own (`test/test_nav.py`, `test/test_keymap.py`, over
+    the design's world in `test/harness/nav_world.py`, and `test/test_fields.py`
+    over real message structures).
   - `NavState` holds the catalogue (the ☰ list, fed by `set_catalog` from a
     `GraphSnapshot`), the open tabs, the active tab, the layer, the tab, list,
     area and row cursors, the kind chip, the overlays, the `g` prefix, the undo
@@ -363,10 +439,13 @@ user's bad value. Examples from the prototype to copy the style from:
     as plain data for the harness.
   - What an entry holds comes from an `EntryProvider`: its areas (`AREAS`, by
     screen), its row count, `start_edit` / `commit_edit` (returning a `Commit`:
-    kept with a log line and an optional `UndoEntry`, or an error), `activate_row`,
-    the esc label and log line for leaving an area, the helper of a row, label
-    values like the rate, `verb` (primary, secondary, repeat, rate, history,
-    yank, paste, helper) and `undo`. The default has the design's areas, no
+    kept with a log line and an optional `UndoEntry`, or an error), `activate_row`
+    (enter's own action on a row, tried before editing it: open an interface,
+    fold a list), the esc label and log line for leaving an area, the enter label of a row
+    (`enter_label`, e.g. `unfold`), the helper of a row, label values like the
+    rate, `verb` (primary, secondary, repeat, rate, history, yank, paste,
+    helper, and fold / unfold / add_item / delete_item on field rows) and
+    `undo`. The default has the design's areas, no
     rows and a topic's Echo / Publish mode (`e`); other verbs log "not built
     yet". Entry kinds subclass it.
   - **The provider router.** `NavState` holds one provider. In the app that is
@@ -387,6 +466,17 @@ user's bad value. Examples from the prototype to copy the style from:
     Answers can be stale or arrive mid-edit, so an edit commits to its row by
     name (`Editing.field`), not by index, and `NavState.row_index` keeps the
     cursor within the rows there are now.
+  - **Slow work.** What isn't a bridge call but may take a while (importing a
+    message type) goes to `self._work(fn)`: the app runs `fn` in a textual
+    thread worker (the harness waits for workers), and `fn` posts its result
+    like a bridge answer. Without a `work` it runs straight away.
+  - **Message editors.** An entry kind with a message to fill in subclasses
+    `entries.message.MessageEntry` (`entries/service.py` is the example). It
+    gets the editor area (`msg`), loading, editing, folding, list elements,
+    undo and `[ ]` history; the kind adds its sending verb and any other areas
+    (`form(tab, area)` returns the `FieldRows` an area shows, e.g. a
+    service's RESPONSE). `checked()` builds and checks the message before a
+    send and `remember()` puts it in the history.
   - **Panels.** An entry's renderer (`EntryBody.RENDERERS`, by kind, e.g.
     `widgets/node_entry.py`) turns the provider's data into one
     `widgets.panel.Panel` per area: body lines, the line of the current row,
@@ -451,9 +541,9 @@ user's bad value. Examples from the prototype to copy the style from:
   the toast and errlines). It redraws only when `tick()` says something changed. The
   harness calls it after each `advance()` step. A `NavState` built without a
   clock (the unit tests) has one that stands still, so nothing in the model
-  reads the real time. Rates,
-  call timings and elapsed times **(target)** read the same clock. The old UI
-  still reads the real clock (the echo Hz and "response in … ms").
+  reads the real time. Call timings read the same clock (a demo service call
+  takes `50.0 ms` under the FakeBridge); rates and elapsed times will too. The
+  old UI still reads the real clock (the echo Hz and "response in … ms").
 - **Every step ships a scenario test with shots** (`test/ui/test_stepNN_*.py`).
   See [agentic-dev.md](agentic-dev.md).
 
@@ -464,8 +554,8 @@ user's bad value. Examples from the prototype to copy the style from:
 - [ ] Add a glyph and tint to the kind table (and to this page). The glyph must
       not clash with the existing ones, and the tint must be readable on
       `term`.
-- [ ] Add `ros_tui/ui/entries/<kind>.py`: a `BridgeEntry` subclass, pure
-      Python. Its areas are in `nav.AREAS` (titles in capitals, the enter label,
+- [ ] Add `ros_tui/ui/entries/<kind>.py`: a `BridgeEntry` subclass (a
+      `MessageEntry` if it has a message to fill in), pure Python. Its areas are in `nav.AREAS` (titles in capitals, the enter label,
       `editable`). Implement `row_count`, `start_edit` / `commit_edit` (validate
       in pure code; the error names the field and quotes the value),
       `activate_row`, `undo` (an `UndoEntry` owned by `tab.key`), and `verb` for

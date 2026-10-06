@@ -127,8 +127,12 @@ class FieldNode:
 @functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
 def message_structure(kind: str, type_name: str) -> tuple[FieldNode, ...]:
     """Static field tree for ``kind``/``type_name`` (introspected from the class, no instance)."""
-    fillable = request_class(kind, import_type(kind, type_name))
-    return _class_fields(fillable, frozenset())
+    return class_structure(request_class(kind, import_type(kind, type_name)))
+
+
+def class_structure(message_class: type) -> tuple[FieldNode, ...]:
+    """Static field tree of any message class, e.g. a service's ``Response``."""
+    return _class_fields(message_class, frozenset())
 
 
 def _class_fields(message_class: type, seen: frozenset) -> tuple[FieldNode, ...]:

@@ -32,6 +32,7 @@ from typing import Any, NamedTuple
 import yaml
 
 from ros_tui.ui.entries.base import BridgeEntry, Post
+from ros_tui.ui.fields import flow_yaml
 from ros_tui.ui.nav import Area, Commit, Editing, NavState, Tab, UndoEntry
 
 PARAM = 'par'  # UndoEntry kind of a parameter change.
@@ -81,12 +82,7 @@ def render_value(value: Any) -> str:
     It parses back (yaml.safe_load) to the same value and type: a string that reads as something
     else stays quoted ('true', '10'), and 1e-05 stays a double.
     """
-    if value is None:
-        return ''
-    text = yaml.safe_dump(value, default_flow_style=True).strip()
-    if text.endswith('\n...'):  # safe_dump ends a bare scalar with a document-end marker.
-        text = text[:-len('\n...')].rstrip()
-    return text
+    return '' if value is None else flow_yaml(value)
 
 
 def edit_text(param: Param, value: Any) -> str:
@@ -255,4 +251,7 @@ class NodeEntry(BridgeEntry):
         data.params = [param._replace(value=value) if param.name == name else param for param in data.params or ()]
         if data.changes.get(name, _NO_CHANGE) == value:
             data.changes.pop(name)
+            # The change is on the node now: undoing it here would only log a no-op "undid".
+            nav.undo_stack[:] = [entry for entry in nav.undo_stack
+                                 if not (entry.owner == tab.key and entry.kind == PARAM and entry.data[0] == name)]
         nav.add_activity(tab, f'✓ set {name} = {render_value(value)}', 'g')

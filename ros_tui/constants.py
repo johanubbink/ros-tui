@@ -53,4 +53,6 @@ NAV_LOG_LINES = 8  # Key log lines kept (the design's "what the keys did" list).
 NAV_ACTIVITY_MAX = 200  # Activity lines kept for :log.
 NAV_TOAST_S = 1.6  # How long a toast shows.
 NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel (the design's inl, 6 s).
+SEND_HISTORY_MAX = 20  # Sends kept per entry for [ and ] (the design's hist, 20).
+SUMMARY_MAX_CHARS = 60  # A message summarised in an activity line ('a: 19, b: 23') is cut here.
 UI_TICK_PERIOD_S = 0.25  # The new UI's clock tick: expires toasts (the design's 250 ms setInterval).

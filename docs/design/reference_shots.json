@@ -118,5 +118,30 @@
     "name": "node-param-changed",
     "keys": ["G", "k", "enter", "l", "enter", "j", "enter", "backspace", "backspace", "5", "x", "enter", "backspace", "esc"],
     "shows": "publish_rate kept as 5: yellow '5 was 10', the PARAMETERS title reads '● changed · space sets', the errline is gone"
+  },
+  {
+    "name": "service-open",
+    "keys": ["/", "a", "d", "d", "enter"],
+    "shows": "/add_two_ints open: ⇄ SERVICE header with the type, '▶ Call space' and '. resends · [ ] earlier requests', REQUEST selected with rows 'a: 19 # int64' and 'b: 23 # int64', RESPONSE 'not called yet'"
+  },
+  {
+    "name": "service-editing",
+    "keys": ["/", "a", "d", "d", "enter", "enter", "enter"],
+    "shows": "inside REQUEST (blue border), a in insert: its value 19 in the edit box with a cursor; footer INSERT tabs › /add_two_ints › request › editing"
+  },
+  {
+    "name": "service-called",
+    "keys": ["/", "a", "d", "d", "enter", "space", "wait1000"],
+    "shows": "/add_two_ints called: RESPONSE '✓ OK' 4.0 ms with sum: 42, REQUEST title '[ ] history (1) · i edit · p paste', ACTIVITY lines for the call and the response"
+  },
+  {
+    "name": "service-error",
+    "keys": ["/", "a", "d", "d", "enter", "enter", "c", "a", "b", "c", "enter"],
+    "shows": "a is 'abc' and still in insert: the red errline '✗ a needs a whole number, got \"abc\"' at the bottom of REQUEST, the same line in the activity strip"
+  },
+  {
+    "name": "service-history",
+    "keys": ["/", "a", "d", "d", "enter", "space", "wait800", "enter", "enter", "backspace", "backspace", "5", "esc", "space", "wait800", "[", "["],
+    "shows": "two calls sent (a 19, then a 5): [ [ shows the older one again, a: 19, and the REQUEST title says '[ ] history #2/2'"
   }
 ]

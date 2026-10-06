@@ -21,22 +21,16 @@ from rich.text import Text
 from ros_tui.ui.entries.node import PARAM, NodeData, render_value
 from ros_tui.ui.nav import EDIT, NavState, Tab
 from ros_tui.ui.widgets.base import edit_value, glyph, style
-from ros_tui.ui.widgets.panel import Panel, hint
+from ros_tui.ui.widgets.panel import Panel, hint, waiting
 
 NAME_WIDTH = 15  # The parameter name column, at least (the design's padEnd(15)).
 TYPE_WIDTH = 8
 
 
-def _waiting(data_error: str) -> list[Text]:
-    if data_error:
-        return [Text(f'✗ could not load it: {data_error}', style('bad'))]
-    return [Text('loading…', style('dim'))]
-
-
 def interfaces_panel(nav: NavState, tab: Tab, data: NodeData, title: str, row: int) -> Panel:
     panel = Panel(title, hint=hint('enter opens it in a tab'))
     if data.groups is None:
-        panel.lines = _waiting(data.info_error)
+        panel.lines = waiting(data.info_error)
         return panel
     if not data.groups:
         panel.lines = [Text('no interfaces', style('dim'))]
@@ -56,7 +50,7 @@ def parameters_panel(nav: NavState, tab: Tab, data: NodeData, title: str, row: i
     panel = Panel(title, hint=hint('● changed', ('space', 'sets'), color='warn') if data.changes
                   else hint(('enter', 'edits'), ('space', 'sets')), errline=nav.errline(tab))
     if data.params is None:
-        panel.lines = _waiting(data.params_error)
+        panel.lines = waiting(data.params_error)
         return panel
     if not data.params:
         panel.lines = [Text('no parameters', style('dim'))]

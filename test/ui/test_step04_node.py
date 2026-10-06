@@ -124,7 +124,7 @@ async def test_node_entry():
         assert s.state()['tabs'] == [NODE, '/chatter'] and s.state()['active'] == 1
         await s.keys('u')
         assert s.state()['toast'] == ['nothing to undo in this tab', 'info']
-        assert s.app.nav.log[0] == ('u', 'nothing to undo in this tab (2 changes in other tabs are kept)')
+        assert s.app.nav.log[0] == ('u', 'nothing to undo in this tab (1 change in another tab is kept)')
         await s.shot('undo-elsewhere', expect='on /chatter, u only toasts "nothing to undo in this tab"')
         await s.keys('1')
         assert line_with(s, 'publish_rate', '7.0 was 5.0')

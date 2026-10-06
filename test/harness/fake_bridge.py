@@ -23,7 +23,7 @@ of two modes:
   (``bridge.service_future.set_result(...)``, ``bridge.on_event(...)``).
 - **live** (``FakeBridge.demo()``, or ``live=True``): a small simulated world driven by a
   ``ManualClock``. Services and node requests (info, parameters, sets) answer after
-  ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum),
+  ``SERVICE_DELAY_S`` (AddTwoInts returns the real sum; a name in ``failing_services`` fails),
   actions are accepted, stream feedback and then succeed (or cancel), and echo subscriptions get
   messages pushed into their ``EchoBuffer`` at each topic's rate. Time only moves when the test
   calls ``bridge.clock.advance(seconds)``, so screenshots are deterministic.
@@ -36,7 +36,7 @@ import heapq
 import itertools
 import math
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from action_msgs.msg import GoalStatus
@@ -48,6 +48,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
 from ros_tui.ros.message_yaml import import_type
+from sensor_msgs.srv import SetCameraInfo
 from std_msgs.msg import Int32, String
 import yaml
 
@@ -235,6 +236,20 @@ DEMO_ACTION_SCRIPTS = {
 }
 
 
+# A service with a nested request (messages, a list, fixed arrays) for the field-row editor's tests.
+# Not in DEMO_GRAPH: the demo servers and the design don't have it.
+CAMERA_INFO_SERVICE = InterfaceEntry('/camera/set_camera_info', ('sensor_msgs/srv/SetCameraInfo',))
+
+
+def camera_demo() -> 'FakeBridge':
+    """FakeBridge.demo() plus CAMERA_INFO_SERVICE, which stores any camera info."""
+    bridge = FakeBridge.demo()
+    bridge.latest_graph = replace(DEMO_GRAPH, services=DEMO_GRAPH.services + (CAMERA_INFO_SERVICE,))
+    bridge.responders = {**bridge.responders, CAMERA_INFO_SERVICE.name:
+                         lambda request: SetCameraInfo.Response(success=True, status_message='stored')}
+    return bridge
+
+
 def completed_future(result=None):
     future = Future()
     future.set_result(result)
@@ -322,6 +337,7 @@ class FakeBridge:
         self.param_list_requests = []
         self.set_param_calls = []
         self.rejected_params: dict[str, str] = {}  # Parameter name -> why setting it fails.
+        self.failing_services: dict[str, str] = {}  # Service name -> why calling it fails (a TimeoutError).
         self._node_params: dict[str, list[tuple[str, str, Any]]] = {}  # Live: params after sets.
         self._feed_timers: dict[str, _Timer] = {}
         self._goals: dict[str, '_LiveGoal'] = {}
@@ -392,6 +408,9 @@ class FakeBridge:
 
     def _answer(self, future, name, type_name, request):
         if future.done():
+            return
+        if name in self.failing_services:
+            future.set_exception(TimeoutError(self.failing_services[name]))
             return
         responder = self.responders.get(name)
         try:

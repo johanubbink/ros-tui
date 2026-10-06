@@ -87,7 +87,10 @@ async def test_echo_chatter():
   `ros_tui/demo/demo_servers.py` and the design. It has six topics, `/add_two_ints`
   and `/set_pose`, `/fibonacci`, and the nodes `/ros_tui_demo_servers` and
   `/talker`.
-  - Services answer 0.05 s after the call (AddTwoInts returns the real sum).
+  - Services answer 0.05 s after the call (AddTwoInts returns the real sum,
+    TeleportAbsolute its empty response). A service name in
+    `bridge.failing_services` (name → reason) fails its calls with a
+    `TimeoutError` of that reason.
   - Node requests (`get_node_info`, `list_node_parameters`, `set_node_parameter`)
     answer 0.05 s later too, so a node entry shows "loading…" until you advance.
     A set changes what later lists return. A parameter name in
@@ -103,7 +106,8 @@ async def test_echo_chatter():
 Some numbers on screen still come from the real clock in the old UI, such as
 the echo Hz and a service's "response in … ms", so they differ between runs.
 Don't assert on them. The new UI reads time from the bridge's clock instead (see
-the code principles in design-principles.md).
+the code principles in design-principles.md): a demo service call there always
+takes `50.0 ms`.
 
 The app can add to the JSON state by defining `harness_state()` returning a dict.
 The new UI uses this for its `NavState` (layer, mode, breadcrumb, open tabs,

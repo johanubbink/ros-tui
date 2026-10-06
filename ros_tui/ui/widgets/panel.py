@@ -101,6 +101,18 @@ def hint(*parts: tuple[str, str] | str, color: str = '') -> Text:
     return text
 
 
+def pill(text: str, color: str, bg: str) -> Text:
+    """A state pill in a panel title (the design's .pill): "calling…", "✓ OK"."""
+    return Text.assemble((f' {text} ', style(color, bg, bold=True)))
+
+
+def waiting(error: str) -> list[Text]:
+    """The body of an area whose data isn't in yet: "loading…", or why it failed."""
+    if error:
+        return [Text(f'✗ could not load it: {error}', style('bad'))]
+    return [Text('loading…', style('dim'))]
+
+
 def side_by_side(columns: list[list[Text]], gap: int = 1) -> list[Text]:
     return [Text(' ' * gap).join(rows) for rows in zip(*columns)]
 

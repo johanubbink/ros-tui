@@ -16,16 +16,18 @@
 """The entry kinds: one `EntryProvider` per kind, and the router NavState talks to.
 
 `NavState` holds a single provider. `EntryRouter` is that provider in the app: it hands each call
-to the provider of the tab's kind (`node.NodeEntry` for nodes) and to the default `EntryProvider`
-for the kinds that aren't built yet (the default also keeps a topic's Echo / Publish mode). Pure
-Python: no textual, no rclpy. Bridge results reach a provider through `post`, which runs a function
-on the UI thread (see `NextApp`).
+to the provider of the tab's kind (`node.NodeEntry` for nodes, `service.ServiceEntry` for services)
+and to the default `EntryProvider` for the kinds that aren't built yet (the default also keeps a
+topic's Echo / Publish mode). Pure Python: no textual, no rclpy. Bridge results reach a provider
+through `post`, which runs a function on the UI thread, and slow imports run through `work`, in a
+worker thread (see `NextApp`).
 """
 
 from typing import Any
 
-from ros_tui.ui.entries.base import Post
+from ros_tui.ui.entries.base import Post, Work
 from ros_tui.ui.entries.node import NodeEntry
+from ros_tui.ui.entries.service import ServiceEntry
 from ros_tui.ui.nav import Area, Commit, Editing, EntryProvider, NavState, Tab, UndoEntry
 
 
@@ -70,6 +72,9 @@ class EntryRouter(EntryProvider):
     def esc_label(self, tab: Tab, area: Area) -> str | None:
         return self.for_tab(tab).esc_label(tab, area)
 
+    def enter_label(self, tab: Tab, area: Area, row: int) -> str | None:
+        return self.for_tab(tab).enter_label(tab, area, row)
+
     def helper_name(self, tab: Tab, area: Area, row: int) -> str | None:
         return self.for_tab(tab).helper_name(tab, area, row)
 
@@ -84,6 +89,6 @@ class EntryRouter(EntryProvider):
         return self.providers.get(kind, self.default).undo(nav, entry)
 
 
-def entry_router(bridge: Any, post: Post | None = None) -> EntryRouter:
+def entry_router(bridge: Any, post: Post | None = None, work: Work | None = None) -> EntryRouter:
     """The app's provider: the built entry kinds over `bridge`, the default for the rest."""
-    return EntryRouter({'nodes': NodeEntry(bridge, post)})
+    return EntryRouter({'nodes': NodeEntry(bridge, post), 'services': ServiceEntry(bridge, post, work)})

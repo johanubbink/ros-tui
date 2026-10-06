@@ -25,7 +25,8 @@ Until a topic's count arrives it counts as unpublished (it would open in Publish
 
 The entries are `entries.entry_router` over the bridge. An entry's bridge answers arrive on the
 bridge's thread; the router's `post` wraps each in a `UiCall` message, so it is applied on the UI
-thread, and the views redraw after it.
+thread, and the views redraw after it. Its `work` (importing a message type) runs in a textual
+thread worker and posts its result the same way.
 
 The overlays (search, :log, the command suggestions, which-key, the toast) are `Overlay` views on
 the `overlay` layer; each says where it goes and `refresh_views` places it. Search and :log veil
@@ -73,7 +74,7 @@ class NextApp(App, inherit_bindings=False):
     def __init__(self, bridge):
         super().__init__()
         self._bridge = bridge
-        self.nav = NavState(entry_router(bridge, lambda fn: self.post_message(UiCall(fn))), clock=bridge.now)
+        self.nav = NavState(entry_router(bridge, lambda fn: self.post_message(UiCall(fn)), self._work), clock=bridge.now)
         self._graph: GraphSnapshot | None = None
         self._publishers: dict[str, int] = {}
         self._publishers_dirty = False
@@ -147,6 +148,10 @@ class NextApp(App, inherit_bindings=False):
     def harness_state(self) -> dict:
         """The nav model's summary (layer, mode, breadcrumb, tabs …) for the screenshot harness."""
         return self.nav.summary()
+
+    def _work(self, fn) -> None:
+        """Run an entry's slow work (importing a message type) in a worker thread; it posts its result."""
+        self.run_worker(fn, thread=True, group='entries', exit_on_error=False)
 
     def on_ui_call(self, message: UiCall) -> None:
         """A bridge answer for an entry (posted from the bridge's thread): apply it, then redraw."""

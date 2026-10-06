@@ -62,6 +62,15 @@ TOKENS = {
     'err-bg': '#201414',  # an errline under a panel
     'edit': '#1c2733',  # a value being typed
     'edit-fresh': '#2f4f73',  # a value the first typed key replaces (a bool)
+    # Message rows (the design's .key .num .str .hint .ln).
+    'syn-key': '#9cdcfe',  # field names
+    'syn-num': '#b5cea8',  # numbers and bools
+    'syn-str': '#ce9178',  # strings
+    'syn-hint': '#5c6f5c',  # "# int64" type hints
+    'line-no': '#4a4a4a',  # row numbers
+    # Pills in panel titles (the design's .pill.run / .pill.can; .pill.ok is ok on ok-bg).
+    'live-bg': '#0f3a40',
+    'warn-bg': '#3a3010',
     'sep': '#444444',  # the breadcrumb's › separators
     'mode-text': '#121212',  # text on a mode badge
     # Overlays: search, which-key, :log, the command suggestions and toasts.

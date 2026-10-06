@@ -221,3 +221,11 @@ def test_the_router_keeps_the_default_for_other_kinds():
     assert nav.entry_mode() == 'publish'
     press(nav, 'space')
     assert nav.log[0] == ('space', 'not built yet')
+
+
+def test_a_set_change_leaves_nothing_to_undo():
+    """Once the node has the value, u has nothing left to undo there (it would only log a no-op)."""
+    nav, _ = node_nav(*OPEN_NODE, *TO_RATE, 'c', '5', 'enter', 'c', '6', 'enter', 'space')
+    assert node_data(nav).changes == {} and nav.undo_stack == []
+    press(nav, 'u')
+    assert nav.log[0] == ('u', 'nothing to undo in this tab')

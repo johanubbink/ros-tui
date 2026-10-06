@@ -212,7 +212,8 @@ class EntryProvider:
         return Commit(True, f'kept {editing.field or "the value"}')
 
     def activate_row(self, nav: 'NavState', tab: Tab, area: Area, row: int, how: str) -> bool:
-        """enter on a row that isn't edited (open an interface, show / hide a field). True if done."""
+        """enter on a row, before it is edited: open an interface, show / hide a field, fold or
+        unfold a nested message or list. True if done (then the row isn't edited)."""
         return False
 
     def leave_area(self, tab: Tab, area: Area) -> str | None:
@@ -221,6 +222,10 @@ class EntryProvider:
 
     def esc_label(self, tab: Tab, area: Area) -> str | None:
         """The footer's esc label inside an area, when it isn't the default ('go live')."""
+        return None
+
+    def enter_label(self, tab: Tab, area: Area, row: int) -> str | None:
+        """The footer's enter label on a row, when it isn't the area's ('unfold' on a folded row)."""
         return None
 
     def helper_name(self, tab: Tab, area: Area, row: int) -> str | None:
@@ -233,7 +238,8 @@ class EntryProvider:
 
     def verb(self, nav: 'NavState', tab: Tab | None, name: str, how: str, arg: Any = None) -> bool:
         """Run an entry verb: primary, secondary, repeat, rate, set_rate, toggle_mode, helper,
-        helper_apply, helper_key, history_older, history_newer, yank, paste. True if handled."""
+        helper_apply, helper_key, history_older, history_newer, yank, paste, and on field rows fold,
+        unfold, add_item, delete_item. True if handled."""
         if name == 'toggle_mode':
             return self._toggle_mode(nav, tab, how, arg)
         if name == 'helper':
@@ -432,7 +438,9 @@ class NavState:
             return f'into {area.title.lower()}' if area else ''
         if self.layer == AREA:
             area = self.area()
-            return area.enter if area else ''
+            if area is None:
+                return ''
+            return self.provider.enter_label(self.tab, area, self.row_index(area)) or area.enter
         return 'keep it'
 
     def footer(self) -> Footer:
@@ -466,6 +474,11 @@ class NavState:
     def errline(self, tab: Tab) -> str:
         line = self.errlines.get(tab.key)
         return line.text if line else ''
+
+    def report_error(self, tab: Tab, message: str) -> None:
+        """A bad value: an errline under the entry's panel and a red activity line."""
+        self.errlines[tab.key] = Errline(message, self.clock() + NAV_ERRLINE_S)
+        self.add_activity(tab, f'✗ {message}', 'r')
 
     def tick(self) -> bool:
         """Expire what is timed (the toast, errlines). True when something changed, so the views redraw."""
@@ -628,9 +641,10 @@ class NavState:
             self.commit_edit(how)
 
     def activate_row(self, how: str) -> None:
-        if self.start_edit(how):
+        """enter on a row: the entry's own action first (fold a list, open an interface), else edit it."""
+        if self.provider.activate_row(self, self.tab, self.area(), self.row_index(), how):
             return
-        if not self.provider.activate_row(self, self.tab, self.area(), self.row_index(), how):
+        if not self.start_edit(how):
             self.log_line(how, 'nothing to edit here — esc goes back up')
 
     # ---------- insert ----------
@@ -673,16 +687,21 @@ class NavState:
             self.editing = None
             return True
         self.log_line(how, f'✗ {message} — still editing (esc drops it)')
-        self.errlines[self.tab.key] = Errline(message, self.clock() + NAV_ERRLINE_S)
-        self.add_activity(self.tab, f'✗ {message}', 'r')
+        self.report_error(self.tab, message)
         return False
 
     def edit_step(self, how: str, delta: int) -> None:
-        """tab / shift+tab in insert: keep the value and edit the next / previous field."""
+        """tab / shift+tab in insert: keep the value and edit the next / previous field, skipping
+        rows that aren't edited (a folded message). Past the last one it edits the same field again."""
         row = self.editing.row
         if not self.commit_edit(how):
             return
-        self.set_row(_clamp(row + delta, self.row_count() - 1))
+        last = self.row_count() - 1
+        for index in range(row + delta, last + 1 if delta > 0 else -1, delta):
+            self.set_row(index)
+            if self.start_edit(how):
+                return
+        self.set_row(_clamp(row, last))
         self.start_edit(how)
 
     def type_char(self, char: str) -> None:
@@ -978,6 +997,11 @@ ACTIONS: dict[str, Callable[[NavState, Press], None]] = {
     'row_up': lambda nav, p: nav.step_row(-1),
     'edit': lambda nav, p: nav.edit_row(p.how),
     'clear': lambda nav, p: nav.edit_row(p.how, clear=True),
+    # field rows (fields.py): fold / unfold, add / delete a list element
+    'fold': lambda nav, p: nav.verb('fold', p.how),
+    'unfold': lambda nav, p: nav.verb('unfold', p.how),
+    'add_item': lambda nav, p: nav.verb('add_item', p.how),
+    'delete_item': lambda nav, p: nav.verb('delete_item', p.how),
     # tabs
     'goto_tab': lambda nav, p: nav.goto_tab(p.key),
     'tab_next': lambda nav, p: nav.step_tab(1, p.how),
