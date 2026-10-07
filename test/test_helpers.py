@@ -305,10 +305,11 @@ GOAL_POSE_ORIENTATION = ['/', *'goal', 'enter', 'enter', 'j', 'j', 'j']  # pose 
 
 
 def test_the_popup_goes_under_the_row_where_it_is_drawn():
-    """Header, toolbar, the panel's border and title, then rows 0–3; a short panel scrolls the row up."""
+    """Header, a blank line, toolbar, a blank line, the panel's border and title, then rows 0–3; a
+    short panel scrolls the row up."""
     nav = entry_nav(*GOAL_POSE_ORIENTATION)
-    assert row_line(nav, 120, 30) == 7
-    assert row_line(nav, 120, 7) == 5  # Room for two rows: rows 2 and 3 show.
+    assert row_line(nav, 120, 30) == 9
+    assert row_line(nav, 120, 9) == 7  # Room for two rows: rows 2 and 3 show.
     nav.handle_key('0')
     assert row_line(nav, 120, 30) is None
 

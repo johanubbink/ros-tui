@@ -48,7 +48,7 @@ def interfaces_panel(nav: NavState, tab: Tab, data: NodeData, title: str, row: i
 
 def parameters_panel(nav: NavState, tab: Tab, data: NodeData, title: str, row: int) -> Panel:
     panel = Panel(title, hint=hint('● changed', ('space', 'sets'), color='warn') if data.changes
-                  else hint(('enter', 'edits'), ('space', 'sets')), errline=nav.errline(tab))
+                  else hint(('enter', 'edits'), ('space', 'sets')), errline=nav.errline(tab), edits=True)
     if data.params is None:
         panel.lines = waiting(data.params_error)
         return panel

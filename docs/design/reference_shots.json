@@ -212,6 +212,6 @@
   {
     "name": "log-view-times",
     "keys": ["enter", "space", "/", "a", "d", "d", "enter", "space", "wait2000", ":", "l", "o", "g", "enter"],
-    "shows": "the :log view over a veil: 'All activity  N entries, newest first · j k move · enter goes there · esc closes', each line with its time, the kind glyph and entry, and the text"
+    "shows": "the :log view over a veil: 'All activity (N)  j k move · enter goes there', each line with its time, the kind glyph and entry, and the text"
   }
 ]

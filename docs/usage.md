@@ -53,7 +53,7 @@ stays.
 
 - Space starts the echo and stops it again. LATEST MESSAGE shows the newest
   message, one row per field, with the count, the rate and the dropped
-  messages next to the button.
+  messages at the right of its title.
 - `enter` goes into LATEST MESSAGE and **freezes** it, so you can read it
   while `+N new since` counts what arrives; `esc` goes live again. Inside,
   `enter` on a field hides or shows it.
@@ -71,9 +71,10 @@ stays.
   0.1 to 100 Hz; a repeat that's running restarts at the new rate.
 - `[` and `]` step through what you sent before.
 
-An echo or a repeat keeps running when you switch or close its tab: the top
-bar and the ☰ list show it (`◉` echoing, `↻` repeating) until you stop it.
-Quitting stops everything.
+An echo or a repeat keeps running when you switch to another tab: the top bar
+and the ☰ list show it (`◉` echoing, `↻` repeating) until you stop it.
+**Closing its tab stops it** (`closed /chatter — echo stopped`), and `u`
+reopens the tab without starting it again. Quitting stops everything.
 
 ## Services
 
@@ -142,6 +143,28 @@ undoes) and `esc` closes it without changing anything.
 | an integer with constants  | pick one of the message's constants (e.g. `level`: OK, WARN, ERROR, STALE) |
 
 An enum field can also be typed by name: `err` is ERROR.
+
+## The mouse
+
+The keys do everything, but a click does what its keys would (and reads
+`click` in the log):
+
+| Click on | Does |
+| -------- | ---- |
+| a tab (☰ too) | go to it, as `0`…`9` |
+| a tab's `×` | close it, as `x` (`u` reopens it) |
+| a kind chip on the ☰ list | filter the list, as tab |
+| a row of the ☰ list | open it, as `enter` |
+| a panel | go inside that area, as `enter`; a value you were typing is kept first, as `esc` keeps it |
+| Echo / Publish | switch the topic to it, as `e` |
+| a button | what its key does: space, `s` or `r` (a greyed-out one does nothing) |
+| the rate in the Repeat button | type a new rate, as `R` |
+| `/ search everything` | search, as `/` |
+| a search match | open it, as `enter` |
+| an activity line, or a line in `:log` | go to that entry's tab |
+
+While a popup has the keys (search, `:log`, the command line, a field helper,
+`?`), a click outside it closes it, as `esc` does, and does nothing else.
 
 ## Commands
 
@@ -238,7 +261,7 @@ alternative to a vim key; "Where" is when the key applies.
 | Key | Does | Also | Where |
 | --- | ---- | ---- | ----- |
 | `type` | find by name or type |  |  |
-| `↑ ↓` | pick | `^n ^p` |  |
+| `↑ ↓` | pick |  |  |
 | `enter` | open in a tab |  |  |
 | `esc` | close |  |  |
 

@@ -53,7 +53,7 @@ def action_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
         left.append(f' a goal is running on {running.name}', style('dim'))
     left.append(' ')
     left.append_text(button('■ Cancel goal', 's', 'stop' if here else 'off'))
-    return spread(left, keyed('[ ]', 'earlier goals', 'dim'), width)
+    return spread(left, keyed('[ ]', 'earlier goals', 'dim'), width, optional=True)
 
 
 def result_panel(nav: NavState, tab: Tab, entry: ActionEntry, data: ActionData, area: Area) -> Panel:

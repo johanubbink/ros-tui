@@ -30,7 +30,7 @@ from ros_tui.ui.widgets.panel import Panel, pill
 def service_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
     """The button row: the Call button with its key, and where earlier requests are."""
     return spread(button('▶ Call', 'space', primary_look(nav, tab, 'pri')), keyed('[ ]', 'earlier requests', 'dim'),
-                  width)
+                  width, optional=True)
 
 
 def response_panel(nav: NavState, tab: Tab, data: ServiceData, area: Area) -> Panel:

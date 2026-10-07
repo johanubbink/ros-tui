@@ -202,6 +202,12 @@ class EntryProvider:
     def on_open(self, nav: 'NavState', tab: Tab) -> None:
         """A tab was opened or gone to."""
 
+    def on_close(self, nav: 'NavState', tab: Tab) -> list[str]:
+        """Its tab is being closed: stop what nothing could stop once it is gone (an echo, a
+        repeat). Returns what it stopped, for the log line ('echo stopped'). A running goal keeps
+        running: canceling it would be a send."""
+        return []
+
     def mode(self, tab: Tab) -> str | None:
         """The entry's mode, when its kind has them (a topic's 'echo' or 'publish')."""
         return None
@@ -607,6 +613,7 @@ class NavState:
             self.log_line(how, 'the ☰ list always stays')
             return
         tab = self.tabs.pop(index)
+        stopped = self.provider.on_close(self, tab)
         self.undo_stack.append(UndoEntry(ANYWHERE, CLOSE, (tab, index)))
         if self.active == index:
             self.active = min(index, len(self.tabs) - 1)
@@ -617,7 +624,7 @@ class NavState:
         else:
             self.layer = IN
         self.editing = None
-        self.log_line(how, f'closed {tab.name} — u reopens it')
+        self.log_line(how, f'closed {tab.name} — {" · ".join(stopped + ["u reopens it"])}')
         self.show_toast(f'closed {tab.name} · u undoes', 'info')
 
     def step_tab(self, delta: int, how: str) -> None:
@@ -820,7 +827,11 @@ class NavState:
 
     def step_chip(self, delta: int, how: str) -> None:
         """tab / shift+tab on the ☰ list: all › topics › services › actions › nodes › all."""
-        self.chip = _cycle(self.chip, delta, len(KINDS))
+        self.set_chip(_cycle(self.chip, delta, len(KINDS)), how)
+
+    def set_chip(self, chip: int, how: str) -> None:
+        """Filter the ☰ list by a kind chip (-1 all), the cursor on its first row."""
+        self.chip = chip
         self.list_cur = 0
         self.log_line(how, f'showing {"everything" if self.chip < 0 else KINDS[self.chip]}')
 
@@ -963,6 +974,74 @@ class NavState:
         self.logv = None
         if line and line.kind:
             self.open_entity(line.kind, line.name, 'enter')
+
+    # ---------- the mouse ----------
+    def click(self, target: tuple[str, Any] | None, on_popup: bool = False) -> None:
+        """A click on what a view tagged with `target`, (what, arg) as in `CLICKS` (None where a
+        click does nothing): the design's mousedown handler. It does what the keys would, and the
+        log reads "click".
+
+        A popup that has the keys (search, :log, the command line, the helper, which-key, the g
+        popup) takes only clicks on itself (`on_popup`); a click anywhere else closes it as esc
+        does, and does nothing else (the design's veil). A click while typing a value keeps it
+        first, as esc does, except on the primary button: that sends, as ^s does in insert."""
+        if self.list_mode() not in ('normal', 'insert') or self.which_key:
+            if not on_popup:
+                self.close_popup()
+                return
+        if target is None:
+            return
+        what, arg = target
+        if self.layer == EDIT and target != ('verb', 'primary'):
+            self.commit_edit('esc')
+        CLICKS[what](self, arg)
+
+    def close_popup(self) -> None:
+        """Close the popup that has the keys, as esc does there."""
+        if self.which_key == 'g':
+            self.pending = ''
+            self.log_line('click', 'g canceled')
+        self.which_key = None
+        if self.helper:
+            self.helper_close()
+        elif self.cmd:
+            self.cmd = None
+        elif self.logv:
+            self.logv = None
+        elif self.search:
+            self.search_close()
+
+    def enter_area(self, index: int, how: str) -> None:
+        """Go inside the entry's area at `index` (a click on its panel)."""
+        if self.tab is None or not 0 <= index < len(self.areas()):
+            return
+        self.set_area(index)
+        self.layer = AREA
+        self.log_line(how, f'inside {self.area().title.lower()}')
+
+    def click_mode(self, mode: str) -> None:
+        """A click on the Echo / Publish switch: switch to `mode`, if it isn't the mode already."""
+        if self.entry_mode() != mode:
+            self.verb('toggle_mode', 'click', mode)
+
+    def click_open(self, kind: str, name: str) -> None:
+        """A click on a list row, a search match or an activity line: open its entry."""
+        self.logv = None
+        self.open_entity(kind, name, 'click')
+
+
+# What a click does, by the `what` of its target (NavState.click); the views tag what they draw
+# with a target through widgets.base.clickable.
+CLICKS: dict[str, Callable[['NavState', Any], None]] = {
+    'tab': lambda nav, index: nav.activate(index, 'click'),  # a tab, ☰ (-1) included
+    'close': lambda nav, index: nav.close_tab(index, 'click'),  # a tab's ×
+    'chip': lambda nav, chip: nav.set_chip(chip, 'click'),  # a kind chip on the ☰ list
+    'open': lambda nav, entry: nav.click_open(*entry),  # (kind, name): a row, a match, an activity line
+    'area': lambda nav, index: nav.enter_area(index, 'click'),  # a panel
+    'mode': lambda nav, mode: nav.click_mode(mode),  # 'echo' / 'publish' on the switch
+    'verb': lambda nav, name: nav.primary('click') if name == 'primary' else nav.verb(name, 'click'),  # a button
+    'search': lambda nav, _: nav.search_open('click'),  # the top bar's search box
+}
 
 
 def _clamp(index: int, last: int) -> int:

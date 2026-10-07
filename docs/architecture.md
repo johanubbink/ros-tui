@@ -180,7 +180,9 @@ together.
   single `on_key` that hands every key to `NavState.handle_key`, then redraws.
   Nothing takes focus, and textual's own bindings (focus cycling, the command
   palette) are off, so what a key does depends only on the model. Only
-  `ctrl+q` and `ctrl+c` are bound, to quit.
+  `ctrl+q` and `ctrl+c` are bound, to quit. Clicks take the same road: every view
+  hands a left click to `RosTuiApp.click`, which passes the target drawn under
+  the mouse (a Rich style `meta`) to `NavState.click`.
 - **Entries.** What an open entry holds and does comes from an
   `EntryProvider`: its areas, rows, edits, verbs (space, `s`, `r`, `e`, `y`,
   `p`, …), undo, running markers and tick. The app's provider is

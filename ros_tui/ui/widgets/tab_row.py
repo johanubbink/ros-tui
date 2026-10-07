@@ -26,7 +26,7 @@ from rich.text import Text
 
 from ros_tui.ui.nav import KINDS as NAV_KINDS, TABS
 from ros_tui.ui.theme import KINDS
-from ros_tui.ui.widgets.base import NavView, fit, style
+from ros_tui.ui.widgets.base import NavView, clickable, fit, style
 
 MARKER_WIDTH = 10  # Room kept for "‹ 12 more" / "12 more ›" at an edge that hides tabs.
 UNDERLINE = '▔'  # The rule under the tabs; the active tab's part is in its kind's colour.
@@ -71,13 +71,13 @@ class EntryTabRow(NavView):
         cursor = nav.tab_cur if nav.layer == TABS else None
         label = 'All' if nav.chip < 0 else KINDS[NAV_KINDS[nav.chip]].label
         home = [('0 ', 'number'), (f'☰ {label}', '')]
-        segments = [_segment(home, nav.active < 0, cursor == -1, 'label', 'accent-fill')]
+        segments = [_segment(home, nav.active < 0, cursor == -1, 'label', 'accent-fill', -1)]
         for index, tab in enumerate(nav.tabs):
             kind = KINDS[tab.kind]
             parts = [(f'{index + 1} ', 'number')] if index < 9 else []
             parts += [(kind.glyph + ' ', kind.color), (tab.name, '')]
-            parts += [(' ' + m.glyph, m.tone) for m in nav.running(tab.kind, tab.name)] + [(' ×', 'dim')]
-            segments.append(_segment(parts, index == nav.active, cursor == index, 'grey', kind.color))
+            parts += [(' ' + m.glyph, m.tone) for m in nav.running(tab.kind, tab.name)] + [(' ', ''), ('×', 'dim')]
+            segments.append(_segment(parts, index == nav.active, cursor == index, 'grey', kind.color, index))
         return segments
 
     def lines(self, width, height):
@@ -99,13 +99,18 @@ class EntryTabRow(NavView):
         return [top, fit(rule + Text(UNDERLINE * width, style('rule')), width)]
 
 
-def _segment(parts: list[tuple[str, str]], active: bool, cursor: bool, rest: str, kind_color: str):
+def _segment(parts: list[tuple[str, str]], active: bool, cursor: bool, rest: str, kind_color: str, index: int):
     """One tab: `parts` are (text, colour) pairs, '' taking the tab's own colour (grey at rest,
-    white when active, the key colour under the tab-row cursor, which also outlines it)."""
+    white when active, the key colour under the tab-row cursor, which also outlines it). A click
+    on it goes to tab `index`; a click on its × (the last part, on an entry's tab) closes it."""
     bg = 'tab-cur' if cursor else 'tab-on' if active else ''
     own = style('key' if cursor else 'bright' if active else rest, bg, bold=active or cursor)
     edge = style('key', bg) if cursor else own
     text = Text.assemble(('▏' if cursor else ' ', edge),
                          *((part, style(color, bg) if color else own) for part, color in parts),
                          ('▕' if cursor else ' ', edge))
+    clickable(text, ('tab', index))
+    if index >= 0:
+        close = len(text) - 2  # The × before the closing edge.
+        clickable(text, ('close', index), close, close + 1)
     return text, kind_color if active else ''

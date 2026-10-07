@@ -111,7 +111,7 @@ def editor_panel(nav: NavState, tab: Tab, data: MessageData, area: Area) -> Pane
     inside = nav.layer == AREA and nav.area() == area
     helper = nav.helper_name() if inside else None
     title = Text.assemble(helper_hint(helper), '  ') if helper else Text()
-    panel = Panel(area.title, hint=title + hint(*parts), errline=nav.errline(tab))
+    panel = Panel(area.title, hint=title + hint(*parts), errline=nav.errline(tab), edits=True)
     if data.editor is None:
         panel.lines = waiting(data.error)
         return panel

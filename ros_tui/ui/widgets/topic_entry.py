@@ -15,8 +15,9 @@
 
 """The topic entry's button rows and panels (the topics branch of the design's renderEntry).
 
-Echo: "▶ Start echo space" / "■ Stop echo space" with what the echo counted, then LATEST MESSAGE,
-one row per field: "[x] data   'chatter 3'", live ("● live") or frozen ("❄ FROZEN +N new since").
+Echo: "▶ Start echo space" / "■ Stop echo space", then LATEST MESSAGE, one row per field:
+"[x] data   'chatter 3'", live ("● live") or frozen ("❄ FROZEN +N new since"), with what the echo
+counted at the right of its title.
 Publish: "▶ Publish once space" and "↻ Repeat at 10 Hz r" / "■ Stop repeating at 10 Hz s" with the
 rate (typed in place after R), then the MESSAGE editor. Everything shown comes from the TopicEntry
 provider (entries/topic.py).
@@ -27,7 +28,7 @@ from rich.text import Text
 
 from ros_tui.ui.entries.topic import ECHO, RATE, TopicData, TopicEntry, rate_text
 from ros_tui.ui.nav import EDIT, Area, NavState, Tab
-from ros_tui.ui.widgets.base import button, edit_value, keyed, primary_look, spread, style
+from ros_tui.ui.widgets.base import button, clickable, edit_value, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, hint, pill, waiting
 
@@ -53,23 +54,30 @@ def topic_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
 
 
 def echo_toolbar(nav: NavState, tab: Tab, data: TopicData, width: int) -> Text:
-    """The echo's start / stop button, what it counted, and the keys of the latest message."""
+    """The echo's start / stop button and the keys of the latest message."""
+    look = primary_look(nav, tab, 'stop' if data.echo else 'pri')
+    left = button('■ Stop echo' if data.echo else '▶ Start echo', 'space', look)
+    return spread(left, hint(('enter', 'freezes the values'), ('y', 'copies'), ('e', 'publish'), color='dim'), width,
+                  optional=True)
+
+
+def echo_counts(data: TopicData) -> Text:
+    """What the echo counted, for the right of LATEST MESSAGE's title: "3 received · 1.0 Hz"."""
     echo = data.echo
-    look = primary_look(nav, tab, 'stop' if echo else 'pri')
-    left = button('■ Stop echo' if echo else '▶ Start echo', 'space', look)
-    if echo:
-        left.append(f'  {echo.received} received · {echo.hz:.1f} Hz', style('dim'))
-        if echo.dropped:
-            left.append(f' · {echo.dropped} dropped', style('warn'))
-    return spread(left, hint(('enter', 'freezes the values'), ('y', 'copies'), ('e', 'publish'), color='dim'), width)
+    if echo is None:
+        return Text()
+    text = Text(f'{echo.received} received · {echo.hz:.1f} Hz')
+    if echo.dropped:
+        text.append(f' · {echo.dropped} dropped', style('warn'))
+    return text
 
 
 def publish_toolbar(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData, width: int) -> Text:
     """Publish once, repeat at the rate (typed in place after R), and how many the repeat sent."""
     repeat = data.repeat
     editing = nav.editing if nav.layer == EDIT and nav.editing and nav.editing.area == RATE else None
-    rate = edit_value(editing.value, editing.fresh) if editing else Text(
-        rate_text(repeat.rate if repeat else entry.rate(tab)), Style(underline=True))
+    rate = edit_value(editing.value, editing.fresh) if editing else clickable(Text(
+        rate_text(repeat.rate if repeat else entry.rate(tab)), Style(underline=True)), ('verb', 'rate'))
     label = Text.assemble('■ Stop repeating at ' if repeat else '↻ Repeat at ', rate, ' Hz')
     left = Text.assemble(button('▶ Publish once', 'space', primary_look(nav, tab, 'pri')), ' ',
                          button(label, 's' if repeat else 'r', 'stop' if repeat else ''), '  ')
@@ -79,12 +87,12 @@ def publish_toolbar(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData,
         left.append_text(hint(entry.rate_note(tab), ('R', 'changes it'), color='dim'))
     if repeat:
         left.append(f'  {repeat.sent(nav.clock())} sent', style('ok'))
-    return spread(left, keyed('[ ]', 'earlier messages', 'dim'), width)
+    return spread(left, keyed('[ ]', 'earlier messages', 'dim'), width, optional=True)
 
 
 def latest_panel(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData, area: Area) -> Panel:
     """LATEST MESSAGE: live, frozen while the cursor is inside it, or not echoing."""
-    panel = Panel(area.title)
+    panel = Panel(area.title, aside=echo_counts(data))
     if data.echo is None:
         panel.hint = hint('not echoing', ('space', 'starts'))
     elif entry.frozen(nav, tab):

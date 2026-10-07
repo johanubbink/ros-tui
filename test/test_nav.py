@@ -108,7 +108,7 @@ SEQUENCES = [
     ('search mode hides esc / enter', ['/'], state(IN, -1, [], HOME, mode='search', esc='', enter='')),
     ('search: down picks the second match', ['/', 'p', 'o', 's', 'e', 'down', 'enter'],
      state(IN, 0, ['/goal_pose'], ['tabs', '/goal_pose'])),
-    ('search: ^n ^p', ['/', 'p', 'o', 's', 'e', 'ctrl+n', 'ctrl+n', 'ctrl+p', 'enter'],
+    ('search: down down up', ['/', 'p', 'o', 's', 'e', 'down', 'down', 'up', 'enter'],
      state(IN, 0, ['/goal_pose'], ['tabs', '/goal_pose'])),
     ('search: an open tab is gone to', ['enter', '0', '/', 'c', 'h', 'a', 't', 'enter'],
      state(IN, 0, ['/chatter'], ['tabs', '/chatter'])),
@@ -668,3 +668,66 @@ def test_set_catalog_clamps_the_cursor():
     nav = nav_after(['G'])
     nav.set_catalog(type(DESIGN_CATALOG)(topics=DESIGN_CATALOG.topics[:2], services=[], actions=[], nodes=[]))
     assert nav.list_cur == 1
+
+
+# ---------- the mouse (the design's mousedown handler) ----------
+
+def test_clicks_do_what_the_keys_do():
+    nav = design_nav()
+    nav.click(('chip', 1))
+    assert (nav.chip, nav.list_cur) == (1, 0) and last_log(nav) == ('click', 'showing services')
+    nav.click(('open', ('services', '/add_two_ints')))
+    assert (nav.tab, nav.layer) == (Tab('services', '/add_two_ints'), IN)
+    assert last_log(nav) == ('click', 'opened /add_two_ints (tab 1)')
+    nav.click(('area', 1))
+    assert (nav.layer, nav.area().id) == (AREA, 'out') and last_log(nav) == ('click', 'inside response')
+    nav.click(('tab', -1))
+    assert (nav.active, nav.layer) == (-1, IN)
+    nav.click(('close', 0))
+    assert nav.tabs == [] and last_log(nav) == ('click', 'closed /add_two_ints — u reopens it')
+    nav.click(None)  # A spot that does nothing.
+    assert nav.tabs == [] and last_log(nav) == ('click', 'closed /add_two_ints — u reopens it')
+
+
+def test_a_click_switches_the_mode_only_to_another_one():
+    nav = nav_after(['enter'])  # /chatter, in Echo.
+    nav.click(('mode', 'echo'))
+    assert nav.entry_mode() == 'echo' and last_log(nav) == ('enter', 'opened /chatter (tab 1)')
+    nav.click(('mode', 'publish'))
+    assert nav.entry_mode() == 'publish'
+
+
+def test_a_click_on_a_button_runs_its_verb():
+    nav = rows_nav(INBOX)
+    nav.click(('verb', 'repeat'))
+    nav.click(('verb', 'primary'))
+    assert nav.provider.verbs == [('repeat', 'click', None), ('primary', 'click', None)]
+
+
+def test_a_click_keeps_the_value_being_typed_first():
+    nav = rows_nav(['/', 'a', 'd', 'd', 'enter', 'enter', 'i', 'x'])  # a: "1x", which isn't a number.
+    assert nav.layer == EDIT
+    nav.click(('area', 1))  # Kept as esc keeps it: a bad value is dropped, with its toast.
+    assert (nav.layer, nav.area().id, nav.editing) == (AREA, 'out', None)
+    assert nav.toast.kind == 'bad'
+
+
+def test_a_click_outside_a_popup_closes_it_and_does_nothing_else():
+    nav = nav_after(['/'])
+    nav.click(('chip', 2))  # Under the veil.
+    assert nav.search is None and nav.chip == -1
+    assert last_log(nav) == ('esc', 'search closed — back where you were')
+    nav = nav_after(['/', 'a', 'd', 'd'])
+    nav.click(('open', ('services', '/add_two_ints')), on_popup=True)  # A match.
+    assert nav.search is None and nav.tab.name == '/add_two_ints'
+    for keys, gone in ((['question_mark'], lambda n: n.which_key is None), (['g'], lambda n: n.pending == ''),
+                       (['colon'], lambda n: n.cmd is None)):
+        nav = nav_after(keys)
+        nav.click(('chip', 1))
+        assert gone(nav) and nav.chip == -1, keys
+    nav = nav_after(['enter', 'space', 'colon', 'l', 'o', 'g', 'enter'])
+    nav.add_activity(Tab('topics', '/counter'), '◉ echo started', 'c')
+    nav.click(None, on_popup=True)  # The log's title: nothing.
+    assert nav.logv is not None
+    nav.click(('open', ('topics', '/counter')), on_popup=True)
+    assert nav.logv is None and nav.tab.name == '/counter'

@@ -52,11 +52,14 @@ TOKENS = {
     'feed-head': '#5f6f7f',  # ACTIVITY · ALL TABS
     'type': '#5f8f99',  # the Type column
     'cursor': '#2b3a4a',  # the cursor row / the chip that is on
+    'chip': '#2a2a2a',  # a kind chip, the Echo / Publish switch (the design's .chip / .seg)
+    'chip-on': '#3d5a78',  # the chip or switch half that is on (the design's .chip.on border)
     'cursor-on': '#3a414c',  # the cursor row while the list has the keys
     'tab-on': '#1d1d1d',  # the active tab
     'tab-cur': '#262b33',  # the tab-row cursor, a selected panel's title
     'panel-in': '#16283a',  # the title of the panel you are inside
     'row-in': '#22303e',  # the current row inside a panel
+    'row-mark': '#7d8794',  # the bar on the row i edits, in a selected panel (muted)
     'panel-hint': '#9a9a9a',  # the hints in a panel's title bar
     'err-bg': '#201414',  # an errline under a panel
     'edit': '#1c2733',  # a value being typed
@@ -73,6 +76,7 @@ TOKENS = {
     # Buttons (the design's .btn, .btn.stop and .btn[disabled]; .btn.pri is bright on accent-fill).
     'btn': '#1f1f1f',
     'btn-text': '#e6e6e6',
+    'pri-key': '#cfe6fa',  # the key in a primary button (the design's .btn.pri .k)
     'stop-bg': '#4a2a12',
     'btn-off': '#5a5a5a',  # a disabled button's text and key (the design's .btn[disabled])
     'btn-off-bg': '#181818',

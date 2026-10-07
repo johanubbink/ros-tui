@@ -17,7 +17,8 @@
 
 One `on_key` hands every key to `NavState.handle_key`, then redraws the views from the model.
 Nothing takes focus and textual's own bindings (focus cycling, the ctrl+p palette) are off, so
-every key reaches the keymap. ctrl+q and ctrl+c quit, as `:q` does.
+every key reaches the keymap. ctrl+q and ctrl+c quit, as `:q` does. One `on_click` hands every
+left click to `NavState.click`, with the target the view drew under the mouse.
 
 Graph updates feed the ☰ list. A GraphSnapshot has no publisher counts, so on each graph change
 the app asks the bridge for every topic's counts and folds the answers into the list in one go.
@@ -128,6 +129,21 @@ class RosTuiApp(App, inherit_bindings=False):
         if self.nav.quit:
             self.exit()
             return
+        self.refresh_views()
+
+    # ---------- the mouse ----------
+    def on_click(self, event: events.Click) -> None:
+        """A click on no view (the body's padding): it only closes a popup."""
+        event.stop()
+        self.click(event)
+
+    def click(self, event: events.Click, on_popup: bool = False) -> None:
+        """A left click, from the view under the mouse (NavView.on_click): the views tag what they
+        draw with what a click on it does (the `click` meta of `widgets.base.clickable`); the model
+        does it (NavState.click), then the views redraw."""
+        if event.button != 1:
+            return
+        self.nav.click(event.style.meta.get('click'), on_popup)
         self.refresh_views()
 
     def on_resize(self, event: events.Resize) -> None:

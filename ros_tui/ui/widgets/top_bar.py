@@ -13,11 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The top bar (the design's renderTop): the brand, the search hint, what y copied and what is running."""
+"""The top bar (the design's renderTop): the brand, the search box (a click opens search), what y
+copied and what is running."""
 
 from rich.text import Text
 
-from ros_tui.ui.widgets.base import NavView, glyph, spread, style
+from ros_tui.ui.widgets.base import NavView, clickable, glyph, spread, style
 
 
 class TopBar(NavView):
@@ -26,9 +27,9 @@ class TopBar(NavView):
     """
 
     def lines(self, width, height):
-        left = Text.assemble(
-            (' ros_tui ', style('brand', bold=True)), ' ',
-            (' / ', style('key', 'term', bold=True)), ('search everything ', style('head', 'term')))
+        search = clickable(Text.assemble((' / ', style('key', 'term', bold=True)),
+                                         ('search everything ', style('head', 'term'))), ('search', None))
+        left = Text.assemble((' ros_tui ', style('brand', bold=True)), ' ', search)
         register = self.nav.register
         if register:  # The design's .srch.reg chip: what y copied, for p.
             left.append_text(Text.assemble('  ', (f' {register.chip()} ', style('reg', 'term'))))

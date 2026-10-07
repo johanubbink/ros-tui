@@ -33,6 +33,11 @@ class Footer(NavView):
     Footer { height: 1; background: $rt-foot; }
     """
 
+    @property
+    def modal(self) -> bool:
+        """While it is the command line it is that popup: a click on it doesn't close it."""
+        return self.nav.cmd is not None
+
     def lines(self, width, height):
         foot = self.nav.footer()
         left = Text.assemble((f' {foot.mode.upper()} ', style('mode-text', MODES[foot.mode], bold=True)), ' ')

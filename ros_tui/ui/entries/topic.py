@@ -310,9 +310,7 @@ class TopicEntry(MessageEntry):
         """space in Echo: start the echo, or stop it."""
         data = self.data(tab)
         if data.echo is not None:
-            self._bridge.unsubscribe(tab.name)
-            data.echo, data.latest, data.shown, data.new_since = None, None, None, 0
-            nav.add_activity(tab, '■ echo stopped', 'dim')
+            self._stop_echo(nav, tab)
             nav.log_line(how, 'stopped echo')
             return
         if not data.type:
@@ -324,6 +322,12 @@ class TopicEntry(MessageEntry):
         future.add_done_callback(lambda done: self._failed(nav, tab, done, 'echo', self._echo_failed))
         nav.add_activity(tab, '◉ echo started', 'c')
         nav.log_line(how, 'started echo')
+
+    def _stop_echo(self, nav: NavState, tab: Tab) -> None:
+        data = self.data(tab)
+        self._bridge.unsubscribe(tab.name)
+        data.echo, data.latest, data.shown, data.new_since = None, None, None, 0
+        nav.add_activity(tab, '■ echo stopped', 'dim')
 
     def _echo_failed(self, tab: Tab) -> None:
         self.data(tab).echo = None
@@ -397,11 +401,27 @@ class TopicEntry(MessageEntry):
         if data.repeat is None:
             nav.log_line(how, 'nothing running here')
             return
+        self._stop_repeat(nav, tab)
+        nav.log_line(how, 'stopped repeating')
+
+    def _stop_repeat(self, nav: NavState, tab: Tab) -> None:
+        data = self.data(tab)
         self._bridge.stop_periodic_publish(tab.name)
         sent = data.repeat.sent(self._bridge.now())
         data.repeat = None
         nav.add_activity(tab, f'■ repeat stopped after {sent} sent', 'dim')
-        nav.log_line(how, 'stopped repeating')
+
+    def on_close(self, nav: NavState, tab: Tab) -> list[str]:
+        """Closing the tab stops its echo and its repeat: nothing would be left to stop them from."""
+        data = self._data.get(tab.key)
+        stopped = []
+        if data and data.echo is not None:
+            self._stop_echo(nav, tab)
+            stopped.append('echo stopped')
+        if data and data.repeat is not None:
+            self._stop_repeat(nav, tab)
+            stopped.append('repeat stopped')
+        return stopped
 
     def _failed(self, nav: NavState, tab: Tab, future: Any, what: str, undo=None) -> None:
         """On the bridge's thread: a subscribe or publish that failed says so (and undoes its state)."""

@@ -182,3 +182,19 @@ async def test_graph_updates_and_publishers():
 ])
 def test_fit_tabs(widths, want, start, room, shown):
     assert fit_tabs(widths, want, start, room) == shown
+
+
+async def test_narrow_terminal():
+    """At 83 columns the hints on the right give way, so the chips and the buttons stay whole."""
+    async with ui_session(size=(83, 35)) as s:
+        lines = s.text().splitlines()
+        assert 'Nodes 2' in lines[3]
+        assert lines[-3].rstrip().endswith(':log for everything · click a line to go there')
+        await s.shot('narrow-home', expect='at 83x35 all five kind chips show whole')
+        await s.keys('enter', 'space', 'e', 'r')
+        lines = s.text().splitlines()
+        assert 'other tabs dimmed' in lines[-4] and lines[-4].rstrip().endswith('   :log for everything')
+        assert 'Stop repeating at 10 Hz s   default · R changes it' in lines[5] and 'earlier' not in lines[5]
+        await s.shot('narrow-publish', expect='/chatter repeating at 83x35: both buttons and "default · R changes '
+                     'it" show (the sent count is cut at the edge) and "[ ] earlier messages" is dropped; the '
+                     'activity head keeps "other tabs dimmed" and shortens its right side to ":log for everything"')

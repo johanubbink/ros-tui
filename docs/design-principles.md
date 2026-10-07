@@ -22,6 +22,10 @@ serves one of them.
      gets the full width.
    - Help, search and commands are overlays that appear when asked for and then
      go away.
+   - It still has to work at about 83 columns. When a line doesn't fit, the hint
+     on its right gives way first (`spread(..., optional=True)`: a button
+     row's `[ ] earlier …`), so chips and buttons stay
+     whole; `test_shell.py::test_narrow_terminal` checks it.
 2. **Behaviour is predictable on every layer.**
    - The UI is a strict stack of layers. **esc always goes up one layer and
      enter always goes down one.**
@@ -32,9 +36,10 @@ serves one of them.
 3. **Nothing reaches the robot by accident.**
    - What's in the editor goes out on space or `^s`, and on nothing else. The
      only other key that sends is `r`, which starts a repeating publish; `s`
-     only ever stops or cancels. See keymap rule 3.
-   - Navigation and editing keys (enter, esc, tab, the arrows, hjkl, typing)
-     never send anything. A send flashes when it goes out and lands in the
+     only ever stops or cancels. See keymap rule 3. With the mouse, only a
+     click on the button that shows one of those keys does the same.
+   - Navigation and editing keys (enter, esc, tab, the arrows, hjkl, typing),
+     and clicks on anything but those buttons, never send anything. A send flashes when it goes out and lands in the
      activity strip.
    - Values are validated before anything is sent. An invalid value is never
      sent, and the error names the field.
@@ -70,6 +75,38 @@ helper, the command line, the log, search, insert, and finally normal mode.
 
 **Entry verbs** work on layers 2–3 of an entry: space, `^s`, `s`, `r`, `R`, `e`,
 `f`, `[` `]`.
+
+### The mouse
+
+The keys do everything; a left click is a shortcut to what they do, as in the
+design's `mousedown` handler, and it logs `click` where a key would log itself.
+
+- **What can be clicked** (`nav.CLICKS`): a tab, ☰ included (`tab`, as `0`–`9`);
+  a tab's `×` (`close`, as `x`); a kind chip (`chip`, as tab on the list); a list
+  row, a search match, an activity line or a `:log` line (`open`, as enter: it
+  opens or goes to the entry); a panel (`area`: select it and go inside, as
+  enter); a half of the Echo / Publish switch (`mode`, as `e`, only when it
+  isn't that mode already); a button (`verb`: what the key it shows does: space,
+  `s` or `r`); the rate in the Repeat button (`verb` `rate`, as `R`); the top
+  bar's search box (`search`, as `/`).
+- **One way in.** A view tags what it draws with its target through
+  `widgets.base.clickable` (a Rich `meta` on the style; `button()` and
+  `switch()` do it for their parts). Every `NavView` hands its clicks to
+  `RosTuiApp.click`, which reads the target under the mouse and calls
+  `NavState.click(target, on_popup)`. Nothing else handles the mouse, and the
+  model stays plain Python.
+- **Popups are modal.** While a popup has the keys (search, `:log`, the command
+  line, the field helper, which-key, the `g` popup), only a click on it counts
+  (an `Overlay` is `modal`, except the toast, and so is the footer while it is
+  the command line); a click anywhere else closes it
+  as esc does and does nothing more. That is the design's veil under search,
+  for every popup.
+- **Typing is kept first.** A click while typing a value keeps it as esc does
+  (a bad value is dropped with its toast), then does its thing; on the primary
+  button it keeps it as `^s` does (a bad value stays, with its errline) and
+  sends.
+- A disabled button (`off`) has no target, so a click on it does nothing, as
+  in the design. The wheel, drags and right clicks do nothing.
 
 ## Keymap rules
 
@@ -336,6 +373,9 @@ values in widget code or CSS; add a token instead.
 | `comp` | `#7f8a99` | an enum's completion while it is typed (the design's `.comp`) |
 | `reg` | `#c586c0` | the register chip in the top bar (the design's `.reg`) |
 | `fresh-bg` / `fresh-bad-bg` | `#1d2a1d` / `#2a1a1a` | a fresh activity line's band (the design's `.fl.new`, `.fl.new.bad`) |
+| `chip` / `chip-on` | `#2a2a2a` / `#3d5a78` | a kind chip or a half of the Echo / Publish switch, and the one that is on (the design's `.chip.on` border colour, so it stands out as the outlined design does) |
+| `pri-key` | `#cfe6fa` | the key in a primary button (the design's `.btn.pri .k`) |
+| `row-mark` | `#7d8794` | the `▍` on the row `i` edits, in a selected editor panel |
 
 Syntax colours in message rows (`widgets/field_rows.py`): field keys `syn-key`
 `#9cdcfe`, numbers and bools `syn-num` `#b5cea8`, strings `syn-str` `#ce9178`,
@@ -370,7 +410,13 @@ space sets` in `warn`.
 
 - **At rest**: a `tline` border.
 - **Selected** (layer 2, the area under the cursor): a `key` (near-white)
-  border, title on `tab-cur` (`#262b33`). No row is highlighted.
+  border, title on `tab-cur` (`#262b33`). No row is highlighted, but in an area
+  whose rows `i` edits from here (REQUEST, MESSAGE, GOAL, PARAMETERS:
+  `Panel.edits`) the row it would edit has a `▍` in `row-mark` in its first
+  cell, without the band; once inside, the same row is the cursor. (The design
+  marks nothing there, so you couldn't tell which field `i` edits.)
+- A title can carry a note at its right end (`Panel.aside`), in `panel-hint`:
+  the echo's `3 received · 1.0 Hz`.
 - **Inside** (layers 3 and 4): an `accent-fill` (blue) border, title on
   `panel-in` (`#16283a`). The current row gets a `row-in` (`#22303e`) band
   with a `▍` in `accent-fill` in its first cell (the design's 2px inset bar).
@@ -385,7 +431,20 @@ space sets` in `warn`.
   `✗ could not load it: <error>` in `bad`.
 
 On the ☰ list the same logic applies to rows: the cursor row is `#2b3a4a`, with
-a `key` outline while the list has the keys.
+a `key` outline while the list has the keys. Each kind's group starts after a
+blank line, and the Name, Type and Here columns share the width as the design's
+auto-sized table does: each gets its widest cell plus 3 cells, and what is left
+in proportion (`HomeList.columns`), so Here is narrow until something runs.
+
+### The entry header
+
+An open entry starts with its header line (the kind tag ` ≋ TOPIC ` in the
+kind's tint on its tag background, the name in `accent` bold, the type in
+`muted`, a topic's counts and its Echo / Publish switch on the right). Then a
+blank line, the button row (the buttons left, the keys that matter here right,
+in `dim`), and another blank line before the panels: the design's `.ph` rows
+with their 6px gaps. A node has no button row: its header, a blank line, then
+its panels (`entry_body.head_lines`).
 
 ### Terminal approximations
 
@@ -400,9 +459,11 @@ These are the agreed stand-ins. Use them, rather than inventing new ones:
 - **List cursor**: the cursor row has the `cursor` background; while the list has
   the keys (layer `in`) it turns `cursor-on` and gets a `▍` bar in `key` in the
   first cell, for the design's `key` outline.
-- **Chips and switches** (kind chips, the Echo / Publish switch): pills become
-  ` label ` blocks on `term-3`, the one that is on in `bright` bold on `cursor`.
-  There are no rounded borders.
+- **Chips and switches** (kind chips, the Echo / Publish switch,
+  `base.switch`): pills become ` label ` blocks on `chip`, the one that is on in
+  `bright` bold on `chip-on`, with a half-cell end (`▐` `▌` in the fill of the
+  part next to it) for the rounded ends. The design's 1px outline can't be
+  drawn around one line of text, so the fill stands in for it.
 - **Panels**: rounded box-drawing borders (`╭─╮│╰─╯`) in the panel's state colour
   (`tline`, `key` selected, `accent-fill` inside), a one-line title bar on the
   state's title background, then the body on `term-2`. Side-by-side panels share
@@ -479,10 +540,17 @@ The command line replaces the footer while it's open: COMMAND, the typed
     (`◉ echoing`, `↻ 10 Hz`, `◐ running`, then `open`) and in search rows
     (before `open tab`).
   - They show whether the entry's tab is open or not: an echo, a repeat or a
-    goal keeps running when you switch or close its tab, as in the design,
-    until space or `s` stops it (or the goal ends). A closed tab's echo, repeat
-    or goal stays in the top bar and the Here column, so it is never invisible;
-    reopen the entry (`u` right after `x`) to stop it.
+    goal keeps running when you switch tabs, until space or `s` stops it (or
+    the goal ends).
+  - **Closing a tab stops its echo and its repeat** (`EntryProvider.on_close`,
+    through the same stop paths as space and `s`, so the subscription and the
+    timer are really gone). The log says so: `closed /chatter — echo stopped ·
+    u reopens it` (`repeat stopped` for a repeat); the toast stays `closed
+    /chatter · u undoes`, and `u` reopens the tab without restarting anything.
+    This deviates from the design, where both keep running with no tab left
+    to stop them from. A running **goal is not canceled** on close, because a
+    cancel is a send to the robot: it stays in the top bar and the Here
+    column, and reopening the entry (`u` right after `x`) gives `s` back.
     **Quitting stops everything**, so nothing keeps acting on the robot after
     you quit: `bridge.shutdown()` first cancels a running goal (as `ros2
     action send_goal` does on ctrl+c, waiting at most
@@ -505,9 +573,9 @@ The command line replaces the footer while it's open: COMMAND, the typed
   - With nobody publishing, a value says `waiting — nobody publishes this
     yet`; with a publisher but no message yet, `waiting for the first message…`.
   - enter on a field hides it (`[ ] data  hidden`) or shows it (`[x]`), per entry.
-  - The echo's row is the button and what it counted: `■ Stop echo space
-    3 received · 1.0 Hz`, then `· N dropped` in `warn` when the buffer dropped
-    some.
+  - The echo's row is its button, `■ Stop echo space`; what it counted is at
+    the right of LATEST MESSAGE's title: `3 received · 1.0 Hz`, then `· N
+    dropped` in `warn` when the buffer dropped some.
 - **Goals** (the action entry, `entries/action.py`):
   - **One goal runs at a time, app-wide** (the design's `S.goal`). While any
     goal is sending or executing, space on any action tab sends nothing: the
@@ -550,8 +618,10 @@ The command line replaces the footer while it's open: COMMAND, the typed
   - `✗ FAILED` (a service call), `ABORTED` / `REJECTED` / `FAILED` (a goal)
     (`bad` on `bad-bg`)
   - each followed by the timing, e.g. `4.0 ms` or `3.5 s · live feedback`.
-- **Buttons** carry their key (`widgets.base.button(label, key, look)`):
-  - `▶ Publish once space` is primary (`pri`: `bright` on `accent-fill`).
+- **Buttons** carry their key (`widgets.base.button(label, key, look)`), in
+  bold, and a click on one does what its key does:
+  - `▶ Publish once space` is primary (`pri`: `bright` on `accent-fill`, its key
+    in `pri-key`).
   - `■ Stop echo space` is the stop style (`stop`: `warn` on `stop-bg`).
   - `↻ Repeat at 10 Hz r` is a plain button (`btn-text` on `btn`).
   - Disabled buttons (`off`: `btn-off` on `btn-off-bg`) are dim and say why
@@ -574,7 +644,8 @@ The command line replaces the footer while it's open: COMMAND, the typed
   is fixed, or after about 6 s.
 - **Activity strip** (`widgets/activity_strip.py`, the design's renderFeed):
   - It sits above the footer, headed `ACTIVITY · ALL TABS` (plus `· other tabs
-    dimmed` while an entry is open) with `:log for everything` on the right, and
+    dimmed` while an entry is open) with `:log for everything · click a line to
+    go there` on the right, and
     shows the three newest lines: the time (`09:41:03`, `dim`), the kind glyph
     and entry, and the text in its `cls` colour.
   - While an entry is open, lines from other tabs are dimmed; on the ☰ list
@@ -589,8 +660,8 @@ The command line replaces the footer while it's open: COMMAND, the typed
     bridge's `time_of_day()` (the local time in `RosBridge`; 09:41:00 plus the
     simulated time in `FakeBridge`), formatted by `nav.clock_text`.
   - `:log` shows them all with the same columns; `j` `k` move, `gg` `G` go to
-    the newest / oldest, enter goes to that line's tab. The app has no mouse, so
-    the design's "click a line to go there" isn't there.
+    the newest / oldest, enter goes to that line's tab. A click on a line, in
+    the strip or in `:log`, goes there too.
 - **Helper badges**: a field with a helper shows `[f Quaternion]`,
   `[f Header]`, `[f Time]` or `[f Enum]` after its value, before the type
   hint: brackets in `hb-edge`, `f` in `key` bold, the name in `hb-text`; on the

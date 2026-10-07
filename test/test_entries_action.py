@@ -199,6 +199,7 @@ def test_the_tick_redraws_only_for_what_shows():
 def test_a_goal_keeps_running_when_its_tab_closes():
     nav, bridge = action_nav(*OPEN_FIB, *order(12), 'space', 'x')
     assert nav.tabs == [] and goal(nav).running
+    assert nav.log[0] == ('x', 'closed /fibonacci — u reopens it')  # Not canceled: that would be a send.
     assert nav.running('actions', '/fibonacci')
     advance(nav, bridge, 3.6)
     assert goal(nav).state == SUCCEEDED and activity(nav)[0][0] == '✓ goal succeeded · 3.6 s'

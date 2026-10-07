@@ -19,7 +19,8 @@ An entry's renderer describes each area as a `Panel`: its body lines, which line
 row, the hints after the title and an errline. `draw_panel` draws it in one of three states:
 
 - at rest (''): a `tline` border,
-- selected ('sel', the area picked on the IN layer): a `key` border, the title on `tab-cur`,
+- selected ('sel', the area picked on the IN layer): a `key` border, the title on `tab-cur`; in an
+  area whose rows `i` edits from there (`Panel.edits`), the row it would edit has a dim `▍`,
 - inside ('in', the AREA and EDIT layers): an `accent-fill` border, the title on `panel-in`, and
   the current row on `row-in` with a `▍` bar in `accent-fill`.
 
@@ -32,7 +33,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ros_tui.ui.nav import AREA, EDIT, IN, NavState
-from ros_tui.ui.widgets.base import fit, style
+from ros_tui.ui.widgets.base import fit, spread, style
 
 PANEL_TOP = 2  # Lines above a panel's body: the border and the title bar.
 PANEL_LOOKS = {  # panel state -> (border colour, title background)
@@ -47,9 +48,11 @@ class Panel:
     title: str  # In capitals, as the Area's.
     lines: list[Text] = field(default_factory=list)  # The body, one Text per line.
     hint: Text = field(default_factory=Text)  # After the title, e.g. "enter edits · space sets".
+    aside: Text = field(default_factory=Text)  # At the right of the title bar, e.g. "3 received · 1.0 Hz".
     cursor: int | None = None  # The line of the current row; None when the area has no rows.
     errline: str = ''  # Shown under the body, after "✗ ".
     wrap: bool = False  # Wrap long lines (the design's .lwrap) instead of cropping them.
+    edits: bool = False  # i edits its current row from the area pick, so the row is marked while selected.
 
 
 def panel_state(nav: NavState, index: int) -> str:
@@ -70,8 +73,11 @@ def draw_panel(panel: Panel, width: int, height: int, state: str = '') -> list[T
     if panel.hint:
         title.append('  ')
         title.append_text(panel.hint)
+    if panel.aside:
+        title = spread(title, panel.aside + Text(' '), inner)
     lines, current, top, room = _scrolled(panel, inner, height)
-    body = [_row(lines[i] if i < len(lines) else Text(), inner, state == 'in' and i in current)
+    look = 'in' if state == 'in' else 'mark' if state == 'sel' and panel.edits else ''
+    body = [_row(lines[i] if i < len(lines) else Text(), inner, look if i in current else '')
             for i in range(top, top + room)]
     if panel.errline:
         body.append(fit(Text(' ✗ ' + panel.errline, style('bad', 'err-bg')), inner))
@@ -99,10 +105,12 @@ def _scrolled(panel: Panel, inner: int, height: int) -> tuple[list[Text], list[i
     return lines, current, top, room
 
 
-def _row(content: Text, width: int, current: bool) -> Text:
-    """One body line on the panel background, or the current row's band with its bar."""
-    row = Text(style=style(bg='row-in' if current else 'term-2'))
-    row.append('▍' if current else ' ', style('accent-fill'))
+def _row(content: Text, width: int, look: str = '') -> Text:
+    """One body line on the panel background; the current row inside the area ('in') is a band with
+    the bar in `accent-fill`, and the row `i` would edit from the area pick ('mark') has the bar in
+    `row-mark`, without the band."""
+    row = Text(style=style(bg='row-in' if look == 'in' else 'term-2'))
+    row.append('▍' if look else ' ', style('accent-fill' if look == 'in' else 'row-mark'))
     row.append_text(content)
     return fit(row, width)
 

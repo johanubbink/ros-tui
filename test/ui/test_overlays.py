@@ -64,7 +64,7 @@ async def test_search():
         assert ' SEARCH ' in footer(s) and 'esc' not in footer(s)  # esc / enter labels hide under search.
         await s.shot('search-open', expect='the search box over the dimmed ☰ list: "/ █ any topic, service, action or '
                      'node" and the count 11, all entries grouped ≋ TOPICS … ◆ NODES, the cursor bar on /chatter; '
-                     'the hint "↑↓ or ^n ^p · enter opens in a tab · esc closes"; footer SEARCH tabs › ☰ list')
+                     'the hint "↑↓ picks · enter opens in a tab · esc closes"; footer SEARCH tabs › ☰ list')
 
         await s.type_text('pose')
         text = boxed(s)
@@ -79,11 +79,13 @@ async def test_search():
 
         await s.keys('down')
         assert s.app.nav.search.cur == 1
-        await s.keys('ctrl+n')
+        await s.keys('down')
         assert s.app.nav.search.cur == 2
-        await s.keys('ctrl+p')
+        await s.keys('up')
         assert s.app.nav.search.cur == 1
-        await s.shot('search-picked', expect='the cursor bar on /goal_pose (down, ^n, ^p)')
+        await s.keys('ctrl+n')  # Not a search key: swallowed, the cursor stays.
+        assert s.app.nav.search.cur == 1
+        await s.shot('search-picked', expect='the cursor bar on /goal_pose (down, down, up; ctrl+n does nothing)')
 
         await s.keys('enter')
         state = s.state()
@@ -222,8 +224,8 @@ async def test_log_view():
     async with ui_session() as s:
         await s.keys(':', 'l', 'o', 'g', 'enter')
         assert s.app.nav.logv is not None and 'All activity' in s.text() and line_with(s, '│ nothing yet ')
-        await s.shot('log-empty', expect='the :log box over the dimmed list: "All activity  0 entries, newest '
-                     'first · j k move · enter goes there · esc closes", then "nothing yet"')
+        await s.shot('log-empty', expect='the :log box over the dimmed list: "All activity (0)  j k move · '
+                     'enter goes there", then "nothing yet"')
         await s.keys('escape')
         assert s.app.nav.logv is None
 
@@ -238,7 +240,7 @@ async def test_log_view():
         s.app.refresh_views()
         await s.keys(':', 'l', 'o', 'g', 'enter')
         text = s.text()
-        assert '5 entries, newest first' in text
+        assert 'All activity (5)' in text
         for expected in ('✗ goal rejected', '✓ response · sum: 42 (4.0 ms)', '▶ called · a: 19, b: 23',
                          '▶ goal sent · order: 12', '▶ published once'):
             assert expected in text, expected

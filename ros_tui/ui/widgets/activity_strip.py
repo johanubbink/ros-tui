@@ -24,19 +24,22 @@ NAV_ACTIVITY_FRESH_S: a green band with a bar in its first cell, red for a failu
 from rich.text import Text
 
 from ros_tui.ui.nav import ActivityLine
-from ros_tui.ui.widgets.base import NavView, band, fit, glyph, spread, style
+from ros_tui.ui.widgets.base import NavView, band, clickable, fit, glyph, spread, style
 
 FEED_LINES = 3
+FEED_NOTES = (':log for everything · click a line to go there', ':log for everything')  # The head's right, as room allows.
 WHO_WIDTH = 26  # The kind glyph and the entry name.
 LINE_COLORS = {'r': 'bad', 'g': 'ok', 'c': 'live', 'y': 'warn', 'dim': 'dim'}  # By ActivityLine.cls, as the design's classes.
 
 
 def activity_row(line: ActivityLine) -> Text:
-    """One activity line: the time, the kind glyph and entry, then what happened (coloured by its cls)."""
+    """One activity line: the time, the kind glyph and entry, then what happened (coloured by its cls).
+    A click on a line of an entry goes to its tab."""
     who = Text.assemble(glyph(line.kind) if line.kind else '', line.name)
     # The name is cut one cell short, so a long one still keeps a gap before the text.
-    return Text.assemble((line.time, style('dim')), '  ', fit(who, WHO_WIDTH - 1), ' ',
-                         (line.text, style(LINE_COLORS.get(line.cls, ''))))
+    row = Text.assemble((line.time, style('dim')), '  ', fit(who, WHO_WIDTH - 1), ' ',
+                        (line.text, style(LINE_COLORS.get(line.cls, ''))))
+    return clickable(row, ('open', (line.kind, line.name)) if line.kind else None)
 
 
 class ActivityStrip(NavView):
@@ -50,7 +53,8 @@ class ActivityStrip(NavView):
     def lines(self, width, height):
         nav = self.nav
         title = ' ACTIVITY · ALL TABS' + (' · other tabs dimmed' if nav.tab else '')
-        head = spread(Text(title, style('feed-head')), Text(':log for everything', style('feed-head')), width)
+        note = next(note for note in FEED_NOTES if len(title) + 1 + len(note) <= width or note == FEED_NOTES[-1])
+        head = spread(Text(title, style('feed-head')), Text(note, style('feed-head')), width, optional=True)
         if not nav.activity:
             return [head, Text(' nothing yet — what you send shows up here', style('dim'))]
         rows = []

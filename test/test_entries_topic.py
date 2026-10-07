@@ -108,6 +108,33 @@ def test_space_again_stops_it():
     assert shown(nav) == {'data': None}
 
 
+def test_closing_the_tab_stops_its_echo():
+    nav, bridge = topic_nav(*OPEN_CHATTER, 'space')
+    advance(nav, bridge, 1.0)
+    press(nav, 'x')
+    assert bridge.subscriptions == {} and data(nav).echo is None and nav.running_all() == []
+    assert nav.log[0] == ('x', 'closed /chatter — echo stopped · u reopens it')
+    assert activity(nav)[0] == '■ echo stopped' and nav.toast.text == 'closed /chatter · u undoes'
+    press(nav, 'u')  # Reopening doesn't start it again.
+    assert nav.tab == CHATTER and bridge.subscriptions == {} and nav.running_all() == []
+
+
+def test_closing_the_tab_stops_its_repeat():
+    nav, bridge = topic_nav(*OPEN_INBOX, *TYPE_HELLO, 'r')
+    advance(nav, bridge, 1.0)
+    press(nav, 'esc', 'esc', 'x')  # Closed from the tab row.
+    assert bridge.periodic_stopped == ['/inbox'] and data(nav, INBOX).repeat is None and nav.running_all() == []
+    assert nav.log[0] == ('x', 'closed /inbox — repeat stopped · u reopens it')
+    assert activity(nav)[0] == '■ repeat stopped after 10 sent'
+    press(nav, 'u')
+    assert bridge.periodic_started == [('/inbox', 10.0)] and nav.running_all() == []
+
+
+def test_closing_a_quiet_tab_says_nothing_was_stopped():
+    nav, bridge = topic_nav(*OPEN_CHATTER, 'x')
+    assert nav.log[0] == ('x', 'closed /chatter — u reopens it') and nav.activity == []
+
+
 def test_the_echo_keeps_running_in_other_tabs():
     nav, bridge = topic_nav(*OPEN_CHATTER, 'space', '0')
     advance(nav, bridge, 2.0)

@@ -15,8 +15,11 @@
 
 """What every widget shares: `NavView` (render the NavState as lines) and text helpers."""
 
+from typing import Any
+
 from rich.style import Style
 from rich.text import Text
+from textual import events
 from textual.widget import Widget
 
 from ros_tui.ui.nav import NavState, Running, Tab
@@ -30,10 +33,16 @@ class NavView(Widget):
     hands every key to the NavState and then refreshes the views (RosTuiApp.refresh_views)."""
 
     can_focus = False
+    modal = False  # A popup that has the keys while it shows (Overlay).
 
     def __init__(self, nav: NavState, **kwargs):
         super().__init__(**kwargs)
         self.nav = nav
+
+    def on_click(self, event: events.Click) -> None:
+        """Hand a click to the app, saying whether it landed on a popup that has the keys."""
+        event.stop()
+        self.app.click(event, on_popup=self.modal)
 
     def lines(self, width: int, height: int) -> list[Text]:
         raise NotImplementedError
@@ -48,7 +57,10 @@ class NavView(Widget):
 
 class Overlay(NavView):
     """A NavView drawn on top of the others: on the `overlay` layer, placed absolutely in its
-    parent. After each key the app asks `place` where it goes (RosTuiApp.refresh_views)."""
+    parent. After each key the app asks `place` where it goes (RosTuiApp.refresh_views). A `modal`
+    one is a popup that has the keys while it shows: a click outside it closes it (NavState.click)."""
+
+    modal = True
 
     DEFAULT_CSS = """
     Overlay { layer: overlay; position: absolute; }
@@ -62,6 +74,18 @@ class Overlay(NavView):
 def style(color: str = '', bg: str = '', bold: bool = False) -> Style:
     """A Style from theme token names or hex values: style('key', bold=True)."""
     return Style(color=TOKENS.get(color, color) or None, bgcolor=TOKENS.get(bg, bg) or None, bold=bold)
+
+
+def clickable(text: Text, target: tuple[str, Any] | None, start: int = 0, end: int | None = None,
+              before: bool = False) -> Text:
+    """`text` (or its characters [start, end)) tagged with what a click on it does, a nav.CLICKS
+    target such as ('tab', 2); the app reads it from the style under the mouse (RosTuiApp.on_click).
+    Tagging `before` the text's own spans lets a part of it keep a target of its own (the rate inside
+    the Repeat button). Returns `text`."""
+    if target is not None:
+        meta = Style(meta={'click': target})
+        (text.stylize_before if before else text.stylize)(meta, start, end)
+    return text
 
 
 def fit(line: Text, width: int, bg: str = '') -> Text:
@@ -80,11 +104,28 @@ def band(line: Text, width: int, bg: str) -> Text:
     return line
 
 
-def spread(left: Text, right: Text, width: int, bg: str = '') -> Text:
-    """`left`, then `right` pushed to the right edge; the left part is cropped if they don't fit."""
+def spread(left: Text, right: Text, width: int, bg: str = '', optional: bool = False) -> Text:
+    """`left`, then `right` pushed to the right edge; the left part is cropped if they don't fit,
+    or, when the right part is `optional` (a hint), the right part is dropped."""
+    if optional and left.cell_len + 1 + right.cell_len > width:
+        right = Text()
     room = max(0, width - right.cell_len)
     line = fit(left, room, bg) if left.cell_len < room else fit(left, max(0, room - 1), bg) + Text(' ')
     return fit(line + right, width, bg)
+
+
+def switch(*parts: tuple[Text | str, bool, tuple[str, Any] | None]) -> Text:
+    """A pill of (label, on, click target) parts (a kind chip; the Echo / Publish switch): each label
+    on its fill, `chip-on` and bright bold when it is on, else `chip` and grey, with a half-cell end
+    in the fill of the part next to it (the design's rounded .chip / .seg)."""
+    fills = ['chip-on' if on else 'chip' for _, on, _ in parts]
+    text = Text('▐', style(fills[0]))
+    for (label, on, target), fill in zip(parts, fills):
+        part = Text.assemble(' ', label, ' ')
+        part.stylize_before(style('bright' if on else 'grey', fill, bold=on))
+        text.append_text(clickable(part, target))
+    text.append('▌', style(fills[-1]))
+    return text
 
 
 def glyph(kind: str) -> Text:
@@ -129,7 +170,7 @@ def edit_value(value: str, fresh: bool = False) -> Text:
 
 BUTTON_LOOKS = {  # The design's .btn looks -> (text colour, background, its key's colour).
     '': ('btn-text', 'btn', 'key'),
-    'pri': ('bright', 'accent-fill', 'key'),
+    'pri': ('bright', 'accent-fill', 'pri-key'),
     'stop': ('warn', 'stop-bg', 'warn'),
     'off': ('btn-off', 'btn-off-bg', 'btn-off'),  # Disabled: say why next to it.
     'flash': ('bright', 'accent', 'bright'),  # A send just went out: a lighter blue (the design's .btn.flash outline).
@@ -141,11 +182,17 @@ def primary_look(nav: NavState, tab: Tab, look: str) -> str:
     return 'flash' if nav.flashing(tab) else look
 
 
+BUTTON_VERBS = {'space': 'primary', 's': 'secondary', 'r': 'repeat'}  # A button's key -> the verb a click runs.
+
+
 def button(label: Text | str, key: str, look: str = '') -> Text:
     """A button with its key, as the design's `<button class="btn pri">▶ Call<span class="k">space`:
-    the label (a Text may style parts of itself) and the key on the look's background."""
+    the label (a Text may style parts of itself) and the key on the look's background. A click on
+    it does what its key does (`BUTTON_VERBS`), unless it is disabled ('off')."""
     color, bg, key_color = BUTTON_LOOKS[look]
     text = Text.assemble(' ', label, ' ')
     text.stylize_before(style(color, bg, bold=look in ('pri', 'stop', 'flash')))
-    text.append(f'{key} ', style(key_color, bg))
-    return text
+    text.append(key, style(key_color, bg, bold=look != 'off'))  # Keys are bold, as the design's .k.
+    text.append(' ', style(bg=bg))
+    verb = BUTTON_VERBS.get(key) if look != 'off' else None
+    return clickable(text, ('verb', verb) if verb else None, before=True)

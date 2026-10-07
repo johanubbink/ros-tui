@@ -29,6 +29,8 @@ RIGHT = 1  # Cells kept free on its right.
 
 
 class ToastView(Overlay):
+    modal = False  # It never has the keys: a click on it doesn't close a popup.
+
     def place(self, width, height):
         toast = self.nav.toast
         if toast is None:

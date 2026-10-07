@@ -17,6 +17,7 @@
 
     async with ui_session() as s:                 # FakeBridge.demo(), 124x34 terminal
         await s.keys('enter', 'space')            # open /chatter, start the echo
+        await s.click_on('LATEST MESSAGE')        # or click what the screen shows
         await s.advance(2.0)                      # simulated seconds (the bridge's ManualClock)
         await s.shot('echo-live', expect="/chatter echoing, data 'chatter 2'")
 
@@ -45,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.fake_bridge import FakeBridge
+from rich.cells import cell_len
 from rich.console import Console
 from ros_tui.constants import UI_TICK_PERIOD_S
 from ros_tui.ui.app import RosTuiApp
@@ -100,6 +102,23 @@ class UiSession:
             await self.pilot.press(key)
             self.steps.append(key)
             await self.idle()
+
+    async def click(self, x: int, y: int) -> None:
+        """Click the cell at column ``x``, row ``y`` of the screen, then let the app go idle."""
+        await self.pilot.click(offset=(x, y))
+        self.steps.append(f'click@{x},{y}')
+        await self.idle()
+
+    async def click_on(self, text: str, nth: int = 0, row: int | None = None) -> None:
+        """Click the first cell of the ``nth`` place ``text`` shows on the screen (in screen row
+        ``row`` only, if given), as a person would aim at it."""
+        spots = [(cell_len(line[:at]), y) for y, line in enumerate(self.text().splitlines())
+                 if row is None or y == row for at in _find_all(line, text)]
+        if nth >= len(spots):
+            raise AssertionError(f'{text!r} shows {len(spots)} times on the screen, wanted #{nth}')
+        await self.pilot.click(offset=spots[nth])
+        self.steps.append(f'click "{text}"' + (f'#{nth}' if nth else ''))
+        await self.idle()
 
     async def type_text(self, text: str) -> None:
         """Type ``text`` character by character (Pilot accepts single characters as keys)."""
@@ -220,6 +239,11 @@ class UiSession:
                 f'- expect: {record["expect"] or "—"}\n'
                 f'- files: {", ".join(files)}\n'
             )
+
+
+def _find_all(line: str, text: str) -> list[int]:
+    """The indices where ``text`` starts in ``line``."""
+    return [at for at in range(len(line)) if line.startswith(text, at)]
 
 
 def _format_keys(keys: list[str]) -> str:

@@ -57,12 +57,14 @@ async def test_echo_chatter():
 
         await s.keys('space')
         await s.advance(3.0)
-        assert line_with(s, '[x] data', "'chatter 3'") and line_with(s, 'LATEST MESSAGE', '● live · enter freezes it')
-        assert line_with(s, '■ Stop echo space', '3 received · 1.0 Hz')
+        assert line_with(s, '[x] data', "'chatter 3'")
+        assert line_with(s, 'LATEST MESSAGE', '● live · enter freezes it', '3 received · 1.0 Hz')
+        assert line_with(s, '■ Stop echo space') and not line_with(s, '■ Stop echo space', 'received')
         assert line_with(s, '/chatter ◉') and line_with(s, '≋ ◉ /chatter')  # The tab and the top bar.
         assert line_with(s, '/chatter', '◉ echo started')
-        await s.shot('echo-live', expect='echo running: an orange "■ Stop echo space" with "3 received · 1.0 Hz"; '
-                     'LATEST MESSAGE "● live · enter freezes it" (green ● live) and "[x] data \'chatter 3\'"; a cyan ◉ '
+        await s.shot('echo-live', expect='echo running: an orange "■ Stop echo space" on its own row; LATEST MESSAGE '
+                     '"● live · enter freezes it" (green ● live) with "3 received · 1.0 Hz" at the right of its title, '
+                     'and "[x] data \'chatter 3\'"; a cyan ◉ '
                      'after /chatter in the tab, "≋ ◉ /chatter" at the right of the top bar; ACTIVITY "◉ echo started"')
 
         await s.keys('enter')
@@ -172,3 +174,21 @@ async def test_echo_a_nested_message():
                      'their compact parts: header {stamp: …, frame_id: map}, pose.pose.position {x: 1.0806, …} '
                      '(floats cut to 6 significant digits), '
                      'pose.pose.orientation {x: …, w: …}, pose.covariance [0.0, …] cut at the panel edge')
+
+
+async def test_closing_an_echoing_tab_stops_it():
+    """x on a tab stops its echo: nothing would be left to stop it from. u reopens it, stopped."""
+    async with ui_session() as s:
+        await s.keys('enter', 'space')
+        await s.advance(2.0)
+        assert '◉ /chatter' in s.text().splitlines()[0]
+        await s.keys('x')
+        top, rows = s.text().splitlines()[0], line_with(s, '≋ /chatter', 'std_msgs/msg/String')
+        assert '◉' not in top and '◉' not in rows and '/chatter' not in s.bridge.subscriptions
+        assert tuple(s.state()['log']) == ('x', 'closed /chatter — echo stopped · u reopens it')
+        assert line_with(s, '/chatter', '■ echo stopped')
+        await s.shot('closed-echo-stopped', expect='the ☰ list after x on the echoing /chatter tab: no "◉ /chatter" '
+                     'in the top bar, the /chatter row\'s Here column empty; the activity strip "■ echo stopped"; '
+                     'the info toast "closed /chatter · u undoes"')
+        await s.keys('u')
+        assert s.state()['tabs'] == ['/chatter'] and line_with(s, '▶ Start echo space')

@@ -47,6 +47,9 @@ class EntryRouter(EntryProvider):
     def on_open(self, nav: NavState, tab: Tab) -> None:
         self.for_tab(tab).on_open(nav, tab)
 
+    def on_close(self, nav: NavState, tab: Tab) -> list[str]:
+        return self.for_tab(tab).on_close(nav, tab)
+
     def mode(self, tab: Tab) -> str | None:
         return self.for_tab(tab).mode(tab)
 

@@ -167,7 +167,7 @@ def _activity(s):
 
 
 def _log(s):
-    assert line_with(s, 'All activity', 'entries, newest first · j k move · enter goes there · esc closes')
+    assert line_with(s, 'All activity (', ') ', 'j k move', 'enter goes there')
     assert line_with(s, '▍09:41:00', '/chatter', '◉ echo started')  # G: the oldest line, picked.
     assert line_with(s, '09:41:05', '/inbox', '✓ published · data: chatter 3')
 
@@ -343,7 +343,7 @@ STEPS = (
          ':log shows all activity, with times. j k move, G goes to the oldest.',
          ['colon', *'log', 'enter', 'G'],
          ('normal', ['tabs', '/add_two_ints', 'request'], 2), None,
-         _log, 'the :log view over a veil: "All activity N entries, newest first …", every line with its time, glyph '
+         _log, 'the :log view over a veil: "All activity (N)  j k move · enter goes there", every line with its time, glyph '
                'and entry; G picked the oldest, "09:41:00 ≋ /chatter ◉ echo started"'),
     Step('6-log-jump', 6,
          "enter jumps to that line's tab.",

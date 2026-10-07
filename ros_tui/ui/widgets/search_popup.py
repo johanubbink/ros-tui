@@ -17,20 +17,21 @@
 
 An input line with the count, then the matches grouped by kind (the match highlighted in the name,
 the short type, "open tab" for entries already open) and a hint line. At most MAX_ROWS matches show;
-the window scrolls to keep the picked one in view.
+the window scrolls to keep the picked one in view. A click on a match opens it.
 """
 
 from rich.text import Text
 
 from ros_tui.ui.nav import short_type
 from ros_tui.ui.theme import KINDS
-from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, cursor_cell, glyph, markers, rule, spread, style
+from ros_tui.ui.widgets.base import (BODY_TOP, Overlay, band, clickable, cursor_bar, cursor_cell, glyph, markers, rule,
+                                     spread, style)
 
 WIDTH = 84  # The design's 660 px box.
 MAX_ROWS = 13  # Matches shown at once, as the design's r.slice(0, 13).
 PLACEHOLDER = 'any topic, service, action or node'
 NO_MATCHES = 'no matches — backspace to change the search'
-HINT = '↑↓ or ^n ^p · enter opens in a tab · esc closes'
+HINT = '↑↓ picks · enter opens in a tab · esc closes'
 
 
 def highlight(name: str, query: str) -> Text:
@@ -91,4 +92,4 @@ class SearchPopup(Overlay):
             right.append(' ')
         line = spread(left, right, width)
         line.stylize_before(style('bright' if sel else 'text'))
-        return band(line, width, 'cursor-on') if sel else line
+        return clickable(band(line, width, 'cursor-on') if sel else line, ('open', (kind, item.name)))

@@ -61,7 +61,7 @@ _ALIASES = {
 }
 # textual renames a few symbols instead of using their unicode name (textual.keys.KEY_NAME_REPLACEMENTS).
 _TEXTUAL_SYMBOLS = {'slash': '/', 'backslash': '\\', 'at': '@', 'minus': '-', 'plus': '+', 'underscore': '_'}
-_DISPLAY = {'escape': 'esc', 'ctrl+s': '^s', 'ctrl+f': '^f', 'ctrl+n': '^n', 'ctrl+p': '^p'}
+_DISPLAY = {'escape': 'esc', 'ctrl+s': '^s', 'ctrl+f': '^f'}
 
 
 def normalize_key(key: str) -> str:
@@ -178,7 +178,7 @@ KEYMAP = (
     _b('activity', 'Activity', 'esc', 'close', run=[('escape', 'log_close')]),
 
     _b('search', 'Search', 'type', 'find by name or type', run=[(TYPE, 'search_type'), ('backspace', 'search_back')]),
-    _b('search', 'Search', '↑ ↓', 'pick', '^n ^p', run=[('down ctrl+n', 'search_down'), ('up ctrl+p', 'search_up')]),
+    _b('search', 'Search', '↑ ↓', 'pick', run=[('down', 'search_down'), ('up', 'search_up')]),
     _b('search', 'Search', 'enter', 'open in a tab', run=[('enter', 'search_enter')]),
     _b('search', 'Search', 'esc', 'close', run=[('escape', 'search_close')]),
 

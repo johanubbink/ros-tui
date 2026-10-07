@@ -22,7 +22,7 @@ scrolls to keep the picked line in the middle.
 from rich.text import Text
 
 from ros_tui.ui.widgets.activity_strip import activity_row
-from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, rule, style
+from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, keyed, rule, style
 
 SIDE = 10  # Cells left free on each side (the design's left / right: 80px).
 BOTTOM = 3  # Rows left free above the bottom of the screen (the footer and some of the strip).
@@ -41,9 +41,9 @@ class LogPopup(Overlay):
     def lines(self, width, height):
         nav = self.nav
         activity = nav.activity
-        hint = f'{len(activity)} entries, newest first · j k move · enter goes there · esc closes'
-        lines = [Text.assemble(' ', ('All activity', style('bright', bold=True)), '  ', (hint, style('dim'))),
-                 rule(width)]
+        title = Text.assemble(' ', (f'All activity ({len(activity)})', style('bright', bold=True)), '   ',
+                              keyed('j k', 'move'), ('  ·  ', style('dim')), keyed('enter', 'goes there'))
+        lines = [title, rule(width)]
         if not activity:
             return lines + [Text(' nothing yet', style('dim'))]
         room = max(1, height - len(lines))
