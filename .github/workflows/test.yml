@@ -11,6 +11,7 @@ on:
 
 jobs:
   test:
+    name: ${{ inputs.distro }}
     runs-on: ubuntu-latest
     container:
       image: ros:${{ inputs.distro }}-ros-base
