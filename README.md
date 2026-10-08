@@ -1,5 +1,11 @@
 # ros_tui
 
+[![Jazzy](https://github.com/johanubbink/ros-tui/actions/workflows/jazzy.yml/badge.svg?branch=main)](https://github.com/johanubbink/ros-tui/actions/workflows/jazzy.yml)
+[![Lyrical](https://github.com/johanubbink/ros-tui/actions/workflows/lyrical.yml/badge.svg?branch=main)](https://github.com/johanubbink/ros-tui/actions/workflows/lyrical.yml)
+[![Rolling](https://github.com/johanubbink/ros-tui/actions/workflows/rolling.yml/badge.svg?branch=main)](https://github.com/johanubbink/ros-tui/actions/workflows/rolling.yml)
+[![Release](https://img.shields.io/github/v/release/johanubbink/ros-tui)](https://github.com/johanubbink/ros-tui/releases/latest)
+[![License](https://img.shields.io/github/license/johanubbink/ros-tui)](LICENSE)
+
 ros_tui is a terminal UI for poking at a running ROS 2 system. Browse its
 **topics, services, actions and nodes**, fill in a message field by field,
 and echo, publish, call, send goals or set parameters, without typing
