@@ -72,9 +72,9 @@ shots), without re-asserting the model's facts. UI tests read state through
 ## Manual checks
 
 Some things are easier to check by hand: a smooth UI under a 50 Hz echo,
-publishers stopping on quit, turtlesim moving. The checklist is in the module
-docstring of [`test/test_e2e_smoke.py`](../test/test_e2e_smoke.py); run it
-against the playground with turtlesim.
+publishers stopping on quit. The checklist is in the module docstring of
+[`test/test_e2e_smoke.py`](../test/test_e2e_smoke.py); run it against the
+playground.
 
 ## Demo GIF
 

@@ -10,32 +10,36 @@ familiar alternatives, and a click does what its keys would.
 
 ## Install
 
-ros_tui is a ROS 2 (ament_python) package. It isn't released to the ROS
-buildfarm yet, so build it from source in a colcon workspace:
+ros_tui needs a sourced ROS 2 environment (Jazzy, Lyrical or Rolling) and
+nothing else: it carries its own copy of textual, so there is no pip step.
+
+**One file.** Download the release and run it:
+
+```bash
+mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/ros_tui https://github.com/johanubbink/ros-tui/releases/latest/download/ros_tui.pyz && chmod +x ~/.local/bin/ros_tui
+```
+
+**From source**, in a colcon workspace:
 
 ```bash
 mkdir -p ~/ros_tui_ws/src && cd ~/ros_tui_ws/src
 git clone https://github.com/johanubbink/ros-tui.git
 cd ~/ros_tui_ws
 rosdep install --from-paths src --ignore-src -y
-pip install --user --upgrade --break-system-packages textual rich
 colcon build --packages-select ros_tui
 source install/setup.bash
 ```
 
-The `pip` line (from `python3-pip`) is needed because the `textual` in Ubuntu's
-apt is far too old. ros_tui is developed and tested on ROS 2 Jazzy (Ubuntu
-24.04).
-
 ## Run it
 
 ```bash
-ros2 run ros_tui ros_tui
+ros_tui                          # the one-file install
+ros2 run ros_tui ros_tui         # a colcon install
 ```
 
-The ☰ list fills in from the live ROS graph and stays up to date. If a noisy RMW
-prints warnings over the UI, send them elsewhere:
-`ros2 run ros_tui ros_tui 2>>/tmp/ros_tui.stderr`.
+The ☰ list fills in from the live ROS graph and stays up to date. What ROS
+prints meanwhile (RMW warnings, log lines) goes to a log file under
+`~/.ros/log`, not over the UI.
 
 ## Using it
 
@@ -97,15 +101,14 @@ docker compose exec ros_tui bash # in a second terminal...
 ros2 run ros_tui ros_tui         # ...then run the TUI inside it
 ```
 
-You can also run turtlesim with it (needs X11). See
-[docs/docker.md](docs/docker.md) for that and for what to try on each entry.
+See [docs/docker.md](docs/docker.md) for what to try on each entry.
 
 ## Docs
 
 - [docs/usage.md](docs/usage.md): the layers, each kind of entry, the
   editor, the field helpers and every key.
-- [docs/docker.md](docs/docker.md): the Docker playground, the demo servers
-  and turtlesim.
+- [docs/docker.md](docs/docker.md): the Docker playground and the demo
+  servers.
 - [docs/design-principles.md](docs/design-principles.md): the rules behind
   the UI, its look and its copy, for anyone changing it.
 - [docs/architecture.md](docs/architecture.md): how ros_tui works inside.
@@ -115,3 +118,9 @@ You can also run turtlesim with it (needs X11). See
 ## License
 
 ros_tui is released under the Apache License 2.0. See [LICENSE](LICENSE).
+
+It bundles [textual](https://github.com/Textualize/textual) and its
+dependencies (rich, Pygments, markdown-it-py, mdit-py-plugins, mdurl,
+linkify-it-py, platformdirs, typing_extensions) in
+[`ros_tui/_vendor`](ros_tui/_vendor), each under its own MIT, BSD or PSF
+license, included next to it.

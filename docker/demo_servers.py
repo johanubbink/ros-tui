@@ -33,7 +33,8 @@ Brings up, on one node, something for each kind of entry:
   from the node entry: nothing reads them.
 
 This mirrors the in-process ``FixtureServers`` used by the test suite
-(``test/conftest.py``), but as an installable node with public-looking names. The test harness's
+(``test/conftest.py``), but as a standalone node with public-looking names. It is not part of the
+installed package; the Docker playground runs it (``python3 docker/demo_servers.py``). The test harness's
 ``DEMO_GRAPH`` (``test/harness/fake_bridge.py``) shows the same world.
 """
 
@@ -50,7 +51,11 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Int32, String
-from turtlesim.srv import TeleportAbsolute
+
+try:  # turtlesim's interfaces have their own package from Kilted on.
+    from turtlesim_msgs.srv import TeleportAbsolute
+except ImportError:
+    from turtlesim.srv import TeleportAbsolute
 
 FIBONACCI_ACTION = '/fibonacci'
 ADD_TWO_INTS_SERVICE = '/add_two_ints'

@@ -85,6 +85,7 @@ def test_quaternion_maths():
     assert quat_about_axis(0.0, 0.0, 1.0, math.pi / 2) == pytest.approx(quat_from_euler(0.0, 0.0, math.pi / 2))
     # Reference values from transforms3d (what tf_transformations wraps), sxyz order, xyzw out.
     assert quat_from_euler(0.5, 0.2, -0.3) == pytest.approx((0.25786, 0.05886, -0.16849, 0.94956), abs=1e-5)
+    assert quat_about_axis(1.0, 2.0, 3.0, 1.0) == pytest.approx((0.12813, 0.25627, 0.38440, 0.87758), abs=1e-5)
 
 
 @pytest.mark.parametrize('text, stamp', [

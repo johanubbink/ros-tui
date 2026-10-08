@@ -57,7 +57,7 @@ ROUNDTRIP_TYPES = [
     ('srv', 'example_interfaces/srv/AddTwoInts'),
     ('srv', 'std_srvs/srv/SetBool'),
     ('action', 'example_interfaces/action/Fibonacci'),
-    ('action', 'turtlesim/action/RotateAbsolute'),
+    ('action', 'test_msgs/action/NestedMessage'),
 ]
 
 

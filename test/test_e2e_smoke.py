@@ -17,13 +17,13 @@
 Full-stack smoke: the real app over a real RosBridge and the in-process fixture servers.
 
 The tests drive the app with keys, as a user would, against the fixture servers in
-``test/conftest.py`` (which mirror the demo node in ``ros_tui/demo/demo_servers.py``), and wait in
+``test/conftest.py`` (which mirror the demo node in ``docker/demo_servers.py``), and wait in
 real time. With ``ROS_TUI_SHOTS=1`` each takes a shot of where it ends.
 
 Manual checklist against the Docker demo playground (see docs/docker.md):
 
-    ros2 launch ros_tui demo.launch.py turtlesim:=true   # shell 1: demo servers + turtlesim
-    ros2 run ros_tui ros_tui                             # shell 2
+    docker compose up                # shell 1: the demo servers
+    ros2 run ros_tui ros_tui         # shell 2, inside docker compose exec ros_tui bash
 
   - The app starts in under 2 s and the ☰ list fills with the demo graph; tab cycles the chips.
   - / filters as you type and stays responsive; enter opens the match in a tab.
@@ -31,11 +31,10 @@ Manual checklist against the Docker demo playground (see docs/docker.md):
     enter freezes the values, esc goes live again.
   - /add_two_ints: enter enter, type 19, tab, 23, esc, space: the response says sum: 42.
   - /fibonacci: send a goal (order 20) with space, watch the feedback grow, s cancels it (CANCELED).
-    /turtle1/rotate_absolute (theta: 1.57) turns the turtle.
-  - /turtle1/cmd_vel (geometry_msgs/Twist) opens in Publish with its fields unfolded; f on a
+  - /goal_pose (geometry_msgs/PoseStamped) opens in Publish with its fields unfolded; f on a
     field with a helper opens it.
-  - r repeats /turtle1/cmd_vel at 10 Hz (linear.x: 1.0): the turtle drives. :q quits, and the
-    repeat stops (ros2 topic hz /turtle1/cmd_vel in another shell goes quiet): the turtle stops.
+  - r repeats /inbox at 10 Hz: shell 1 logs each arrival. :q quits, and the repeat stops (the
+    logging in shell 1 stops).
   - A goal still running when you quit is canceled.
   - A node (/ros_tui_demo_servers): its interfaces and parameters load; change publish_rate
     and set it with space.

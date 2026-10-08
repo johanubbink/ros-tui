@@ -448,6 +448,11 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
   `ECHO_BUFFER_MAXLEN`); the tick drains it, keeps only the newest and converts
   it for display only when shown. An idle app, or an echo in another tab, never
   redraws the body.
+- **No pip at install time.** A runtime dependency is a rosdep key in
+  `package.xml`, or a pure-Python wheel pinned in `ros_tui/_vendor/vendor.lock`
+  (`scripts/vendor.py`). Small maths is written out rather than pulled in.
+- **Only the UI reaches the terminal.** While the app runs, fds 1 and 2 go to a
+  log file (`output.py`); the UI draws on `sys.__stderr__`.
 - **Every UI change ships a scenario test with shots** (`test/ui/test_<what>.py`,
   see [agentic-dev.md](agentic-dev.md)).
 

@@ -5,8 +5,9 @@ ARG ROS_DISTRO=jazzy
 FROM ros:${ROS_DISTRO}-ros-base
 
 # ---- Dependencies -----------------------------------------------------------
-# colcon + build tooling, the message packages the demo node and app need at
-# runtime, and the test deps so `colcon test` / pytest also work in here.
+# colcon + build tooling, the message packages the demo node needs, and the test
+# deps so `colcon test` / pytest also work in here. textual comes bundled with
+# ros_tui (ros_tui/_vendor), so there is no pip step.
 # librsvg2-bin + fonts-jetbrains-mono: the agent harness (scripts/agent_check.sh) turns
 # screenshot SVGs into PNGs with rsvg-convert, in the design's monospace font.
 #
@@ -25,10 +26,8 @@ RUN apt-get update \
         ros-${ROS_DISTRO}-domain-coordinator \
         ros-${ROS_DISTRO}-test-msgs \
         ros-${ROS_DISTRO}-turtlesim \
-        ros-${ROS_DISTRO}-tf-transformations \
         python3-numpy \
         python3-yaml \
-        python3-pip \
         python3-pytest \
         python3-pytest-asyncio \
         python3-flake8 \
@@ -36,12 +35,6 @@ RUN apt-get update \
         fonts-jetbrains-mono \
         sudo vim less \
     && rm -rf /var/lib/apt/lists/*
-
-# textual (and a recent rich) are not reliably packaged for apt at the versions the
-# app needs; CI installs them via pip too (see .github/workflows/ci.yml).
-# --ignore-installed: install textual's dep tree into /usr/local (which shadows the
-# apt copies) rather than trying to uninstall Debian-managed packages like Pygments.
-RUN pip install --no-cache-dir --break-system-packages --ignore-installed textual rich
 
 # ---- Non-root user, mapped to the host UID/GID ------------------------------
 # Files written to the bind-mounted source then belong to the host user.
