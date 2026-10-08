@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The y / p register (the design's S.reg): one copied message, with its type.
+"""The y / p register: one copied message, with its type.
 
 Pure Python. `y` copies a message as exact plain values: an echo's latest (or frozen) message, or
 what an editor holds (a topic's message, a service's request, an action's goal). `p` pastes it
@@ -25,13 +25,12 @@ pasting (entries/message.py, entries/topic.py); NavState holds the one register,
 import copy
 from dataclasses import dataclass
 
-# An entry kind's editor -> the role of the message it holds.
-ROLES = {'topics': 'message', 'services': 'request', 'actions': 'goal'}
+from ros_tui.ui.fields import short_type
 
 
 def type_label(type_name: str, role: str) -> str:
     """How a copied type reads: 'String' for a topic's message, 'AddTwoInts request' otherwise."""
-    short = type_name.rsplit('/', 1)[-1]
+    short = short_type(type_name)
     return short if role == 'message' else f'{short} {role}'
 
 

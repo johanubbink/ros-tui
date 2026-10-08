@@ -13,19 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The design prototype's world for the pure nav-model tests (test_nav.py, test_keymap.py).
+"""A small fixed world for the pure nav-model tests (test_nav.py, test_keymap.py).
 
-``DESIGN_CATALOG`` is KINDS from docs/design/hybrid-keys.html. ``DesignProvider`` is the default
-``EntryProvider`` plus a topic's Echo / Publish mode (as ``TopicEntry`` has it). ``RowsProvider`` adds
-three editable number rows per editable area, so the AREA and EDIT layers and per-tab undo are tested
-without the real entries.
+``FIXTURE_CATALOG`` lists a few entries of every kind. ``FixtureEntry`` is the base ``Entry``
+with the areas (and a topic's Echo / Publish modes) of the real kind. ``RowsEntry`` adds three
+editable number rows per editable area, so the AREA and EDIT layers and per-tab undo are tested
+without the real entries; ``RowsWorld`` makes them and records the verbs they run.
 """
 
 from types import SimpleNamespace
 
-from ros_tui.ui.nav import EDIT, IN, CatalogItem, Commit, Editing, EntryProvider, NavState, UndoEntry
+from ros_tui.ui.entries.base import Commit, Editing, Entry, UndoEntry
+from ros_tui.ui.entries.kinds import KINDS
+from ros_tui.ui.catalog import CatalogItem
+from ros_tui.ui.nav import NavState
 
-DESIGN_CATALOG = SimpleNamespace(
+FIXTURE_CATALOG = SimpleNamespace(
     topics=[CatalogItem('/chatter', 'std_msgs/msg/String', 1),
             CatalogItem('/counter', 'std_msgs/msg/Int32', 1),
             CatalogItem('/diagnostic_status', 'diagnostic_msgs/msg/DiagnosticStatus', 1),
@@ -41,96 +44,91 @@ DESIGN_CATALOG = SimpleNamespace(
 FIELDS = ('a', 'b', 'c')
 
 
-class DesignProvider(EntryProvider):
-    """No rows and no verbs, but a topic opens in Echo when someone publishes it, else in Publish, and
-    e / :echo / :pub switch it, as in TopicEntry."""
+class FixtureEntry(Entry):
+    """No rows and no verbs, but the real kind's areas, and a topic opens in Echo when someone
+    publishes it, else in Publish, as in TopicEntry."""
 
-    def __init__(self):
-        super().__init__()
-        self.modes: dict[str, str] = {}
+    def __init__(self, tab, ctx=None):
+        super().__init__(tab, ctx)
+        self.AREAS, self.MODES = KINDS[tab.kind].AREAS, KINDS[tab.kind].MODES
 
-    def on_open(self, nav, tab):
-        if tab.kind == 'topics' and tab.name not in self.modes:
-            self.modes[tab.name] = 'echo' if nav.item(tab).publishers > 0 else 'publish'
+    def on_open(self, nav):
+        if self.MODES and not self.mode:
+            self.mode = 'echo' if nav.catalog.item(self.tab).publishers > 0 else 'publish'
 
-    def mode(self, tab):
-        return self.modes.get(tab.name) if tab.kind == 'topics' else None
-
-    def verb(self, nav, tab, name, how, arg=None):
-        if name != 'toggle_mode' or tab is None or tab.kind != 'topics':
-            return super().verb(nav, tab, name, how, arg)
-        if nav.layer == EDIT:
-            nav.commit_edit(how)
-        self.modes[tab.name] = arg or ('publish' if self.modes[tab.name] == 'echo' else 'echo')
-        nav.layer = IN
-        nav.log_line(how, f'now in {self.modes[tab.name]}')
-        return True
+    def label_vars(self):
+        return {'rate': '10'} if self.MODES else {}
 
 
-class RowsProvider(DesignProvider):
-    """Every area has three rows; editable ones hold numbers a, b, c (1, 2, 3) per entry. Row c of a
-    message has a Quaternion helper, enter on an interface row opens /chatter, and verbs are recorded."""
+class RowsEntry(FixtureEntry):
+    """Every area has three rows; editable ones hold numbers a, b, c (1, 2, 3). Row c of a message
+    has a Quaternion helper, enter on an interface row opens /chatter, and verbs are recorded."""
 
-    def __init__(self):
-        super().__init__()
-        self.values: dict[str, list[str]] = {}
-        self.verbs: list[tuple[str, str, object]] = []
+    VERBS = ('primary', 'secondary', 'repeat', 'rate', 'set_rate', 'helper', 'helper_apply', 'history_older',
+             'history_newer', 'yank', 'paste', 'fold', 'unfold', 'add_item', 'delete_item')
 
-    def row_count(self, tab, area):
+    def __init__(self, tab, record):
+        super().__init__(tab)
+        self.values: dict[str, list[str]] = {}  # Area id -> its values.
+        self.record = record
+
+    def row_count(self, area):
         return len(FIELDS)
 
-    def _values(self, tab, area):
-        return self.values.setdefault(f'{tab.key}|{area.id}', ['1', '2', '3'])
-
-    def start_edit(self, tab, area, row, clear):
+    def start_edit(self, area, row, clear):
         if not area.editable:
             return None
-        value = self._values(tab, area)[row]
+        value = self.values.setdefault(area.id, ['1', '2', '3'])[row]
         return Editing(area.id, row, '' if clear else value, old=value, field=FIELDS[row])
 
-    def commit_edit(self, tab, editing):
+    def commit_edit(self, editing):
         value = editing.value.strip()
         try:
             float(value)
         except ValueError:
             return Commit(False, f'{editing.field} needs a number, got "{value}"')
-        area = next(a for a in self.areas(tab) if a.id == editing.area)
-        self._values(tab, area)[editing.row] = value
+        values = self.values.setdefault(editing.area, ['1', '2', '3'])
+        values[editing.row] = value
         changed = value != editing.old
-        undo = UndoEntry(tab.key, 'edit', (area, editing.row, editing.old)) if changed else None
+        undo = UndoEntry(self.tab, lambda nav: self._undo(values, editing.row, editing.old)) if changed else None
         return Commit(True, f'kept {editing.field} = {value}' + (' (u undoes)' if changed else ''), undo)
 
-    def undo(self, nav, entry):
-        area, row, old = entry.data
-        tab = next(t for t in nav.tabs if t.key == entry.owner)
-        self._values(tab, area)[row] = old
-        return f'undid the edit of {FIELDS[row]} on {tab.name}'
+    def _undo(self, values, row, old):
+        values[row] = old
+        return f'undid the edit of {FIELDS[row]} on {self.tab.name}'
 
-    def activate_row(self, nav, tab, area, row, how):
+    def activate_row(self, nav, area, row, how):
         if area.id != 'ifs':
             return False
         nav.open_entity('topics', '/chatter', how)
         return True
 
-    def helper_name(self, tab, area, row):
+    def helper_name(self, area, row):
         return 'Quaternion' if row == 2 else None
 
-    def verb(self, nav, tab, name, how, arg=None):
-        if name == 'toggle_mode':
-            return super().verb(nav, tab, name, how, arg)
-        self.verbs.append((name, how, arg))
-        return True
+    def verbs(self):
+        return {name: lambda nav, how, arg, name=name: self.record.append((name, how, arg)) for name in self.VERBS}
 
 
-def design_nav(provider=None) -> NavState:
-    nav = NavState(provider=provider or DesignProvider())
-    nav.set_catalog(DESIGN_CATALOG)
+class RowsWorld:
+    """NavState's `new_entry` for RowsEntry: `verbs` records every verb any of them ran."""
+
+    def __init__(self):
+        self.verbs: list[tuple[str, str, object]] = []
+
+    def __call__(self, tab):
+        return RowsEntry(tab, self.verbs)
+
+
+def fixture_nav(new_entry=FixtureEntry) -> NavState:
+    nav = NavState(new_entry)
+    nav.set_catalog(FIXTURE_CATALOG)
     return nav
 
 
-def nav_after(keys, provider=None) -> NavState:
-    """A fresh NavState over the design's world after pressing `keys`."""
-    nav = design_nav(provider)
+def nav_after(keys, new_entry=FixtureEntry) -> NavState:
+    """A fresh NavState over the fixture world after pressing `keys`."""
+    nav = fixture_nav(new_entry)
     for key in keys:
         nav.handle_key(key)
     return nav

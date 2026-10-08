@@ -34,7 +34,7 @@ Brings up, on one node, something for each kind of entry:
 
 This mirrors the in-process ``FixtureServers`` used by the test suite
 (``test/conftest.py``), but as an installable node with public-looking names. The test harness's
-``DEMO_GRAPH`` (``test/harness/fake_bridge.py``) and the design prototype show the same world.
+``DEMO_GRAPH`` (``test/harness/fake_bridge.py``) shows the same world.
 """
 
 import math

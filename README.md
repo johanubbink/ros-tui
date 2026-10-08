@@ -3,8 +3,8 @@
 ros_tui is a terminal UI for poking at a running ROS 2 system. Browse its
 **topics, services, actions and nodes**, fill in a message field by field,
 and echo, publish, call, send goals or set parameters, without typing
-`ros2 ... "{...}"` one-liners. It is driven entirely from the keyboard, with
-vim keys and familiar alternatives.
+`ros2 ... "{...}"` one-liners. It is keyboard-first, with vim keys and
+familiar alternatives, and a click does what its keys would.
 
 ![ros_tui against the demo servers: echoing a topic, calling a service, sending an action goal and setting a node parameter](assets/ros-tui-demo.gif)
 
@@ -85,7 +85,7 @@ copy and paste a message between entries of the same type, `u` undoes, `[`
 More detail, and every key, is in [docs/usage.md](docs/usage.md). Why the UI
 works this way is in [docs/design-principles.md](docs/design-principles.md).
 
-## Try it without a robot
+## Run it without a robot
 
 The repo includes a Docker playground with some example servers. You only need
 Docker with the Compose plugin; ROS isn't needed on the host.

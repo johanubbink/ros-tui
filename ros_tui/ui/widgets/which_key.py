@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The which-key popups (the design's renderWk): `?` lists the keys right now, `g` what can follow it.
+"""The which-key popups: `?` lists the keys right now, `g` what can follow it.
 
 Bottom right, above the footer. Both come from the keymap (`keymap.which_key_items`): a title,
 then each group's heading and its keys in two columns (a key whose label is too long takes a line).
@@ -22,11 +22,12 @@ then each group's heading and its keys in two columns (a key whose label is too 
 from rich.text import Text
 
 from ros_tui.ui import keymap
+from ros_tui.ui.nav import WhichKey
 from ros_tui.ui.widgets.base import Overlay, fit, style
 
-WIDTH = 82  # The design's 640 px popup.
-G_WIDTH = 48  # The narrow g… popup (380 px).
-KEY_WIDTH = 5  # The key column of a cell (min-width: 40px).
+WIDTH = 82  # Cells.
+G_WIDTH = 48  # The narrow g… popup.
+KEY_WIDTH = 5  # The key column of a cell, at least.
 GAP = 2  # Between the two columns.
 TITLES = {'all': 'Keys right now · any key closes', 'g': 'g …  waiting for the next key'}
 
@@ -37,9 +38,10 @@ class WhichKeyPopup(Overlay):
     """
 
     def place(self, width, height):
-        if not self.nav.which_key:
+        which = self.nav.shown(WhichKey)
+        if not which:
             return None
-        w = min(G_WIDTH if self.nav.which_key == 'g' else WIDTH, width - 2)
+        w = min(G_WIDTH if which.what == 'g' else WIDTH, width - 2)
         h = min(len(self.body(w - 4)) + 2, height - 1)  # Border and padding: 4 cells across, 2 down.
         return width - w - 1, height - 1 - h, w, h
 
@@ -48,7 +50,7 @@ class WhichKeyPopup(Overlay):
 
     def body(self, width: int) -> list[Text]:
         col = (width - GAP) // 2
-        lines = [Text(TITLES[self.nav.which_key], style('pop-title')), Text()]
+        lines = [Text(TITLES[self.nav.overlay.what], style('pop-title')), Text()]
         rows = keymap.which_key_items(self.nav)
         for group in dict.fromkeys(row.group for row in rows):
             lines.append(Text(group.upper(), style('feed-head')))

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The search popup (the design's renderSearch): `/` or ^f, over a veil, everything by name or type.
+"""The search popup: `/` or ^f, over a veil, everything by name or type.
 
 An input line with the count, then the matches grouped by kind (the match highlighted in the name,
 the short type, "open tab" for entries already open) and a hint line. At most MAX_ROWS matches show;
@@ -22,16 +22,22 @@ the window scrolls to keep the picked one in view. A click on a match opens it.
 
 from rich.text import Text
 
-from ros_tui.ui.nav import short_type
+from ros_tui.ui.fields import short_type
+from ros_tui.ui.nav import Search
 from ros_tui.ui.theme import KINDS
-from ros_tui.ui.widgets.base import (BODY_TOP, Overlay, band, clickable, cursor_bar, cursor_cell, glyph, markers, rule,
-                                     spread, style)
+from ros_tui.ui.widgets.base import (BODY_TOP, Overlay, band, clickable, cursor_bar, cursor_cell, glyph, here, rule,
+                                     scroll_top, spread, style)
 
-WIDTH = 84  # The design's 660 px box.
-MAX_ROWS = 13  # Matches shown at once, as the design's r.slice(0, 13).
+WIDTH = 84  # Cells.
+MAX_ROWS = 13  # Matches shown at once.
 PLACEHOLDER = 'any topic, service, action or node'
 NO_MATCHES = 'no matches — backspace to change the search'
 HINT = '↑↓ picks · enter opens in a tab · esc closes'
+
+
+def _short_type(kind: str, type_name: str) -> str:
+    """The type as a match shows it: 'String' for std_msgs/msg/String, 'node' for a node."""
+    return 'node' if kind == 'nodes' else short_type(type_name)
 
 
 def highlight(name: str, query: str) -> Text:
@@ -52,7 +58,7 @@ class SearchPopup(Overlay):
         self._top = 0  # The first match shown, kept between renders.
 
     def place(self, width, height):
-        if not self.nav.search:
+        if not self.nav.shown(Search):
             return None
         w = min(WIDTH, width - 4)
         h = min(len(self.body(w - 2)) + 2, height - BODY_TOP - 1)  # The border takes 2 cells each way.
@@ -63,16 +69,16 @@ class SearchPopup(Overlay):
 
     def body(self, width: int) -> list[Text]:
         nav = self.nav
-        query = nav.search.q
-        rows = nav.search_rows()
+        query = nav.overlay.q
+        rows = nav.catalog.search(query)
         typed = Text.assemble(' ', ('/', style('key', bold=True)), ' ', (query, style('bright')), cursor_cell())
         if not query:
             typed.append(' ' + PLACEHOLDER, style('dim'))
         lines = [spread(typed, Text(f'{len(rows)} ', style('dim')), width), rule(width)]
         if not rows:
             lines.append(Text(' ' + NO_MATCHES, style('dim')))
-        cur = nav.search.cur
-        self._top = max(0, min(self._top, cur, len(rows) - MAX_ROWS), cur - MAX_ROWS + 1)
+        cur = nav.overlay.cur
+        self._top = scroll_top(self._top, cur, cur, MAX_ROWS, len(rows))
         last = None
         for index in range(self._top, min(len(rows), self._top + MAX_ROWS)):
             kind, item = rows[index]
@@ -84,10 +90,8 @@ class SearchPopup(Overlay):
 
     def row(self, kind: str, item, query: str, sel: bool, width: int) -> Text:
         left = Text.assemble(cursor_bar(sel), glyph(kind), highlight(item.name, query),
-                             '  ', (short_type(kind, item.type), style('type')))
-        right = markers(self.nav.running(kind, item.name), labels=True)
-        if self.nav.is_open(kind, item.name):
-            right.append((' ' if right else '') + 'open tab', style('dim'))
+                             '  ', (_short_type(kind, item.type), style('type')))
+        right = here(self.nav, kind, item.name, 'open tab')
         if right:
             right.append(' ')
         line = spread(left, right, width)

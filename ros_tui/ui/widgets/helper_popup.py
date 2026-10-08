@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The field helper popup (the design's renderHelper, .hpop), right under the row it fills:
+"""The field helper popup, right under the row it fills:
 
     pose.orientation  Quaternion · Quaternion helper
      x y z w   roll pitch yaw (°)   yaw only (°)   axis + angle (°)
@@ -24,7 +24,7 @@
 
 the field and its type, then an enum's options ("● 1 WARN = 1") or the strip of modes (the one on
 in bright on cursor-on), what the mode does (Header, Time) and its fields (the one being typed
-lit), the preview of the value, and the keys. Everything comes from `nav.helper` (helpers/).
+lit), the preview of the value, and the keys. Everything comes from the `Helper` overlay (helpers/).
 """
 
 from rich.style import Style
@@ -34,9 +34,9 @@ from ros_tui.ui.helpers import Helper
 from ros_tui.ui.widgets.base import Overlay, band, cursor_bar, cursor_cell, fit, rule, style
 from ros_tui.ui.widgets.entry_body import row_line
 
-MIN_WIDTH = 72  # The design's 560 px popup; wider when its key hint needs it.
-LEFT = 5  # Cells from the body's left edge (the design's left: 44px, past the row numbers).
-VALUE_WIDTH = 8  # A field's value, at least (the design's min-width: 64px).
+MIN_WIDTH = 72  # Wider when its key hint needs it.
+LEFT = 5  # Cells from the body's left edge.
+VALUE_WIDTH = 8  # A field's value, at least.
 
 
 class HelperPopup(Overlay):
@@ -45,12 +45,13 @@ class HelperPopup(Overlay):
     """
 
     def place(self, width, height):
-        helper = self.nav.helper
+        helper = self.nav.shown(Helper)
         if helper is None:
             return None
-        natural = max(line.cell_len for line in self.body(helper, 0))
+        body = self.body(helper, 0)  # Its width only changes the rules and bands, not how many lines.
+        natural = max(line.cell_len for line in body)
         w = min(max(MIN_WIDTH, natural + 4), width - LEFT)  # Border and padding: 4 cells across, 2 down.
-        h = min(len(self.body(helper, w - 4)) + 2, height)
+        h = min(len(body) + 2, height)
         line = row_line(self.nav, width, height)  # The entry body fills the parent.
         if line is None:
             return None
@@ -58,7 +59,8 @@ class HelperPopup(Overlay):
         return LEFT, y, w, h
 
     def lines(self, width, height):
-        return self.body(self.nav.helper, width) if self.nav.helper else []
+        helper = self.nav.shown(Helper)
+        return self.body(helper, width) if helper else []
 
     def body(self, helper: Helper, width: int) -> list[Text]:
         lines = [Text.assemble((helper.field, style('bright', bold=True)), '  ',

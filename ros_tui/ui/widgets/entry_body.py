@@ -13,21 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An open entry (the design's renderEntry): its header, then its areas as panels.
+"""An open entry: its header, then its areas as panels.
 
-The header is the kind tag, the name and the type (a node's namespace, and a topic's Echo / Publish
-switch), then, after a blank line, the entry's button row (`TOOLBARS`), if it has one, and a blank
-line before the panels (the design's 6px gaps between its .ph rows and the panels). Each area is a
-`Panel` (widgets/panel.py), drawn selected on the IN layer and inside on the AREA and EDIT layers.
-An entry kind has its renderer in `RENDERERS`. A click on a panel goes inside its area, a click on
-the switch picks that mode.
+The header is the kind tag, the name and the type (a node's namespace, and the switch of an entry
+with modes: a topic's Echo / Publish), then, after a blank line, the entry's button row, if it
+has one, and a blank line before the panels. Each area is a `Panel` (widgets/panel.py), drawn
+selected on the IN layer and inside on the AREA and EDIT layers. An entry kind has its view in
+`VIEWS`. A click on a panel goes inside its area, a click on the switch picks that mode.
 """
 
-from typing import Callable
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from rich.text import Text
 
-from ros_tui.ui.nav import NavState, Tab
+from ros_tui.ui.entries.base import Entry
+from ros_tui.ui.nav import NavState
 from ros_tui.ui.theme import KINDS
 from ros_tui.ui.widgets.action_entry import action_panels, action_toolbar
 from ros_tui.ui.widgets.base import NavView, clickable, fit, spread, style, switch
@@ -37,18 +38,23 @@ from ros_tui.ui.widgets.service_entry import service_panels, service_toolbar
 from ros_tui.ui.widgets.topic_entry import topic_counts, topic_panels, topic_toolbar
 
 
-# Width shares of the panels side by side (else equal). Actions are 2:1 in the design; 3:2 keeps RESULT's
-# "EXECUTING 2.4 s · live feedback" title whole at 124 columns.
-PANEL_WEIGHTS = {'actions': (3, 2), 'nodes': (10, 11)}
+@dataclass(frozen=True)
+class EntryView:
+    """How an entry kind is drawn."""
 
-# Entry kind -> its panels, one per area in the order of nav.areas().
-RENDERERS: dict[str, Callable[[NavState, Tab], list[Panel]]] = {
-    'nodes': node_panels, 'services': service_panels, 'topics': topic_panels, 'actions': action_panels}
-# Entry kind -> its button row under the header.
-TOOLBARS: dict[str, Callable[[NavState, Tab, int], Text]] = {
-    'services': service_toolbar, 'topics': topic_toolbar, 'actions': action_toolbar}
-# Entry kind -> a note after the type in the header (a topic's "1 pub · 0 sub").
-NOTES: dict[str, Callable[[NavState, Tab], Text]] = {'topics': topic_counts}
+    panels: Callable[[NavState, Any], list[Panel]]  # One per area, in the order of the entry's areas().
+    toolbar: Callable[[NavState, Any, int], Text] | None = None  # The button row under the header.
+    note: Callable[[NavState, Any], Text] | None = None  # After the type in the header (a topic's "1 pub · 0 sub").
+    weights: tuple[int, ...] | None = None  # Width shares of the panels side by side (else equal).
+
+
+# 3:2 keeps RESULT's "EXECUTING 2.4 s · live feedback" title whole at 124 columns.
+VIEWS = {
+    'topics': EntryView(topic_panels, topic_toolbar, topic_counts),
+    'services': EntryView(service_panels, service_toolbar),
+    'actions': EntryView(action_panels, action_toolbar, weights=(3, 2)),
+    'nodes': EntryView(node_panels, weights=(10, 11)),
+}
 
 
 class EntryBody(NavView):
@@ -56,58 +62,58 @@ class EntryBody(NavView):
     EntryBody { height: 1fr; }
     """
 
-    def header(self, width: int) -> Text:
+    def header(self, entry: Entry, width: int) -> Text:
         nav = self.nav
-        tab = nav.tab
+        tab = entry.tab
         kind = KINDS[tab.kind]
-        item = nav.item(tab)
+        item = nav.catalog.item(tab)
         left = Text.assemble(
             (f' {kind.glyph} {kind.one.upper()} ', style(kind.color, kind.tag_bg)), '  ',
             (tab.name, style('accent', bold=True)), '  ', (item.type if item else '', style('muted')))
-        note = NOTES.get(tab.kind)
+        note = VIEWS[tab.kind].note
         if note:
             left.append('  ')
-            left.append_text(note(nav, tab))
-        mode = nav.entry_mode()
-        if mode is None:
+            left.append_text(note(nav, entry))
+        if not entry.modes():
             return fit(left, width)
-        modes = switch(*((label, mode == label.lower(), ('mode', label.lower())) for label in ('Echo', 'Publish')))
+        modes = switch(*((mode.capitalize(), mode == entry.mode, ('mode', mode)) for mode in entry.modes()))
         return spread(left, modes + Text.assemble(' ', ('e', style('key', bold=True))), width)
 
     def lines(self, width, height):
         nav = self.nav
-        tab = nav.tab
-        if tab is None:
+        if nav.tab is None:
             return []
-        panels = RENDERERS[tab.kind](nav, tab)
-        widths = panel_widths(tab, panels, width)
-        top = head_lines(tab)
+        entry = nav.entry(nav.tab)
+        view = VIEWS[entry.tab.kind]
+        panels = view.panels(nav, entry)
+        widths = panel_widths(view, panels, width)
+        top = head_lines(view)
         drawn = [[clickable(line, ('area', index)) for line in draw_panel(panel, w, height - top, panel_state(nav, index))]
                  for index, (panel, w) in enumerate(zip(panels, widths))]
-        toolbar = TOOLBARS.get(tab.kind)
-        head = [self.header(width), Text()] + ([toolbar(nav, tab, width), Text()] if toolbar else [])
+        head = [self.header(entry, width), Text()] + ([view.toolbar(nav, entry, width), Text()] if view.toolbar else [])
         return head + side_by_side(drawn)
 
 
-def head_lines(tab: Tab) -> int:
+def head_lines(view: EntryView) -> int:
     """Lines above the panels: the header and a blank line, then the toolbar and a blank line."""
-    return 4 if tab.kind in TOOLBARS else 2
+    return 4 if view.toolbar else 2
 
 
-def panel_widths(tab: Tab, panels: list[Panel], width: int) -> list[int]:
-    return split(width, PANEL_WEIGHTS.get(tab.kind, (1,) * len(panels)))
+def panel_widths(view: EntryView, panels: list[Panel], width: int) -> list[int]:
+    return split(width, view.weights or (1,) * len(panels))
 
 
 def row_line(nav: NavState, width: int, height: int) -> int | None:
     """The line of an EntryBody of `width` x `height` that the current area's current row ends on,
     or None (no open entry, or its area has no current row). The field helper popup goes under it."""
-    tab = nav.tab
-    if tab is None:
+    if nav.tab is None:
         return None
-    panels = RENDERERS[tab.kind](nav, tab)
+    entry = nav.entry(nav.tab)
+    view = VIEWS[entry.tab.kind]
+    panels = view.panels(nav, entry)
     index = nav.area_index()
     if not 0 <= index < len(panels):
         return None
-    top = head_lines(tab)
-    line = cursor_line(panels[index], panel_widths(tab, panels, width)[index], height - top)
+    top = head_lines(view)
+    line = cursor_line(panels[index], panel_widths(view, panels, width)[index], height - top)
     return None if line is None else top + line

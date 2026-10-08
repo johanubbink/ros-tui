@@ -13,74 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The keymap table (ros_tui/ui/keymap.py) against the design's keyList(), and its contract with nav.py."""
+"""The keymap table (ros_tui/ui/keymap.py): its contract with nav.py and with docs/usage.md."""
 
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from harness.nav_world import RowsProvider, nav_after
+from harness.nav_world import RowsWorld, nav_after
 from ros_tui.ui import keymap
+from ros_tui.ui.entries.kinds import KINDS
 from ros_tui.ui.keymap import ANY, KEYMAP, PREDICATES, TYPE, KeyRow, keys_now, normalize_key, which_key_items
-from ros_tui.ui.nav import ACTIONS
+from ros_tui.ui.nav import ACTIONS, Tab
 
 REPO = Path(__file__).resolve().parents[1]
-DESIGN = REPO / 'docs' / 'design' / 'hybrid-keys.html'
 INBOX = ['j', 'j', 'j', 'enter']
-
-# keyList() rows whose key or label is computed, as (group, key, label) per case.
-DYNAMIC_ROWS = [
-    ('Helper', 'j k ↑ ↓', 'next option / way to enter it'),
-    ('Helper', 'tab', 'next option / way to enter it'),
-    ('Helper', '{jump}', 'jump / next field'),
-    ('Helper', '↑ ↓', 'jump / next field'),
-    ('Insert', '^s', 'keep it and set it'),
-    ('Insert', '^s', 'keep it and send'),
-    ('Do (only these send)', 'space', 'start / stop echo'),
-    ('Do (only these send)', 'space', 'publish once'),
-    ('Do (only these send)', 'space', 'call'),
-    ('Do (only these send)', 'space', 'send goal'),
-    ('Do (only these send)', 'space', 'set changed parameters'),
-    ('Do', 'r', 'repeat at {rate} Hz'),
-    ('Edit', 'f', 'fill it with the {helper} helper'),
-]
-DROPPED = ('.',)  # The user dropped "resend the last send".
-
-
-def design_key_rows():
-    """Every literal [group, key, what, …] row in the design's keyList()."""
-    html = DESIGN.read_text(encoding='utf-8')
-    body = html[html.index('function keyList()'):html.index('function renderKeys()')]
-    return set(re.findall(r"\['([^']*)','([^']*)','([^']*)'[,\]]", body))
-
-
-def table_rows():
-    return {(b.group, b.show, b.label) for b in KEYMAP if b.show}
-
-
-def test_every_design_key_is_in_the_table():
-    design = design_key_rows()
-    assert len(design) >= 40  # The regex still finds the list.
-    missing = {row for row in design if row[1] not in DROPPED} - table_rows()
-    assert not missing
-
-
-def test_computed_design_rows_are_in_the_table():
-    assert not set(DYNAMIC_ROWS) - table_rows()
-
-
-def test_resend_is_gone():
-    assert ('Do (only these send)', '.', 'resend the last send') in design_key_rows()  # Still in the design.
-    for binding in KEYMAP:
-        assert binding.show != '.' and 'resend' not in binding.label
-        for keys, _ in binding.run:
-            assert '.' not in keys
 
 
 def test_only_space_and_ctrl_s_dispatch_the_primary_verb():
-    keys = {key for b in KEYMAP for ks, action in b.run if action == 'primary' for key in ks}
+    keys = {key for b in KEYMAP for run in b.run if run.action == 'primary' for key in run.keys}
     assert keys == {'space', 'ctrl+s'}
     send_group = [b for b in KEYMAP if b.group == keymap.SEND and b.show]
     assert {b.show for b in send_group} == {'space'}
@@ -91,10 +42,23 @@ def test_every_action_and_predicate_exists():
         assert binding.mode in keymap.MODES
         for name in binding.when + binding.shown:
             assert name.lstrip('!') in PREDICATES
-        for _, action in binding.run:
-            assert action in ACTIONS
-    used = {action for b in KEYMAP for _, action in b.run}
+        for run in binding.run:
+            assert run.action in ACTIONS
+    used = {run.action for b in KEYMAP for run in b.run}
     assert set(ACTIONS) == used  # No orphan actions either.
+
+
+def test_every_verb_a_key_runs_is_offered_by_some_entry():
+    """A verb no entry kind offers (in any of its modes) could only ever say "nothing to do here"."""
+    run = {run.arg for b in KEYMAP for run in b.run if run.action == 'verb'}
+    run |= {'primary', 'helper', 'set_rate'}  # Run by the primary and helper actions and by :rate.
+    offered = set()
+    for kind, cls in KINDS.items():
+        entry = cls(Tab(kind, '/x'))
+        for mode in entry.modes() or ('',):
+            entry.mode = mode
+            offered |= set(entry.verbs())
+    assert run - offered == set()
 
 
 SAMPLE_STATES = [
@@ -107,13 +71,13 @@ SAMPLE_STATES = [
 @pytest.mark.parametrize('keys', SAMPLE_STATES, ids=[' '.join(k) or 'start' for k in SAMPLE_STATES])
 def test_no_key_has_two_meanings(keys):
     """Dispatch takes the first matching row; any other row that matches must agree with it."""
-    nav = nav_after(keys, RowsProvider())
+    nav = nav_after(keys, RowsWorld())
     mode = nav.input_mode()
-    candidates = {key for b in KEYMAP for ks, _ in b.run for key in ks} - {TYPE, ANY} | {'a', 'z', 'space'}
+    candidates = {key for b in KEYMAP for run in b.run for key in run.keys} - {TYPE, ANY} | {'a', 'z', 'space'}
     for key in candidates:
-        actions = {action for b in KEYMAP if b.mode == mode and keymap.holds(nav, b.when)
-                   for ks, action in b.run
-                   if key in ks or ANY in ks or TYPE in ks and keymap.key_char(key) is not None}
+        actions = {(run.action, run.arg) for b in KEYMAP if b.mode == mode and keymap.holds(nav, b.when)
+                   for run in b.run
+                   if key in run.keys or ANY in run.keys or TYPE in run.keys and keymap.key_char(key) is not None}
         assert len(actions) <= 1, (mode, key, actions)
 
 
@@ -162,7 +126,7 @@ def test_keys_now_on_a_node():
 
 def test_keys_now_on_a_helper_row():
     assert ('Edit', 'f', 'fill it with the Quaternion helper') in rows(
-        nav_after(INBOX + ['enter', 'j', 'j'], RowsProvider()))
+        nav_after(INBOX + ['enter', 'j', 'j'], RowsWorld()))
 
 
 def test_keys_now_in_overlays():
@@ -171,7 +135,7 @@ def test_keys_now_in_overlays():
     assert rows(nav_after([':'])) == [('Command', 'type', 'a command, e.g. rate 5'), ('Command', 'tab', 'complete'),
                                       ('Command', 'enter', 'run'), ('Command', 'esc', 'cancel')]
     assert [r[1] for r in rows(nav_after([':', 'l', 'o', 'g', 'enter']))] == ['j k', 'gg G', 'enter', 'esc']
-    assert rows(nav_after(INBOX + ['i'], RowsProvider())) == [
+    assert rows(nav_after(INBOX + ['i'], RowsWorld())) == [
         ('Insert', 'type', 'change the value'), ('Insert', 'esc / enter', 'keep it, back to normal'),
         ('Insert', 'tab', 'keep it, edit the next field'), ('Insert', '^s', 'keep it and send')]
 
@@ -192,7 +156,7 @@ def test_which_key_lists():
 
 
 @pytest.mark.parametrize('name, canonical', [
-    ('slash', '/'), ('/', '/'), ('colon', ':'), ('question_mark', '?'), ('?', '?'),
+    ('solidus', '/'), ('/', '/'), ('colon', ':'), ('question_mark', '?'), ('?', '?'),
     ('left_square_bracket', '['), ('right_square_bracket', ']'), ('full_stop', '.'),
     ('G', 'G'), ('shift+g', 'G'), ('j', 'j'), (' ', 'space'), ('space', 'space'), ('esc', 'escape'),
     ('escape', 'escape'), ('enter', 'enter'), ('tab', 'tab'), ('shift+tab', 'shift+tab'), ('ctrl+s', 'ctrl+s'),
@@ -202,12 +166,13 @@ def test_normalize_key(name, canonical):
     assert normalize_key(name) == canonical
 
 
-def test_pure_python():
-    """nav.py and keymap.py import neither textual nor rclpy."""
-    code = ('import sys; import ros_tui.ui.nav, ros_tui.ui.keymap; '
-            'print(sorted({m.split(".")[0] for m in sys.modules} & {"textual", "rclpy", "rich"}))')
+def test_the_model_is_pure_python():
+    """nav.py and keymap.py import neither textual nor rclpy (nor rich); fields.py not even rosidl."""
+    code = ('import sys; tops = lambda: {m.split(".")[0] for m in sys.modules}; '
+            'import ros_tui.ui.fields; fields = tops(); import ros_tui.ui.nav, ros_tui.ui.keymap; '
+            'print(sorted(fields & {"rosidl_runtime_py"}), sorted(tops() & {"textual", "rclpy", "rich"}))')
     out = subprocess.run([sys.executable, '-c', code], cwd=REPO, capture_output=True, text=True, check=True)
-    assert out.stdout.strip() == '[]'
+    assert out.stdout.strip() == '[] []'
 
 
 def test_the_key_tables_in_usage_md_match_the_keymap():

@@ -16,16 +16,14 @@
 """The topic entry: Echo (the LATEST MESSAGE, live or frozen) and Publish (a MESSAGE editor, sent
 once or repeated at a rate). `e` switches between them.
 
-Pure Python (no textual, no rclpy), as the design's topics branches of primary(), secondary(),
-repeat(), editRate() and renderEntry.
+Pure Python (no textual, no rclpy).
 
 Echo:
 - space / ^s starts the echo (`subscribe` into an `EchoBuffer` timed by the bridge's clock) or
   stops it. It keeps running in other tabs, and shows as ◉ (`running`).
-- Every clock tick (`tick`) drains the buffers. Only the newest message is kept, as plain values
-  with long arrays and strings cut (`message_to_display`), so a fast topic costs one conversion
-  per tick. The tick also keeps the count, the dropped messages and the rate (over the buffer's
-  last arrivals).
+- Every clock tick (`tick`) drains the buffers. Only the newest message is kept; it is converted
+  to display values (`Received`) only when LATEST MESSAGE shows it. The tick also keeps the
+  count, the dropped messages and the rate (over the buffer's last arrivals).
 - Going inside LATEST MESSAGE freezes what it shows; new messages are only counted ("+N new
   since"). Leaving it, however that happens, makes it live again: being frozen is not stored, it
   is where the cursor is (`frozen`).
@@ -41,20 +39,22 @@ Publish (the editor, history and undo come from `MessageEntry`):
   or PUBLISH_DEFAULT_RATE_HZ.
 """
 
-from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from dataclasses import dataclass
+from typing import Any
 
-from ros_tui.constants import PUBLISH_DEFAULT_RATE_HZ, PUBLISH_RATE_MAX_HZ, PUBLISH_RATE_MIN_HZ, SUMMARY_MAX_CHARS
+from ros_tui.constants import PUBLISH_DEFAULT_RATE_HZ, PUBLISH_RATE_MAX_HZ, PUBLISH_RATE_MIN_HZ
 from ros_tui.ros.echo import EchoBuffer
-from ros_tui.ros.message_yaml import message_to_display, message_to_plain
-from ros_tui.ui.entries.message import MessageData, MessageEntry
-from ros_tui.ui.fields import Row, flat_rows, summary
-from ros_tui.ui.nav import AREA, EDIT, IN, Area, Commit, Editing, NavState, Running, Tab, UndoEntry
+from ros_tui.ros.message_yaml import message_to_plain
+from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Running, Tab, UndoEntry, Verb
+from ros_tui.ui.entries.message import EDITOR, MessageEntry, Received
+from ros_tui.ui.fields import Row, flat_rows
+from ros_tui.ui.nav import AREA, EDIT, IN, NavState
 from ros_tui.ui.register import Register
 
 ECHO = 'out'  # The area id of LATEST MESSAGE.
-RATE = 'rate'  # The Editing area of the rate editor, and the UndoEntry kind of a rate change.
+RATE = 'rate'  # The Editing area of the rate editor.
 ECHOING = Running('◉', 'echoing', 'live')
+RATE_RANGE = f'{PUBLISH_RATE_MIN_HZ:g}–{PUBLISH_RATE_MAX_HZ:g} Hz'  # The rates a repeat takes.
 
 
 @dataclass
@@ -81,27 +81,6 @@ class Repeat:
         return self.sent_before + int((now - self.since) * self.rate + 1e-9)
 
 
-class Received(NamedTuple):
-    """An echoed message as it arrived (for an exact y) and as display values (converted once)."""
-    message: Any
-    display: dict
-
-
-@dataclass
-class TopicData(MessageData):
-    counts: tuple[int, int] | None = None  # (publishers, subscribers), asked for when the tab opens.
-    echo: Echo | None = None
-    latest: Received | None = None  # The newest message received.
-    shown: Received | None = None  # What LATEST MESSAGE shows: the newest, or what it froze on.
-    new_since: int = 0  # Messages received since it froze.
-    hidden: set[str] = field(default_factory=set)  # Echo rows (field paths) hidden with enter.
-    rate: float | None = None  # The repeat rate the user set (None: not set).
-    measured: float = 0.0  # The publisher's rate, as the echo last measured it.
-    repeat: Repeat | None = None
-    mode: str = ''  # 'echo' or 'publish', from the first time the tab opens.
-    seen: tuple = ()  # What the toolbar last showed (echo counts, repeat sent), so a tick redraws only on a change.
-
-
 def rate_text(rate: float) -> str:
     return f'{rate:g}'
 
@@ -113,382 +92,340 @@ def parse_rate(text: str) -> float:
     except ValueError:
         rate = None
     if rate is None or not PUBLISH_RATE_MIN_HZ <= rate <= PUBLISH_RATE_MAX_HZ:
-        raise ValueError(f'rate must be {PUBLISH_RATE_MIN_HZ:g}–{PUBLISH_RATE_MAX_HZ:g} Hz, got "{text.strip()}"')
+        raise ValueError(f'rate must be {RATE_RANGE}, got "{text.strip()}"')
     return rate
 
 
 class TopicEntry(MessageEntry):
-    """The topic entry kind."""
+    """A topic, in Echo or Publish (its `mode`)."""
 
     KIND = 'msg'
+    ROLE = 'message'
+    MODES = {'echo': (Area(ECHO, 'LATEST MESSAGE', 'show / hide field'),),
+             'publish': (Area(EDITOR, 'MESSAGE', 'edit', True, folds=True, helpers=True),)}
 
-    def new_data(self) -> TopicData:
-        return TopicData()
+    def __init__(self, tab: Tab, ctx: Context | None = None):
+        super().__init__(tab, ctx)
+        self.echo: Echo | None = None
+        self.latest: Received | None = None  # The newest message received.
+        self.shown: Received | None = None  # What LATEST MESSAGE shows: the newest, or what it froze on.
+        self.new_since = 0  # Messages received since it froze.
+        self.hidden: set[str] = set()  # Echo rows (field paths) hidden with enter.
+        self.chosen_rate: float | None = None  # The repeat rate the user set (None: not set).
+        self.measured = 0.0  # The publisher's rate, as the echo last measured it.
+        self.repeat: Repeat | None = None
+        self.seen: tuple = ()  # What the toolbar last showed (echo counts, repeat sent), so a tick redraws only on a change.
 
     # ---------- opening ----------
-    def on_open(self, nav: NavState, tab: Tab) -> None:
-        """Load the message type (MessageEntry) and ask how many publish and subscribe, each time it opens.
-        The mode it first opens in (Echo when someone publishes) comes from the ☰ list's counts."""
-        data = self.data(tab)
-        if not data.mode:
-            item = nav.item(tab)
-            data.mode = 'echo' if item and item.publishers > 0 else 'publish'
-        super().on_open(nav, tab)
-        future = self._bridge.topic_endpoint_counts(tab.name)
-        future.add_done_callback(lambda done: self._counts_done(tab, done))
+    def on_open(self, nav: NavState) -> None:
+        """Load the message type (MessageEntry). The mode it first opens in (Echo when someone
+        publishes) comes from the ☰ list's counts."""
+        if not self.mode:
+            self.mode = 'echo' if self.publishers(nav) > 0 else 'publish'
+        super().on_open(nav)
 
-    def _counts_done(self, tab: Tab, future: Any) -> None:
-        if not future.cancelled() and future.exception() is None:
-            counts = tuple(future.result())
-            self._post(lambda: setattr(self.data(tab), 'counts', counts))
+    def counts(self, nav: NavState) -> tuple[int, int] | None:
+        """(publishers, subscribers) as the graph last counted them; None when the graph lost the topic."""
+        item = nav.catalog.item(self.tab)
+        return (item.publishers, item.subscribers) if item else None
 
-    def mode(self, tab: Tab) -> str | None:
-        return self.data(tab).mode or None
-
-    def toggle_mode(self, nav: NavState, tab: Tab, how: str, to: str | None) -> None:
-        """e, :echo, :pub: switch between Echo and Publish; the message stays."""
-        if nav.layer == EDIT:
-            nav.commit_edit(how)
-        data = self.data(tab)
-        data.mode = to or ('publish' if data.mode == 'echo' else 'echo')
-        nav.layer = IN
-        nav.log_line(how, f'now in {data.mode}')
-
-    def publishers(self, nav: NavState, tab: Tab) -> int:
-        counts = self.data(tab).counts
-        if counts is not None:
-            return counts[0]
-        item = nav.item(tab)
-        return item.publishers if item else 0
+    def publishers(self, nav: NavState) -> int:
+        counts = self.counts(nav)
+        return counts[0] if counts else 0
 
     # ---------- the rate ----------
-    def rate(self, tab: Tab) -> float:
+    def rate(self) -> float:
         """The repeat rate: the user's, else the publisher's as measured, else the default."""
-        data = self.data(tab)
-        if data.rate is not None:
-            return data.rate
-        if data.measured:
-            return min(PUBLISH_RATE_MAX_HZ, max(PUBLISH_RATE_MIN_HZ, round(data.measured, 1)))
+        if self.chosen_rate is not None:
+            return self.chosen_rate
+        if self.measured:
+            return min(PUBLISH_RATE_MAX_HZ, max(PUBLISH_RATE_MIN_HZ, round(self.measured, 1)))
         return PUBLISH_DEFAULT_RATE_HZ
 
-    def rate_note(self, tab: Tab) -> str:
-        data = self.data(tab)
-        if data.rate is not None:
+    def rate_note(self) -> str:
+        if self.chosen_rate is not None:
             return 'your rate'
-        return 'matches the publisher' if data.measured else 'default'
+        return 'matches the publisher' if self.measured else 'default'
 
-    def label_vars(self, tab: Tab | None) -> dict[str, Any]:
-        if tab is None:
-            return super().label_vars(tab)
-        return {'rate': rate_text(self.rate(tab))}
+    def label_vars(self) -> dict[str, Any]:
+        return {'rate': rate_text(self.rate())}
 
-    def _apply_rate(self, tab: Tab, rate: float | None) -> str:
+    def _apply_rate(self, rate: float | None) -> str:
         """Set the user's rate (None: back to the default one) and restart a running repeat at it.
         Returns the activity line of a restarted repeat, or ''."""
-        data = self.data(tab)
-        data.rate = rate
-        repeat = data.repeat
-        if repeat is None or repeat.rate == self.rate(tab):
+        self.chosen_rate = rate
+        repeat = self.repeat
+        if repeat is None or repeat.rate == self.rate():
             return ''
         now = self._bridge.now()
-        repeat.sent_before, repeat.since, repeat.rate = repeat.sent(now), now, self.rate(tab)
-        self._bridge.start_periodic_publish(tab.name, data.type, repeat.message, repeat.rate, repeat.time_setters)
+        repeat.sent_before, repeat.since, repeat.rate = repeat.sent(now), now, self.rate()
+        self._bridge.start_periodic_publish(self.tab.name, self.type, repeat.message, repeat.rate, repeat.time_setters)
         return f'↻ rate now {rate_text(repeat.rate)} Hz'
 
-    def _set_rate(self, tab: Tab, rate: float) -> tuple[UndoEntry | None, str]:
+    def _set_rate(self, rate: float) -> tuple[UndoEntry | None, str]:
         """A new rate: (its undo step, None when it didn't change; the activity line)."""
-        if rate == self.rate(tab):
+        if rate == self.rate():
             return None, ''
-        undo = UndoEntry(tab.key, RATE, self.data(tab).rate)
-        return undo, self._apply_rate(tab, rate)
+        before = self.chosen_rate
 
-    def edit_rate(self, nav: NavState, tab: Tab, how: str) -> None:
-        """R: type a new rate in place of the shown one (from Echo, switch to Publish first)."""
-        if self.mode(tab) != 'publish':
-            self.data(tab).mode = 'publish'
-            nav.layer = IN
-        text = rate_text(self.rate(tab))
-        nav.editing = Editing(RATE, 0, text, old=text, fresh=True, field='repeat rate',
-                              note='(type a number, enter keeps it)', crumb=('repeat rate',), back=nav.layer)
-        nav.layer = EDIT
-        nav.log_line(how, 'editing the repeat rate: type a number, enter keeps it')
+        def revert(nav: NavState) -> str:
+            activity = self._apply_rate(before)
+            if activity:
+                nav.feedback.add_activity(self.tab, activity, 'g')
+            return f'repeat rate on {self.tab.name} back to {rate_text(self.rate())} Hz'
+        return UndoEntry(self.tab, revert), self._apply_rate(rate)
 
-    def command_rate(self, nav: NavState, tab: Tab, how: str, text: str) -> None:
+    def _edit_rate(self, nav: NavState, how: str) -> None:
+        """R: type a new rate in place of the shown one (from Echo, switch to Publish first, so esc
+        goes back to the area pick)."""
+        back = None
+        if self.mode != 'publish':
+            self.mode, back = 'publish', IN
+        text = rate_text(self.rate())
+        nav.begin_edit(Editing(RATE, 0, text, old=text, fresh=True, field='repeat rate',
+                               note='(type a number, enter keeps it)', crumb=('repeat rate',), back=back))
+        nav.feedback.log_line(how, 'editing the repeat rate: type a number, enter keeps it')
+
+    def _command_rate(self, nav: NavState, how: str, text: str) -> None:
         """:rate 5"""
+        tab = self.tab
         try:
             rate = parse_rate(text)
         except ValueError as error:
-            nav.report_error(tab, str(error))
-            nav.show_toast(f'{error} — usage: :rate 5', 'bad')
-            nav.log_line(how, 'rate not changed')
+            nav.feedback.report_error(tab, str(error))
+            nav.feedback.refuse(how, f'{error} — usage: :rate 5', 'rate not changed')
             return
-        undo, activity = self._set_rate(tab, rate)
+        undo, activity = self._set_rate(rate)
         if undo:
             nav.push_undo(undo)
         if activity:
-            nav.add_activity(tab, activity, 'g')
-        nav.errlines.pop(tab.key, None)
-        nav.show_toast(f'repeat rate {rate_text(rate)} Hz', 'info')
-        nav.log_line(how, f'repeat rate on {tab.name} is {rate_text(rate)} Hz' + (' (u undoes)' if undo else ''))
+            nav.feedback.add_activity(tab, activity, 'g')
+        nav.feedback.clear_error(tab)
+        nav.feedback.show_toast(f'repeat rate {rate_text(rate)} Hz', 'info')
+        nav.feedback.log_line(how, f'repeat rate on {tab.name} is {rate_text(rate)} Hz' + (' (u undoes)' if undo else ''))
+
+    def commit_edit(self, editing: Editing) -> Commit:
+        if editing.area != RATE:
+            return super().commit_edit(editing)
+        try:
+            rate = parse_rate(editing.value)
+        except ValueError as error:
+            return Commit(False, str(error))
+        running = self.repeat is not None
+        undo, activity = self._set_rate(rate)
+        text = f'repeat rate {rate_text(rate)} Hz' + (' (applied to the running repeat)' if running else '')
+        return Commit(True, text + (' (u undoes)' if undo else ''), undo, (activity, 'g') if activity else ())
 
     # ---------- rows ----------
-    def echo_rows(self, nav: NavState, tab: Tab) -> list[Row]:
+    def echo_rows(self, nav: NavState) -> list[Row]:
         """LATEST MESSAGE: one row per field, with the values it shows: the newest message, or the
         one it froze on (None before the first message)."""
-        data = self.data(tab)
-        if data.editor is None:
+        if self.editor is None:
             return []
-        received = self.received(nav, tab)
-        return flat_rows(data.editor.fields, received.display if received else None)
+        received = self.received(nav)
+        return flat_rows(self.editor.fields, received.display if received else None)
 
-    def received(self, nav: NavState, tab: Tab) -> Received | None:
+    def received(self, nav: NavState) -> Received | None:
         """The message LATEST MESSAGE shows: the one it froze on while frozen, else the newest."""
-        data = self.data(tab)
-        return data.shown if self.frozen(nav, tab) else data.latest
+        return self.shown if self.frozen(nav) else self.latest
 
-    def row_count(self, tab: Tab, area: Area) -> int:
+    def row_count(self, area: Area) -> int:
         if area.id == ECHO:
-            data = self.data(tab)
-            return len(flat_rows(data.editor.fields, None)) if data.editor else 0
-        return super().row_count(tab, area)
+            return len(flat_rows(self.editor.fields, None)) if self.editor else 0
+        return super().row_count(area)
 
-    def activate_row(self, nav: NavState, tab: Tab, area: Area, row: int, how: str) -> bool:
+    def activate_row(self, nav: NavState, area: Area, row: int, how: str) -> bool:
         """enter on an echoed field hides or shows it."""
         if area.id != ECHO:
-            return super().activate_row(nav, tab, area, row, how)
-        rows = self.echo_rows(nav, tab)
+            return super().activate_row(nav, area, row, how)
+        rows = self.echo_rows(nav)
         if not 0 <= row < len(rows):
             return False
-        hidden, name = self.data(tab).hidden, rows[row].field
+        hidden, name = self.hidden, rows[row].field
         hidden.symmetric_difference_update({name})
-        nav.log_line(how, f'{"hid" if name in hidden else "showing"} {name}')
+        nav.feedback.log_line(how, f'{"hid" if name in hidden else "showing"} {name}')
         return True
 
     # ---------- echo: live and frozen ----------
-    def frozen(self, nav: NavState, tab: Tab) -> bool:
+    def frozen(self, nav: NavState) -> bool:
         """An echo is frozen while the cursor is inside its LATEST MESSAGE."""
         area = nav.area()
         inside = nav.layer in (AREA, EDIT) and area is not None and area.id == ECHO
-        return inside and nav.tab == tab and self.mode(tab) == 'echo' and self.data(tab).echo is not None
+        return inside and nav.tab == self.tab and self.mode == 'echo' and self.echo is not None
 
-    def leave_area(self, tab: Tab, area: Area) -> str | None:
-        if area.id == ECHO and self.data(tab).echo is not None:
+    def leave_area(self, area: Area) -> str | None:
+        if area.id == ECHO and self.echo is not None:
             return 'out of the latest message: values are live again'
         return None
 
-    def esc_label(self, tab: Tab, area: Area) -> str | None:
-        return 'go live' if area.id == ECHO and self.data(tab).echo is not None else None
+    def esc_label(self, area: Area) -> str | None:
+        return 'go live' if area.id == ECHO and self.echo is not None else None
 
     def tick(self, nav: NavState) -> bool:
-        """Drain every running echo: keep the newest message (converted once), count, rate, drops; a
+        """Drain a running echo: keep the newest message, count, rate, drops; a
         frozen echo only counts what arrived. True when the active tab shows something new: its
         echo's count or rate, or its repeat's sent count. An echo or repeat in another tab changes
         nothing on screen (its markers only change on start and stop), so it doesn't redraw."""
-        changed = False
-        now = self._bridge.now()
-        for key, data in self._data.items():
-            tab, echo = Tab.of(key), data.echo
-            if echo is not None:
-                messages, received, dropped, hz = echo.buffer.drain()
-                fresh = received - echo.received
-                echo.received, echo.dropped, echo.hz = received, dropped, hz
-                if hz > 0:
-                    data.measured = hz
-                if messages:
-                    data.latest = Received(messages[-1], message_to_display(messages[-1]))
-                if self.frozen(nav, tab):
-                    data.new_since += fresh
-                else:
-                    data.shown, data.new_since = data.latest, 0
-            seen = ((echo.received, f'{echo.hz:.1f}', echo.dropped) if echo else None,
-                    data.repeat.sent(now) if data.repeat else None)
-            changed = changed or (tab == nav.tab and seen != data.seen)
-            data.seen = seen
+        echo = self.echo
+        if echo is not None:
+            messages, received, dropped, hz = echo.buffer.drain()
+            fresh = received - echo.received
+            echo.received, echo.dropped, echo.hz = received, dropped, hz
+            if hz > 0:
+                self.measured = hz
+            if messages:
+                self.latest = Received(messages[-1])
+            if self.frozen(nav):
+                self.new_since += fresh
+            else:
+                self.shown, self.new_since = self.latest, 0
+        seen = ((echo.received, f'{echo.hz:.1f}', echo.dropped) if echo else None,
+                self.repeat.sent(self._bridge.now()) if self.repeat else None)
+        changed = self.tab == nav.tab and seen != self.seen
+        self.seen = seen
         return changed
 
-    def toggle_echo(self, nav: NavState, tab: Tab, how: str) -> None:
+    def _toggle_echo(self, nav: NavState, how: str) -> None:
         """space in Echo: start the echo, or stop it."""
-        data = self.data(tab)
-        if data.echo is not None:
-            self._stop_echo(nav, tab)
-            nav.log_line(how, 'stopped echo')
+        tab = self.tab
+        if self.echo is not None:
+            self._stop_echo(nav)
+            nav.feedback.log_line(how, 'stopped echo')
             return
-        if not data.type:
-            nav.show_toast(f'no type information for {tab.name}', 'bad')
-            nav.log_line(how, 'nothing to echo')
+        if not self.type:
+            nav.feedback.refuse(how, f'no type information for {tab.name}', 'nothing to echo')
             return
-        data.echo = Echo(EchoBuffer(clock=self._bridge.now))
-        future = self._bridge.subscribe(tab.name, data.type, data.echo.buffer)
-        future.add_done_callback(lambda done: self._failed(nav, tab, done, 'echo', self._echo_failed))
-        nav.add_activity(tab, '◉ echo started', 'c')
-        nav.log_line(how, 'started echo')
+        self.echo = Echo(EchoBuffer(clock=self._bridge.now))
+        future = self._bridge.subscribe(tab.name, self.type, self.echo.buffer)
+        future.add_done_callback(lambda done: self._failed(nav, done, 'echo', 'echo'))
+        nav.feedback.add_activity(tab, '◉ echo started', 'c')
+        nav.feedback.log_line(how, 'started echo')
 
-    def _stop_echo(self, nav: NavState, tab: Tab) -> None:
-        data = self.data(tab)
-        self._bridge.unsubscribe(tab.name)
-        data.echo, data.latest, data.shown, data.new_since = None, None, None, 0
-        nav.add_activity(tab, '■ echo stopped', 'dim')
+    def _stop_echo(self, nav: NavState) -> None:
+        self._bridge.unsubscribe(self.tab.name)
+        self.echo, self.latest, self.shown, self.new_since = None, None, None, 0
+        nav.feedback.add_activity(self.tab, '■ echo stopped', 'dim')
 
-    def _echo_failed(self, tab: Tab) -> None:
-        self.data(tab).echo = None
-
-    def yank_echo(self, nav: NavState, tab: Tab, how: str) -> None:
+    def _yank_echo(self, nav: NavState, how: str) -> None:
         """y in Echo: copy the message LATEST MESSAGE shows (the frozen one while frozen), exactly."""
-        data, received = self.data(tab), self.received(nav, tab)
-        if data.echo is None:
+        tab, received = self.tab, self.received(nav)
+        if self.echo is None:
             problem = 'start the echo first (space)'
         elif received is None:
-            problem = (f'no messages to copy: nobody publishes {tab.name}' if self.publishers(nav, tab) == 0
+            problem = (f'no messages to copy: nobody publishes {tab.name}' if self.publishers(nav) == 0
                        else f'no messages to copy yet: waiting for the first one on {tab.name}')
         else:
             problem = ''
         if problem:
-            nav.show_toast(problem, 'bad')
-            nav.log_line(how, 'nothing to copy yet')
+            nav.feedback.refuse(how, problem, 'nothing to copy yet')
             return
-        nav.register = Register.of(data.type, 'message', tab.name, message_to_plain(received.message))
-        which = 'frozen' if self.frozen(nav, tab) else 'latest'
-        nav.show_toast(f'copied the {which} {nav.register.label} from {tab.name}', 'info')
-        nav.log_line(how, f'copied the {which} message — p pastes it into an editor of the same type')
+        nav.register = Register.of(self.type, self.ROLE, tab.name, message_to_plain(received.message))
+        which = 'frozen' if self.frozen(nav) else 'latest'
+        nav.feedback.show_toast(f'copied the {which} {nav.register.label} from {tab.name}', 'info')
+        nav.feedback.log_line(how, f'copied the {which} message — p pastes it into an editor of the same type')
 
     # ---------- publish ----------
-    def publish(self, nav: NavState, tab: Tab, how: str) -> None:
+    def _publish(self, nav: NavState, how: str) -> None:
         """space in Publish: check the message, then publish it once."""
-        built = self.checked(nav, tab, how)
-        if built is None:
+        ready = self._send(nav, how, '✓ published', 'g', f'published once on {self.tab.name}')
+        if ready is None:
             return
-        message, time_setters = built
-        sent = summary(self.remember(tab), SUMMARY_MAX_CHARS)
-        nav.errlines.pop(tab.key, None)
-        future = self._bridge.publish_once(tab.name, self.data(tab).type, message, tuple(time_setters))
-        future.add_done_callback(lambda done: self._failed(nav, tab, done, 'publish'))
-        nav.flash_send(tab)
-        nav.add_activity(tab, f'✓ published · {sent}' if sent else '✓ published', 'g')
-        nav.log_line(how, f'published once on {tab.name}')
+        message, time_setters, _ = ready
+        future = self._bridge.publish_once(self.tab.name, self.type, message, time_setters)
+        future.add_done_callback(lambda done: self._failed(nav, done, 'publish'))
 
-    def start_repeat(self, nav: NavState, tab: Tab, how: str) -> None:
+    def _start_repeat(self, nav: NavState, how: str) -> None:
         """r: publish the message at the rate until s stops it."""
-        data = self.data(tab)
-        if self.mode(tab) != 'publish':
-            nav.log_line(how, 'r repeats a publish — e switches to Publish')
+        if self.repeat is not None:
+            nav.feedback.show_toast(f'already repeating at {rate_text(self.repeat.rate)} Hz — s stops it', 'info')
+            nav.feedback.log_line(how, 'already repeating')
             return
-        if data.repeat is not None:
-            nav.show_toast(f'already repeating at {rate_text(data.repeat.rate)} Hz — s stops it', 'info')
-            nav.log_line(how, 'already repeating')
+        ready = self._ready(nav, how)
+        if ready is None:
             return
-        built = self.checked(nav, tab, how)
-        if built is None:
-            return
-        message, time_setters = built
-        self.remember(tab)
-        nav.errlines.pop(tab.key, None)
-        rate = self.rate(tab)
-        data.repeat = Repeat(message, tuple(time_setters), rate, self._bridge.now())
-        future = self._bridge.start_periodic_publish(tab.name, data.type, message, rate, tuple(time_setters))
-        future.add_done_callback(lambda done: self._failed(nav, tab, done, 'repeat', self._repeat_failed))
-        nav.add_activity(tab, f'↻ repeating at {rate_text(rate)} Hz', 'g')
-        nav.log_line(how, f'repeating at {rate_text(rate)} Hz')
+        message, time_setters, _ = ready
+        rate = self.rate()
+        self.repeat = Repeat(message, time_setters, rate, self._bridge.now())
+        future = self._bridge.start_periodic_publish(self.tab.name, self.type, message, rate, time_setters)
+        future.add_done_callback(lambda done: self._failed(nav, done, 'repeat', 'repeat'))
+        nav.feedback.add_activity(self.tab, f'↻ repeating at {rate_text(rate)} Hz', 'g')
+        nav.feedback.log_line(how, f'repeating at {rate_text(rate)} Hz')
 
-    def _repeat_failed(self, tab: Tab) -> None:
-        self.data(tab).repeat = None
-
-    def stop(self, nav: NavState, tab: Tab, how: str) -> None:
+    def _stop(self, nav: NavState, how: str) -> None:
         """s: stop the repeat. It never sends."""
-        data = self.data(tab)
-        if self.mode(tab) == 'echo':
-            nav.log_line(how, 'space stops the echo; going into the latest message freezes it')
+        if self.repeat is None:
+            nav.feedback.log_line(how, 'nothing running here')
             return
-        if data.repeat is None:
-            nav.log_line(how, 'nothing running here')
-            return
-        self._stop_repeat(nav, tab)
-        nav.log_line(how, 'stopped repeating')
+        self._stop_repeat(nav)
+        nav.feedback.log_line(how, 'stopped repeating')
 
-    def _stop_repeat(self, nav: NavState, tab: Tab) -> None:
-        data = self.data(tab)
-        self._bridge.stop_periodic_publish(tab.name)
-        sent = data.repeat.sent(self._bridge.now())
-        data.repeat = None
-        nav.add_activity(tab, f'■ repeat stopped after {sent} sent', 'dim')
+    def _stop_repeat(self, nav: NavState) -> None:
+        self._bridge.stop_periodic_publish(self.tab.name)
+        sent = self.repeat.sent(self._bridge.now())
+        self.repeat = None
+        nav.feedback.add_activity(self.tab, f'■ repeat stopped after {sent} sent', 'dim')
 
-    def on_close(self, nav: NavState, tab: Tab) -> list[str]:
+    def on_close(self, nav: NavState) -> list[str]:
         """Closing the tab stops its echo and its repeat: nothing would be left to stop them from."""
-        data = self._data.get(tab.key)
         stopped = []
-        if data and data.echo is not None:
-            self._stop_echo(nav, tab)
+        if self.echo is not None:
+            self._stop_echo(nav)
             stopped.append('echo stopped')
-        if data and data.repeat is not None:
-            self._stop_repeat(nav, tab)
+        if self.repeat is not None:
+            self._stop_repeat(nav)
             stopped.append('repeat stopped')
         return stopped
 
-    def _failed(self, nav: NavState, tab: Tab, future: Any, what: str, undo=None) -> None:
-        """On the bridge's thread: a subscribe or publish that failed says so (and undoes its state)."""
+    def _failed(self, nav: NavState, future: Any, what: str, running: str = '') -> None:
+        """On the bridge's thread: a subscribe or publish that failed says so (and forgets the
+        `running` echo or repeat it started)."""
         error = None if future.cancelled() else future.exception()
         if error is None:
             return
 
         def report():
-            if undo is not None:
-                undo(tab)
-            nav.add_activity(tab, f'✗ {what} failed: {error}', 'r')
+            if running:
+                setattr(self, running, None)
+            nav.feedback.add_activity(self.tab, f'✗ {what} failed: {error}', 'r')
         self._post(report)
 
     # ---------- running ----------
-    def running(self) -> dict[Tab, tuple[Running, ...]]:
-        markers = {}
-        for key, data in self._data.items():
-            tab = Tab.of(key)
-            found = ((ECHOING,) if data.echo else ()) + (
-                (Running('↻', f'{rate_text(data.repeat.rate)} Hz', 'ok'),) if data.repeat else ())
-            if found:
-                markers[tab] = found
-        return markers
-
-    # ---------- editing the rate ----------
-    def commit_edit(self, tab: Tab, editing: Editing) -> Commit:
-        if editing.area != RATE:
-            return super().commit_edit(tab, editing)
-        try:
-            rate = parse_rate(editing.value)
-        except ValueError as error:
-            return Commit(False, str(error))
-        running = self.data(tab).repeat is not None
-        undo, activity = self._set_rate(tab, rate)
-        text = f'repeat rate {rate_text(rate)} Hz' + (' (applied to the running repeat)' if running else '')
-        return Commit(True, text + (' (u undoes)' if undo else ''), undo, (activity, 'g') if activity else ())
-
-    def undo(self, nav: NavState, entry: UndoEntry) -> str:
-        if entry.kind != RATE:
-            return super().undo(nav, entry)
-        tab = Tab.of(entry.owner)
-        activity = self._apply_rate(tab, entry.data)
-        if activity:
-            nav.add_activity(tab, activity, 'g')
-        return f'repeat rate on {tab.name} back to {rate_text(self.rate(tab))} Hz'
+    def running(self) -> tuple[Running, ...]:
+        return ((ECHOING,) if self.echo else ()) + (
+            (Running('↻', f'{rate_text(self.repeat.rate)} Hz', 'ok'),) if self.repeat else ())
 
     # ---------- verbs ----------
-    def verb(self, nav: NavState, tab: Tab | None, name: str, how: str, arg: Any = None) -> bool:
-        if name == 'primary':
-            (self.toggle_echo if self.mode(tab) == 'echo' else self.publish)(nav, tab, how)
-        elif name == 'secondary':
-            self.stop(nav, tab, how)
-        elif name == 'toggle_mode':
-            self.toggle_mode(nav, tab, how, arg)
-        elif name == 'repeat':
-            self.start_repeat(nav, tab, how)
-        elif name == 'rate':
-            self.edit_rate(nav, tab, how)
-        elif name == 'set_rate':
-            self.command_rate(nav, tab, how, arg or '')
-        elif name in ('history_older', 'history_newer') and self.mode(tab) == 'echo':
-            nav.log_line(how, 'the history is for Publish — e switches to it')
-        elif name == 'yank' and self.mode(tab) == 'echo':
-            self.yank_echo(nav, tab, how)
-        elif name == 'paste' and self.mode(tab) == 'echo' and nav.register is not None:
-            nav.show_toast('switch to Publish (e) to paste', 'bad')
-            nav.log_line(how, 'no editor in Echo')
+    def verbs(self) -> dict[str, Verb]:
+        """The editor's verbs, the rate's, then those of the mode: Echo's start / stop the echo and
+        copy what it shows; Publish's publish once, repeat and stop."""
+        verbs = {**super().verbs(),
+                 'rate': lambda nav, how, _: self._edit_rate(nav, how),
+                 'set_rate': lambda nav, how, arg: self._command_rate(nav, how, arg or '')}
+        if self.mode == 'echo':
+            verbs.update({
+                'primary': lambda nav, how, _: self._toggle_echo(nav, how),
+                'secondary': lambda nav, how, _: nav.feedback.log_line(
+                    how, 'space stops the echo; going into the latest message freezes it'),
+                'repeat': lambda nav, how, _: nav.feedback.log_line(how, 'r repeats a publish — e switches to Publish'),
+                'history_older': self._history_is_for_publish,
+                'history_newer': self._history_is_for_publish,
+                'yank': lambda nav, how, _: self._yank_echo(nav, how),
+                'paste': self._paste_in_echo,
+            })
         else:
-            return super().verb(nav, tab, name, how, arg)
-        return True
+            verbs.update({
+                'primary': lambda nav, how, _: self._publish(nav, how),
+                'secondary': lambda nav, how, _: self._stop(nav, how),
+                'repeat': lambda nav, how, _: self._start_repeat(nav, how),
+            })
+        return verbs
+
+    @staticmethod
+    def _history_is_for_publish(nav: NavState, how: str, _: Any) -> None:
+        nav.feedback.log_line(how, 'the history is for Publish — e switches to it')
+
+    def _paste_in_echo(self, nav: NavState, how: str, _: Any) -> None:
+        if nav.register is None:
+            self._paste(nav, how)  # It says nothing is copied yet.
+        else:
+            nav.feedback.refuse(how, 'switch to Publish (e) to paste', 'no editor in Echo')

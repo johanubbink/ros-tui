@@ -8,7 +8,7 @@ and only the UI thread touches textual.**
   ───────────────────                          ─────────────────────────
   RosTuiApp.on_key                             private Context + Node
    └─ NavState.handle_key (keymap.py)           + SingleThreadedExecutor
-       └─ EntryRouter                            │
+       └─ nav.entry(tab): one Entry per tab      │
            ├─ TopicEntry  ─┐                     │
            ├─ ServiceEntry ├─ bridge.call_service(...) ──> command queue ──> guard condition
            ├─ ActionEntry  │  returns a Future   │         (runs the command on this thread)
@@ -48,8 +48,9 @@ The code:
     screen: the ☰ list, the open tabs, the layer, the cursors, the overlays,
     undo, the toast and the activity lines.
   - [`keymap.py`](../ros_tui/ui/keymap.py): the one table of keys.
-  - [`entries/`](../ros_tui/ui/entries/): one `EntryProvider` per entry kind
-    (topic, service, action, node) and the `EntryRouter` that picks one.
+  - [`entries/`](../ros_tui/ui/entries/): the `Entry` contract
+    (`base.py`), one `Entry` subclass per entry kind (topic, service, action,
+    node) and `kinds.py`, which maps a kind to its class.
   - [`fields.py`](../ros_tui/ui/fields.py): `FieldRows`, the model of a message
     as editable field rows.
   - [`helpers/`](../ros_tui/ui/helpers/): the field helpers (Quaternion,
@@ -57,8 +58,6 @@ The code:
   - [`register.py`](../ros_tui/ui/register.py): the typed copy / paste register.
   - [`widgets/`](../ros_tui/ui/widgets/): the views, each drawing part of the
     `NavState`, and [`theme.py`](../ros_tui/ui/theme.py), the colours.
-  - [`messages.py`](../ros_tui/ui/messages.py): the textual messages that
-    carry results from the ROS thread to the UI thread.
 - [`ros_tui/constants.py`](../ros_tui/constants.py): every rate, timeout and
   buffer size in one place.
 - [`ros_tui/demo/demo_servers.py`](../ros_tui/demo/demo_servers.py) and
@@ -84,8 +83,8 @@ Results come back in one of two ways:
 - a `concurrent.futures.Future` the UI can watch, or
 - a callback run on the ROS thread. Callbacks must be cheap and thread-safe;
   the UI's callbacks only call textual's `post_message`, which is safe from
-  any thread. [`ui/messages.py`](../ros_tui/ui/messages.py) lists those
-  messages: `GraphUpdated`, `PublisherCount`, and `UiCall`, which carries any
+  any thread. [`ui/app.py`](../ros_tui/ui/app.py) defines those
+  messages: `GraphUpdated` and `UiCall`, which carries any
   entry's bridge answer as a function to run on the UI thread.
 
 **Nothing blocks the ROS thread.** The bridge never waits for a server with
@@ -108,7 +107,9 @@ tick.
 `GraphSnapshot`. The UI is only told when the snapshot differs from the last
 one, so an idle system costs no redraws. Names ROS treats as hidden (any
 `_`-prefixed part) and the services every node creates for itself
-(parameters, type description) are left out.
+(parameters, type description) are left out. Each topic carries its publisher
+and subscriber counts (our own node's endpoints not counted), which decide
+whether it opens in Echo and fill its header.
 
 ## Fast data: echo and feedback
 
@@ -119,10 +120,11 @@ never go straight to the UI:
   `EchoBuffer`: a lock-protected deque of 200. When it's full, the oldest
   message is dropped and counted.
 - The app's clock tick (`UI_TICK_PERIOD_S`, 0.1 s, UI thread) drains the
-  buffer and keeps only the newest message, converted once for display. The
-  count, the rate (over the last 64 messages) and the drops still add up, and
-  a 1 kHz topic costs one conversion per tick. The tick redraws only when the
-  tab on screen shows something new, so an idle app never redraws.
+  buffer and keeps only the newest message; it is converted for display only
+  when it is shown. The count, the rate (over the last 64 messages) and the
+  drops still add up, and a 1 kHz topic costs at most one conversion per tick.
+  The tick redraws only when the tab on screen shows something new, so an idle
+  app never redraws.
 
 Action feedback works the same way, with a buffer per goal.
 
@@ -162,20 +164,28 @@ rules, the look and the copy are in
 together.
 
 - **The nav model.** [`nav.py`](../ros_tui/ui/nav.py)'s `NavState` holds
-  everything on screen as plain Python (no textual, no rclpy): the catalogue
-  for the ☰ list (fed from each `GraphSnapshot` by `set_catalog`), the open
+  everything on screen as plain Python (no textual, no rclpy): the open
   tabs, the layer (tab row › inside a tab › inside an area › insert), the
-  cursors, the overlays (search, the command line, which-key, the field
-  helper, `:log`), the undo stack (each change owned by the tab it was made
-  in), the toast, the activity lines and
-  the register. `footer()` says what the footer shows, `summary()` the same as
-  data for the test harness. Its clock is the bridge's `now()`, so tests run it
-  on a manual clock.
+  cursors, the one `overlay` that has the keys (`Search`, `CommandLine`,
+  `LogView`, a field `Helper` or `WhichKey`), the undo stack (each change owned
+  by the tab it was made in) and the register. It is driven by `handle_key`,
+  `click`, `tick` and `set_catalog`; the rest of its public surface is
+  read-only queries for the views (`footer()`, `summary()` for the test
+  harness, `shown(Overlay type)`, …) and a few calls for entries. Three
+  self-contained pieces sit beside it: the `Catalog`
+  ([`catalog.py`](../ros_tui/ui/catalog.py)), what the ☰ list and search show,
+  filled from each `GraphSnapshot`; the `Feedback`
+  ([`feedback.py`](../ros_tui/ui/feedback.py)), the key log, toast, errlines,
+  activity lines and send flash, each timed on its clock (the bridge's `now()`,
+  so tests run it on a manual clock); and the `CommandLine`
+  ([`command_line.py`](../ros_tui/ui/command_line.py)), the `:` line and its
+  suggestions, whose commands NavState runs from its `COMMANDS` table.
 - **The keymap.** [`keymap.py`](../ros_tui/ui/keymap.py)'s `KEYMAP` is one
   table of `Binding`s: an input mode, the context predicates it applies in, the
-  keys and the `NavState` action they run, and the label the footer, `?` and
-  [usage.md](usage.md) show. `NavState.handle_key` looks a key up there and
-  runs its action from `nav.ACTIONS`.
+  keys and the `NavState` action they run (with an optional argument: a step
+  of ±1, or the name of the entry verb for the generic `verb` action), and the
+  label the footer, `?` and [usage.md](usage.md) show. `NavState.handle_key`
+  looks a key up there and runs its action from `nav.ACTIONS`.
 - **One key router.** [`app.py`](../ros_tui/ui/app.py)'s `RosTuiApp` has a
   single `on_key` that hands every key to `NavState.handle_key`, then redraws.
   Nothing takes focus, and textual's own bindings (focus cycling, the command
@@ -183,13 +193,21 @@ together.
   `ctrl+q` and `ctrl+c` are bound, to quit. Clicks take the same road: every view
   hands a left click to `RosTuiApp.click`, which passes the target drawn under
   the mouse (a Rich style `meta`) to `NavState.click`.
-- **Entries.** What an open entry holds and does comes from an
-  `EntryProvider`: its areas, rows, edits, verbs (space, `s`, `r`, `e`, `y`,
-  `p`, …), undo, running markers and tick. The app's provider is
-  [`entries.EntryRouter`](../ros_tui/ui/entries/__init__.py), which hands each
-  call to the kind's provider: `TopicEntry` (Echo / Publish, the echo, the
-  repeat), `ServiceEntry`, `ActionEntry` (one goal at a time) and `NodeEntry`
-  (interfaces and parameters). The three with a message to fill in share
+- **Entries.** Each tab has an `Entry` object
+  ([`entries/base.py`](../ros_tui/ui/entries/base.py)) that holds its state
+  and says what it shows and does: its areas (per mode for a topic's Echo /
+  Publish), rows, edits, a table of verbs (space, `s`, `r`, `y`, `p`, …),
+  running markers and tick. `NavState.entry(tab)` makes it the first time
+  (through the factory it is given) and keeps it after the tab closes. An
+  entry talks back through `nav.feedback` (`refuse`, `report_error` /
+  `clear_error`, `add_activity`, …) and a few NavState calls (`push_undo` /
+  `drop_undo`, `begin_edit`, `set_row`, `open_entity`); an undo step is a closure the entry pushes, and an `Area`
+  says what its rows allow (`editable`, `folds`, `helpers`), so NavState
+  holds no kind's areas, state or verbs. [`entries/kinds.py`](../ros_tui/ui/entries/kinds.py) maps
+  each kind to its class: `TopicEntry` (Echo / Publish, the echo, the
+  repeat), `ServiceEntry`, `ActionEntry` (one goal at a time, through a
+  `LastGoal` the action entries share) and `NodeEntry` (interfaces and
+  parameters). The three with a message to fill in share
   `MessageEntry` (the field-row editor, `[ ]` history, copy and paste, the
   helpers). An entry calls the bridge itself and wraps each answer in
   `post(fn)`, which the app turns into a `UiCall` message, so the answer is
@@ -198,11 +216,12 @@ together.
 - **Widgets.** [`widgets/`](../ros_tui/ui/widgets/) holds the views. Each is a
   `NavView` that draws part of the `NavState` as lines of Rich text and decides
   nothing: the top bar, the tab row, the ☰ list, the entry body (a header, a
-  toolbar and one `Panel` per area, by a renderer per kind), the activity strip
+  toolbar and one `Panel` per area, by an `EntryView` per kind), the activity strip
   and the footer. Popups (search, `:log`, the command suggestions, which-key,
   the field helper, the toast) are `Overlay`s that say where they go. After
   each key, bridge answer or tick that changed something, the app's
-  `refresh_views()` places the overlays and redraws every view.
+  `refresh_views()` places the overlays and redraws every view (a tick that
+  only changed what the entries show just repaints them).
 
 ## Shutdown
 

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drive the app headless and take named screenshots for agents to compare with the design.
+"""Drive the app headless and take named screenshots for agents to review.
 
     async with ui_session() as s:                 # FakeBridge.demo(), 124x34 terminal
         await s.keys('enter', 'space')            # open /chatter, start the echo
@@ -34,12 +34,15 @@ Every ``shot()`` records the screen text and a state summary in ``s.shots``. Wit
 See docs/agentic-dev.md.
 """
 
+import asyncio
 import io
 import json
 import os
 import re
 import shutil
 import subprocess
+import time
+import unicodedata
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -49,12 +52,18 @@ from harness.fake_bridge import FakeBridge
 from rich.cells import cell_len
 from rich.console import Console
 from ros_tui.constants import UI_TICK_PERIOD_S
+from textual import events
+from textual.events import Click, MouseDown, MouseUp
+from textual.geometry import Offset
+from textual.keys import REPLACED_KEYS, _character_to_key, _get_unicode_name_from_key
+from textual.pilot import _get_mouse_message_arguments
 from ros_tui.ui.app import RosTuiApp
 
 ARTIFACTS_ROOT = Path(__file__).resolve().parents[1] / 'artifacts'
 SHOTS_ENV = 'ROS_TUI_SHOTS'
 DEFAULT_SIZE = (124, 34)
-SETTLE_TIMEOUT_S = 2.0  # Real time allowed for the UI to drain what one clock step produced.
+IDLE_ROUNDS = 100  # Message rounds idle() allows before it calls the app stuck.
+QUIET_ROUNDS = 3  # Rounds in a row with nothing to do that make the app idle.
 
 
 def shots_enabled() -> bool:
@@ -83,61 +92,96 @@ class UiSession:
         self.shots: list[dict[str, Any]] = []
         self.directory = ARTIFACTS_ROOT / artifact_dir_name(test_id)
         self._steps_at_last_shot = 0
+        self._console: Console | None = None  # The last render, until the app next goes idle.
         if shots_enabled():
             shutil.rmtree(self.directory, ignore_errors=True)
             self.directory.mkdir(parents=True)
             (self.directory / 'manifest.md').write_text(f'# {test_id}\n')
 
     # ---------------------------------------------------------------- driving
+    #
+    # Pilot's press / click / pause wait for the process to go idle (textual's wait_for_idle compares
+    # process CPU time with wall time) and give up only after 1 s; with ROS threads busy in the same
+    # process (the end-to-end tests) every key cost seconds. The session instead waits until the
+    # screen has drained its message queues, then lays out and redraws as textual's update timer
+    # would: deterministic, and no real time passes.
 
     async def idle(self) -> None:
-        """Let the app process everything queued: messages, workers, the refresh after them."""
-        await self.pilot.pause()
-        await self.app.workers.wait_for_complete()
-        await self.pilot.pause()
+        """Let the app process everything queued (messages, workers), then lay out and redraw, until
+        it stays quiet for QUIET_ROUNDS rounds: a key or a refresh travels between the app, the
+        screen and the widgets in several hops, and a layout sends the widgets resize messages."""
+        self._console = None
+        quiet = 0
+        for _ in range(IDLE_ROUNDS):
+            await asyncio.sleep(0)
+            await self.pilot._wait_for_screen()
+            # A worker (importing a message type) answers with a message: drain the queues after it.
+            while running := [worker for worker in self.app.workers if not worker.is_finished]:
+                await self.app.workers.wait_for_complete(running)
+                await self.pilot._wait_for_screen()
+            screen = self.app.screen
+            if any(_wants_refresh(widget) for widget in screen.walk_children()):
+                quiet = 0
+            elif (screen._layout_required or screen._scroll_required or screen._repaint_required
+                  or screen._dirty_widgets):
+                screen._on_timer_update()
+                quiet = 0
+            else:
+                quiet += 1
+                if quiet == QUIET_ROUNDS:
+                    return
+        raise AssertionError(f'the app did not settle in {IDLE_ROUNDS} rounds')
 
     async def keys(self, *keys: str) -> None:
         """Press keys one at a time (textual key names), letting the app go idle after each."""
         for key in keys:
-            await self.pilot.press(key)
+            self.app.post_message(_key_event(self.app, key))
             self.steps.append(key)
             await self.idle()
 
     async def click(self, x: int, y: int) -> None:
         """Click the cell at column ``x``, row ``y`` of the screen, then let the app go idle."""
-        await self.pilot.click(offset=(x, y))
+        await self._click((x, y))
         self.steps.append(f'click@{x},{y}')
-        await self.idle()
 
     async def click_on(self, text: str, nth: int = 0, row: int | None = None) -> None:
         """Click the first cell of the ``nth`` place ``text`` shows on the screen (in screen row
         ``row`` only, if given), as a person would aim at it."""
-        spots = [(cell_len(line[:at]), y) for y, line in enumerate(self.text().splitlines())
+        spots = [(cell_len(line[:at]), y) for y, line in enumerate(self.lines())
                  if row is None or y == row for at in _find_all(line, text)]
         if nth >= len(spots):
             raise AssertionError(f'{text!r} shows {len(spots)} times on the screen, wanted #{nth}')
-        await self.pilot.click(offset=spots[nth])
+        await self._click(spots[nth])
         self.steps.append(f'click "{text}"' + (f'#{nth}' if nth else ''))
-        await self.idle()
+
+    async def _click(self, offset: tuple[int, int]) -> None:
+        # What Pilot.click sends (mouse down, up, click on the screen), without its idle waits.
+        screen = self.app.screen
+        arguments = _get_mouse_message_arguments(screen, offset, button=1)
+        self.app.mouse_position = Offset(*offset)
+        for event in (MouseDown(**arguments), MouseUp(**arguments), Click(**arguments, chain=1)):
+            screen._forward_event(event)
+            await self.idle()
 
     async def type_text(self, text: str) -> None:
         """Type ``text`` character by character (Pilot accepts single characters as keys)."""
         await self.keys(*('space' if char == ' ' else char for char in text))
 
     async def wait_until(self, predicate: Callable[[], Any], timeout: float = 5.0) -> bool:
-        """Poll ``predicate`` in real time (for the UI's own timers, e.g. a filter debounce)."""
-        waited = 0.0
-        while not predicate() and waited < timeout:
-            await self.pilot.pause(0.05)
-            waited += 0.05
+        """Poll ``predicate`` in real time (for a real bridge, whose answers take real time)."""
+        deadline = time.monotonic() + timeout
         await self.idle()
+        while not predicate() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+            await self.idle()
         return bool(predicate())
 
     async def advance(self, seconds: float, step: float = UI_TICK_PERIOD_S) -> None:
-        """Advance the fake bridge's clock by ``seconds`` in ``step``s, letting the UI keep up.
+        """Advance the fake bridge's clock by ``seconds`` in ``step``s, ticking the app after each.
 
-        After each step the UI gets (real) time to drain what the step pushed into echo buffers,
-        so a 1 Hz topic shows every message, the way it would in real time.
+        The app's own real-time tick is paused under a ManualClock (see ``ui_session``), so its
+        tick runs once per step: echo drains, toasts and spinners follow the simulated clock, and a
+        1 Hz topic shows every message, the way it would in real time.
         """
         clock = getattr(self.bridge, 'clock', None)
         if clock is None:
@@ -147,29 +191,31 @@ class UiSession:
             delta = min(step, remaining)
             clock.advance(delta)
             remaining -= delta
-            await self._settle()
-        # Let the app's own real-time tick run once too.
-        await self.pilot.pause(UI_TICK_PERIOD_S * 1.5)
-        await self.idle()
+            self.app.tick()
+            await self.idle()
         self.steps.append(f'+{seconds:g}s')
-
-    async def _settle(self) -> None:
-        # The app's clock tick runs once per step, so what it times (echo drains, toasts) follows
-        # the simulated clock rather than the real one.
-        self.app.tick()
-        await self.idle()
-        pending = getattr(self.bridge, 'pending_echo', lambda: 0)
-        waited = 0.0
-        while pending() and waited < SETTLE_TIMEOUT_S:
-            await self.pilot.pause(0.02)
-            waited += 0.02
-        await self.idle()
 
     # ---------------------------------------------------------------- looking
 
     def text(self) -> str:
         """The screen as plain text (what ``NN-name.txt`` holds)."""
-        return self._render_console().export_text(clear=False)
+        return self._render().export_text(clear=False)
+
+    def lines(self) -> list[str]:
+        return self.text().splitlines()
+
+    def footer(self) -> str:
+        """The bottom line: mode, breadcrumb and the key labels."""
+        return self.lines()[-1]
+
+    def line_with(self, *parts: str) -> str:
+        """The first screen line holding all of ``parts`` ('' if none)."""
+        return next((line for line in self.lines() if all(part in line for part in parts)), '')
+
+    def where(self, *keys: str) -> tuple:
+        """The ``state()`` values of ``keys`` (by default the layer, mode, path, area and row)."""
+        state = self.state()
+        return tuple(state[key] for key in keys or ('layer', 'mode', 'path', 'area', 'row'))
 
     def state(self) -> dict[str, Any]:
         """A JSON-able summary of where the UI is, with the nav model's own (``NavState.summary()``)."""
@@ -186,27 +232,29 @@ class UiSession:
         return state
 
     async def shot(self, name: str, expect: str = '') -> dict[str, Any]:
-        """Record (and with ROS_TUI_SHOTS=1 write) a named screenshot; ``expect`` is for the verifier."""
+        """Record (and with ROS_TUI_SHOTS=1 write) a named screenshot; ``expect`` says what a reviewer should see."""
         await self.idle()
         index = len(self.shots) + 1
         stem = f'{index:02d}-{re.sub(r"[^A-Za-z0-9_.-]", "-", name)}'
-        console = self._render_console()
         record = {
             'name': stem,
             'expect': expect,
             'keys_since_last_shot': self.steps[self._steps_at_last_shot:],
             'keys': list(self.steps),
             'state': self.state(),
-            'text': console.export_text(clear=False),
         }
         self._steps_at_last_shot = len(self.steps)
         self.shots.append(record)
-        if shots_enabled():
-            self._write(stem, record, console.export_svg(title=self.app.title, clear=False))
+        if shots_enabled():  # Rendering is the costly part: only when the shot is written.
+            record['text'] = self.text()
+            self._write(stem, record, self._render().export_svg(title=self.app.title, clear=False))
         return record
 
-    def _render_console(self) -> Console:
+    def _render(self) -> Console:
         # The same rendering as textual's App.export_screenshot, kept so text and SVG come from it.
+        # Kept until the app next goes idle (anything that changes the screen goes through idle()).
+        if self._console is not None:
+            return self._console
         width, height = self.app.size
         console = Console(
             width=width,
@@ -220,6 +268,7 @@ class UiSession:
         )
         screen = self.app.screen
         console.print(screen._compositor.render_update(full=True, screen_stack=self.app._background_screens))
+        self._console = console
         return console
 
     def _write(self, stem: str, record: dict[str, Any], svg: str) -> None:
@@ -241,6 +290,25 @@ class UiSession:
             )
 
 
+def _wants_refresh(widget) -> bool:
+    """A refresh the widget has not handed to the screen yet (textual's Widget._check_refresh)."""
+    return (widget._layout_required or widget._repaint_required or widget._scroll_required
+            or widget._refresh_styles_required)
+
+
+def _key_event(app, key: str) -> events.Key:
+    """The key event Pilot.press would send for ``key`` (a textual key name or a character)."""
+    if len(key) == 1 and not key.isalnum():
+        key = _character_to_key(key)
+    try:
+        char = unicodedata.lookup(_get_unicode_name_from_key(REPLACED_KEYS.get(key, key)))
+    except KeyError:
+        char = key if len(key) == 1 else None
+    event = events.Key(key, char)
+    event.set_sender(app)
+    return event
+
+
 def _find_all(line: str, text: str) -> list[int]:
     """The indices where ``text`` starts in ``line``."""
     return [at for at in range(len(line)) if line.startswith(text, at)]
@@ -250,20 +318,24 @@ def _format_keys(keys: list[str]) -> str:
     return ' '.join(f'`{key}`' for key in keys) if keys else '(none)'
 
 
+def rsvg_ready(svg: str) -> str:
+    """Textual's SVG screenshot made to render in rsvg-convert as it does in a browser."""
+    # Textual pads with leading spaces inside spans; keep rsvg from collapsing them. Its web
+    # font (Fira Code from a CDN) is unreachable for rsvg, so name the installed JetBrains Mono first.
+    svg = svg.replace('<svg ', '<svg xml:space="preserve" ', 1)
+    svg = svg.replace('font-family: Fira Code,', 'font-family: JetBrains Mono, Fira Code,')
+    # rsvg ignores textLength, so a long run drifts unless the glyph advance (0.6 em in JetBrains
+    # Mono) matches textual's 12.2 px cell: 20.333 px instead of textual's 20 px.
+    return svg.replace('font-size: 20px', 'font-size: 20.333px')
+
+
 def write_png(svg: str, path: Path) -> bool:
     """Render ``svg`` to ``path`` with rsvg-convert; False (and a warning) if it is missing."""
     if shutil.which('rsvg-convert') is None:
         warnings.warn('rsvg-convert not found: shots are written as SVG/TXT/JSON only '
                       '(install librsvg2-bin, or rebuild the Docker image)')
         return False
-    # Textual pads with leading spaces inside spans; keep rsvg from collapsing them. Its web
-    # font (Fira Code from a CDN) is unreachable for rsvg, so name the installed design font.
-    svg = svg.replace('<svg ', '<svg xml:space="preserve" ', 1)
-    svg = svg.replace('font-family: Fira Code,', 'font-family: JetBrains Mono, Fira Code,')
-    # rsvg ignores textLength, so a long run drifts unless the glyph advance (0.6 em in JetBrains
-    # Mono) matches textual's 12.2 px cell: 20.333 px instead of textual's 20 px.
-    svg = svg.replace('font-size: 20px', 'font-size: 20.333px')
-    subprocess.run(['rsvg-convert', '-o', str(path)], input=svg.encode(), check=True)
+    subprocess.run(['rsvg-convert', '-o', str(path)], input=rsvg_ready(svg).encode(), check=True)
     return True
 
 
@@ -280,6 +352,8 @@ async def ui_session(
     bridge = FakeBridge.demo() if bridge is None else bridge
     app = RosTuiApp(bridge)
     async with app.run_test(size=size) as pilot:
+        if getattr(bridge, 'clock', None) is not None:
+            app.ticker.pause()  # Simulated time: advance() ticks the app once per step.
         session = UiSession(app, pilot, bridge, test_id or current_test_id())
         await session.idle()
         yield session

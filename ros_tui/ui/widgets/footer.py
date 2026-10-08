@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The footer (the design's renderFoot): mode badge, pending prefix, breadcrumb, then esc / enter.
+"""The footer: mode badge, pending prefix, breadcrumb, then esc / enter.
 
 Everything in it comes from `NavState.footer()`; this only lays it out. While the command line is
 open it replaces the footer: COMMAND, the typed `:text` and how to use it (the suggestions are
@@ -22,6 +22,7 @@ widgets/command_suggestions.py).
 
 from rich.text import Text
 
+from ros_tui.ui.command_line import CommandLine
 from ros_tui.ui.theme import MODES
 from ros_tui.ui.widgets.base import NavView, cursor_cell, keyed, spread, style
 
@@ -36,13 +37,14 @@ class Footer(NavView):
     @property
     def modal(self) -> bool:
         """While it is the command line it is that popup: a click on it doesn't close it."""
-        return self.nav.cmd is not None
+        return self.nav.shown(CommandLine) is not None
 
     def lines(self, width, height):
         foot = self.nav.footer()
         left = Text.assemble((f' {foot.mode.upper()} ', style('mode-text', MODES[foot.mode], bold=True)), ' ')
-        if self.nav.cmd:
-            left.append_text(Text.assemble((':' + self.nav.cmd.q, style('bright')), cursor_cell()))
+        cmd = self.nav.shown(CommandLine)
+        if cmd:
+            left.append_text(Text.assemble((':' + cmd.q, style('bright')), cursor_cell()))
             return [spread(left, Text(COMMAND_HINT + ' ', style('dim')), width)]
         if foot.pending:
             left.append_text(keyed(f'{foot.pending}…', ''))

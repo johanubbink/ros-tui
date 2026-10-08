@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tab row (the design's renderTabRow and fitTabs): ☰ plus one tab per open entry.
+"""The tab row: ☰ plus one tab per open entry.
 
 Two lines: the tabs, and under them a rule that underlines the active tab in its kind's colour.
 On the tab-row layer the cursor tab is outlined in the key colour. A tab whose entry runs something
@@ -63,7 +63,7 @@ class EntryTabRow(NavView):
 
     def __init__(self, nav, **kwargs):
         super().__init__(nav, **kwargs)
-        self._first = 0  # The first tab shown (0 is ☰), kept between renders like the design's scroll.
+        self._first = 0  # The first tab shown (0 is ☰), kept between renders.
 
     def segments(self) -> list[tuple[Text, str]]:
         """Every tab (☰ first) as (its text, its underline colour: its kind's when active, else '')."""

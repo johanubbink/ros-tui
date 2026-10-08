@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Field rows as panel lines, as the design's msgArea rows: any entry with a message draws its
+"""Field rows as panel lines: any entry with a message draws its
 `FieldRows` (fields.py) with `field_lines`, one line per row:
 
     1  a: 19    # int64
@@ -31,14 +31,15 @@ enum's completion instead of the hint); a value the last send check rejected is 
 
 from rich.text import Text
 
-from ros_tui.ui.entries.message import EDITOR, MessageData
+from ros_tui.ui.entries.base import Area, Editing
+from ros_tui.ui.entries.message import MessageEntry
 from ros_tui.ui.fields import FieldRows, Row, enum_matches, flat_text, within
 from ros_tui.ui.helpers import helper_name
-from ros_tui.ui.nav import AREA, EDIT, Area, Editing, NavState, Tab
+from ros_tui.ui.nav import AREA, NavState
 from ros_tui.ui.widgets.base import edit_value, keyed, style
 from ros_tui.ui.widgets.panel import Panel, hint, waiting
 
-NUMBER_WIDTH = 3  # The row number column (the design's .ln, 24px).
+NUMBER_WIDTH = 3  # The row number column.
 HINT_GAP = '    '  # Between a value and its "# type" hint.
 VALUE_COLORS = {'num': 'syn-num', 'str': 'syn-str', '': 'text'}
 
@@ -80,7 +81,7 @@ def field_lines(form: FieldRows, editing: Editing | None = None, current: int | 
 
 
 def helper_badge(name: str, on: bool) -> Text:
-    """A row's "[f Quaternion]" (the design's .hb): brighter on the row under the cursor."""
+    """A row's "[f Quaternion]": brighter on the row under the cursor."""
     edge, text = ('key', 'bright') if on else ('hb-edge', 'hb-text')
     badge = Text.assemble(('[', style(edge)), ('f', style('key', bold=True)), (f' {name}', style(text)),
                           (']', style(edge)))
@@ -103,20 +104,20 @@ def shown_value(row: Row) -> Text:
     return text
 
 
-def editor_panel(nav: NavState, tab: Tab, data: MessageData, area: Area) -> Panel:
+def editor_panel(nav: NavState, entry: MessageEntry, area: Area) -> Panel:
     """The message editor as a panel: its rows, the history and the keys in the title, its errline."""
-    count = len(data.history)
-    history = f'history #{data.hpos + 1}/{count}' if data.hpos >= 0 else f'history ({count})'
+    count = len(entry.history)
+    history = f'history #{entry.hpos + 1}/{count}' if entry.hpos >= 0 else f'history ({count})'
     parts = ((('[ ]', history),) if count else ()) + (('i', 'edit'), ('p', 'paste'))
     inside = nav.layer == AREA and nav.area() == area
     helper = nav.helper_name() if inside else None
     title = Text.assemble(helper_hint(helper), '  ') if helper else Text()
-    panel = Panel(area.title, hint=title + hint(*parts), errline=nav.errline(tab), edits=True)
-    if data.editor is None:
-        panel.lines = waiting(data.error)
+    panel = Panel(area.title, hint=title + hint(*parts), errline=nav.feedback.errline(entry.tab), edits=True)
+    if entry.editor is None:
+        panel.lines = waiting(entry.error)
         return panel
-    editing = nav.editing if nav.layer == EDIT and nav.editing and nav.editing.area == EDITOR else None
+    editing = nav.editing_in(area.id)
     current = nav.row_index(area) if inside else None
-    panel.lines = field_lines(data.editor, editing, current) or [Text('(no fields)', style('dim'))]
-    panel.cursor = nav.row_index(area) if data.editor.rows() else None
+    panel.lines = field_lines(entry.editor, editing, current) or [Text('(no fields)', style('dim'))]
+    panel.cursor = nav.row_index(area) if entry.editor.rows() else None
     return panel

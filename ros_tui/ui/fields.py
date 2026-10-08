@@ -44,7 +44,7 @@ from typing import Any, Callable, NamedTuple
 
 import yaml
 
-from ros_tui.constants import ECHO_DISPLAY_DIGITS
+from ros_tui.constants import ECHO_DISPLAY_DIGITS, HEADER_AUTO, TIME_NOW
 
 # Messages small enough to be typed on one row as flow YAML. Keep this set small.
 COMPACT_TYPES = frozenset({
@@ -52,7 +52,7 @@ COMPACT_TYPES = frozenset({
     'geometry_msgs/Pose2D', 'std_msgs/Header', 'builtin_interfaces/Time', 'builtin_interfaces/Duration',
 })
 # Compact types with a stamp-at-send word (message_yaml.build_message's magic values).
-MAGIC_WORDS = {'std_msgs/Header': 'auto', 'builtin_interfaces/Time': 'now'}
+MAGIC_WORDS = {'std_msgs/Header': HEADER_AUTO, 'builtin_interfaces/Time': TIME_NOW}
 
 LEAF, COMPACT, MESSAGE, ARRAY = 'leaf', 'compact', 'message', 'array'
 
@@ -143,8 +143,32 @@ def parse_path(text: str) -> Path:
     return tuple(int(index) if index else name for name, index in _PATH_PART.findall(text))
 
 
+def _scalar_yaml(value: Any) -> str | None:
+    """A bool, int or float as yaml.safe_dump writes it (without the cost of a dump), else None."""
+    kind = type(value)
+    if kind is bool:
+        return 'true' if value else 'false'
+    if kind is int:
+        return str(value)
+    if kind is not float:
+        return None
+    if value != value:
+        return '.nan'
+    if value in (math.inf, -math.inf):
+        return '.inf' if value > 0 else '-.inf'
+    text = repr(value).lower()
+    return text.replace('e', '.0e', 1) if '.' not in text and 'e' in text else text
+
+
 def flow_yaml(value: Any) -> str:
     """`value` as one line of YAML that parses back to it: '5.0', '[1, 2]', "{x: 1.0, y: 'a b'}"."""
+    text = _scalar_yaml(value)
+    if text is not None:
+        return text
+    if type(value) is list:  # A list of numbers (and bools) is the common non-scalar: no dump either.
+        items = [_scalar_yaml(item) for item in value]
+        if None not in items:
+            return f'[{", ".join(items)}]'
     text = yaml.safe_dump(value, default_flow_style=True, sort_keys=False, width=math.inf, allow_unicode=True).strip()
     if text.endswith('\n...'):  # safe_dump ends a bare scalar with a document-end marker.
         text = text[:-len('\n...')].rstrip()
@@ -265,6 +289,15 @@ def _load(text: str) -> Any:
         return None
 
 
+def parse_list(field: str, text: str) -> list:
+    """`text` read as a YAML list (its elements unchecked), or ValueError naming the field. A node's
+    array parameters are read by it too (entries/node.parse_value)."""
+    value = _load(text.strip())
+    if not isinstance(value, list):
+        raise ValueError(f'{field} needs a list like [1, 2], got "{text.strip()}"')
+    return value
+
+
 def parse_scalar(label: str, field: str, text: str) -> Any:
     """`text` read as a value of the primitive type `label`, or ValueError naming the field. Node
     parameters are read by it too (entries/node.parse_value)."""
@@ -364,12 +397,9 @@ def parse(row: Row, text: str) -> Any:
             raise ValueError(f'{field} needs {needs}, got "{shown}"')
         return coerce(row.node, _merge(row.value, value))
     if row.shape == ARRAY:
-        value = _load(shown)
-        if not isinstance(value, list):
-            raise ValueError(f'{field} needs a list like [1, 2], got "{shown}"')
         element = array_info(label).element
         return [parse_scalar(element, f'{field}[{index}]', flow_yaml(item) if not isinstance(item, str) else item)
-                for index, item in enumerate(value)]
+                for index, item in enumerate(parse_list(field, shown))]
     if row.node.constants:
         return enum_value(row.node.constants, field, text)
     return parse_scalar(label, field, text)
@@ -446,29 +476,40 @@ class FieldRows:
         self.fields = tuple(fields)
         self.values = copy.deepcopy(values) if values else {}
         self.editable = editable
-        self.opened: set[Path] = set()
+        self._opened: set[Path] = set()
+        self._rows: list[Row] | None = None  # rows(), until a value or a fold changes (`_changed`).
+        self._index: dict[Path, int] = {}  # Each row's index by path, alongside `_rows`.
         self.bad = ''  # The field the last send check rejected (shown in red), or ''.
         top = self.rows()
         if len(top) == 1 and top[0].folds and self._has_children(top[0]):  # One nested message: unfolded.
-            self.opened.add(top[0].path)
-        self.opened.update(_compact_parents(self.fields, ()))
+            self._opened.add(top[0].path)
+        self._opened.update(_compact_parents(self.fields, ()))
+        self._changed()
 
     # ---------- rows ----------
     def rows(self) -> list[Row]:
-        rows: list[Row] = []
-        for node in self.fields:
-            self._walk(node, (node.name,), 0, self.values.get(node.name, default_value(node)), rows)
-        return rows
+        """The rows as shown, top to bottom (kept until a value or a fold changes)."""
+        if self._rows is None:
+            rows: list[Row] = []
+            for node in self.fields:
+                value = self.values[node.name] if node.name in self.values else default_value(node)
+                self._walk(node, (node.name,), 0, value, rows)
+            self._rows, self._index = rows, {row.path: index for index, row in enumerate(rows)}
+        return self._rows
+
+    def _changed(self) -> None:
+        """Every change to `values` or `_opened` goes through here, so rows() is built again."""
+        self._rows = None
 
     def _walk(self, node: Any, path: Path, depth: int, value: Any, rows: list[Row]) -> None:
         shape = shape_of(node)
-        is_open = shape in (MESSAGE, ARRAY) and path in self.opened
+        is_open = shape in (MESSAGE, ARRAY) and path in self._opened
         rows.append(Row(path, node, depth, shape, value, is_open))
         if not is_open:
             return
         if shape == MESSAGE:
             for child in node.children:
-                item = value.get(child.name, default_value(child)) if isinstance(value, dict) else default_value(child)
+                item = value[child.name] if isinstance(value, dict) and child.name in value else default_value(child)
                 self._walk(child, path + (child.name,), depth + 1, item, rows)
             return
         element = element_of(node)
@@ -481,7 +522,8 @@ class FieldRows:
 
     def index_of(self, path: Path | str) -> int | None:
         path = parse_path(path) if isinstance(path, str) else path
-        return next((index for index, row in enumerate(self.rows()) if row.path == path), None)
+        self.rows()
+        return self._index.get(path)
 
     def has_folds(self) -> bool:
         return any(shape_of(node) in (MESSAGE, ARRAY) for node in self.fields)
@@ -497,6 +539,7 @@ class FieldRows:
         """Replace the whole value (undo, a history step); what is unfolded stays."""
         self.values = copy.deepcopy(values)
         self.bad = ''
+        self._changed()
 
     def accept(self, index: int, text: str, validate: Callable[[dict], Any] | None = None) -> tuple[Any, Any]:
         """Keep `text` as the value of row `index`: (old value, new value). Raises ValueError with
@@ -516,6 +559,7 @@ class FieldRows:
                 if within(path, row.field):
                     raise ValueError(describe(error, text.strip())) from None
         _put(self.values, row.path, value)
+        self._changed()
         if within(self.bad, row.field) or within(row.field, self.bad):
             self.bad = ''
         return row.value, value
@@ -527,11 +571,11 @@ class FieldRows:
         if row is None or not row.folds:
             return None
         if row.open:
-            self.opened.discard(row.path)
+            self._fold(row.path, False)
             return f'folded {row.field}'
         if not self._has_children(row):
             return f'{row.field} is empty' + (' — o adds an element' if row.shape == ARRAY and self.editable else '')
-        self.opened.add(row.path)
+        self._fold(row.path, True)
         return f'unfolded {row.field}'
 
     def fold(self, index: int) -> tuple[int, str] | None:
@@ -540,7 +584,7 @@ class FieldRows:
         if row is None:
             return None
         if row.open:
-            self.opened.discard(row.path)
+            self._fold(row.path, False)
             return index, f'folded {row.field}'
         if row.depth == 0:
             return None
@@ -555,9 +599,16 @@ class FieldRows:
         if not self._has_children(row):
             return index, f'{row.field} is empty'
         if not row.open:
-            self.opened.add(row.path)
+            self._fold(row.path, True)
             return index, f'unfolded {row.field}'
         return index + 1, f'into {row.field}'
+
+    def _fold(self, path: Path, unfolded: bool) -> None:
+        if unfolded:
+            self._opened.add(path)
+        else:
+            self._opened.discard(path)
+        self._changed()
 
     def _has_children(self, row: Row) -> bool:
         return bool(row.value) if row.shape == ARRAY else bool(row.node.children)
@@ -571,7 +622,7 @@ class FieldRows:
             row = self.row(index) if index is not None else None
             if row is None or not row.folds:
                 break
-            self.opened.add(row.path)
+            self._fold(row.path, True)
         for depth in range(len(path), 0, -1):
             index = self.index_of(path[:depth])
             if index is not None:
@@ -608,7 +659,7 @@ class FieldRows:
             raise ValueError(f'{array.field} holds at most {info.bound} elements')
         self._shift(array.path, at, 1)
         items.insert(at, default_value(element_of(array.node)))
-        self.opened.add(array.path)
+        self._fold(array.path, True)
         return array.path + (at,)
 
     def delete_item(self, index: int) -> tuple[Path, Path]:
@@ -626,6 +677,7 @@ class FieldRows:
         at = element[-1]
         del items[at]
         self._shift(array.path, at + 1, -1)
+        self._changed()
         if at < len(items):
             return element, element
         return element, array.path + (at - 1,) if items else array.path
@@ -634,10 +686,10 @@ class FieldRows:
         """Keep unfolded elements unfolded when the ones before them are added or deleted."""
         size = len(array)
         moved = set()
-        for path in self.opened:
+        for path in self._opened:
             inside = path[:size] == array and len(path) > size
             if inside and path[size] >= start:
                 moved.add(path[:size] + (path[size] + delta,) + path[size + 1:])
             elif not (inside and delta < 0 and path[size] == start - 1):  # Drop a deleted element's.
                 moved.add(path)
-        self.opened = moved
+        self._opened = moved

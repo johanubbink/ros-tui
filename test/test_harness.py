@@ -13,6 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The entry kinds: `base.Entry` is what NavState asks, one module per kind subclasses it
-(node, service, topic, action; the three with a message editor share `message.MessageEntry`), and
-`kinds.KINDS` maps each catalogue kind to its class. Pure Python: no textual, no rclpy."""
+"""The harness's simulated clock (harness.fake_bridge.ManualClock), which the fake world runs on."""
+
+from harness.fake_bridge import ManualClock
+
+
+def test_manual_clock_orders_timers():
+    clock = ManualClock()
+    fired = []
+    clock.call_every(0.5, lambda: fired.append(('every', clock.now)))
+    timer = clock.call_later(0.75, lambda: fired.append(('later', clock.now)))
+    clock.call_later(0.25, timer.cancel)
+    clock.advance(1.0)
+    assert fired == [('every', 0.5), ('every', 1.0)]
+    assert clock.now == 1.0

@@ -13,18 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The toast (the design's renderToast): one short line, bottom right of the body, for NAV_TOAST_S.
+"""The toast: one short line, bottom right of the body, for NAV_TOAST_S.
 
 ok is green, bad red, info blue (docs/design-principles.md, "State markers"). It lives in the body,
-so the search veil dims it like the design's z-order does. NavState.tick() takes it away.
+so the search veil dims it. NavState.tick() takes it away.
 """
 
 from rich.cells import cell_len
-from rich.text import Text
 
-from ros_tui.ui.widgets.base import Overlay, style
+from ros_tui.ui.widgets.base import Overlay
+from ros_tui.ui.widgets.panel import pill
 
-LOOKS = {'': ('ok', 'ok-bg'), 'ok': ('ok', 'ok-bg'), 'bad': ('bad', 'bad-bg'), 'info': ('info', 'panel-in')}
 RIGHT = 1  # Cells kept free on its right.
 
 
@@ -32,13 +31,12 @@ class ToastView(Overlay):
     modal = False  # It never has the keys: a click on it doesn't close a popup.
 
     def place(self, width, height):
-        toast = self.nav.toast
+        toast = self.nav.feedback.toast
         if toast is None:
             return None
         w = min(width, cell_len(toast.text) + 2)
         return max(0, width - w - RIGHT), max(0, height - 1), w, 1
 
     def lines(self, width, height):
-        toast = self.nav.toast
-        color, bg = LOOKS[toast.kind]
-        return [Text(f' {toast.text} ', style(color, bg, bold=True))]
+        toast = self.nav.feedback.toast
+        return [pill(toast.text, toast.kind or 'ok')]

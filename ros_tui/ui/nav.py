@@ -13,114 +13,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The navigation model of the UI: tabs, layers, cursors, overlays and the `g` prefix.
+"""The navigation model of the UI: tabs, layers, cursors, the overlay and the `g` prefix.
 
-Pure Python (no textual, no rclpy), ported from the design's state `S` and keydown handler
-(docs/design/hybrid-keys.html). Widgets render a `NavState` and hand it every key through
-`handle_key`; `keymap.KEYMAP` says which action a key runs. What an entry holds (its rows, values
-and verbs) comes from an `EntryProvider`, so the topic, service, action and node entries plug in
-without the model knowing about them.
+Pure Python (no textual, no rclpy). Widgets render a `NavState` and hand it every key through
+`handle_key` and every click through `click`; `keymap.KEYMAP` says which action a key runs. What an
+entry holds (its areas, rows, values and verbs) comes from its `Entry` (entries/base.py), one per
+tab, made by `new_entry`, so the topic, service, action and node entries plug in without the model
+knowing about them. What there is to open is the `Catalog` (catalog.py), what the UI says back is
+the `Feedback` (feedback.py), and the `:` line is a `CommandLine` (command_line.py).
 
 The layers, top to bottom: TABS (the tab row) › IN (inside a tab: the ☰ list, or an entry's area
 pick) › AREA (the rows of one area) › EDIT (insert: typing into one value). esc goes up one, enter
-goes down one.
-
-Time comes only from `NavState.clock`: the bridge's `now()` in the app (FakeBridge's ManualClock in
-tests), and a clock that stands still otherwise. `tick()` expires what is timed, such as the toast,
-the send flash and the highlight of a fresh activity line. The time of day an activity line shows
-comes from `NavState.wall` (the bridge's `time_of_day()`), so it is repeatable in tests too.
+goes down one. At most one overlay sits on top and has the keys: search, the command line, :log,
+a field helper, or the which-key popup (`?`, or the `g` prefix waiting for its next key).
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, NamedTuple
+from typing import Any, Callable, NamedTuple
 
-from ros_tui.constants import (NAV_ACTIVITY_FRESH_S, NAV_ACTIVITY_MAX, NAV_ERRLINE_S, NAV_FLASH_S, NAV_LOG_LINES,
-                               NAV_TOAST_S, PUBLISH_DEFAULT_RATE_HZ)
 from ros_tui.ui import keymap
+from ros_tui.ui.catalog import KINDS, Catalog
+from ros_tui.ui.command_line import CommandLine
+from ros_tui.ui.entries.base import Area, Editing, Entry, Running, Tab, UndoEntry
+from ros_tui.ui.feedback import Feedback
 from ros_tui.ui.helpers import Helper
-from ros_tui.ui.keymap import COMMANDS, MAX_SUGGESTIONS, key_char, key_display, normalize_key
+from ros_tui.ui.keymap import key_char, key_display, normalize_key
 from ros_tui.ui.register import Register
 
 TABS, IN, AREA, EDIT = ('tabs', 'in', 'area', 'edit')
-KINDS = ('topics', 'services', 'actions', 'nodes')
-CLOSE = 'close'  # UndoEntry kind of a closed tab; NavState undoes it itself.
-ANYWHERE = '*'  # UndoEntry owner that any tab can undo (only a closed tab).
 NOTHING_TO_UNDO = 'nothing to undo here'
-
-
-@dataclass(frozen=True)
-class CatalogItem:
-    name: str
-    type: str
-    publishers: int = 0  # Topics only: decides whether a topic opens in Echo or Publish.
-
-
-@dataclass(frozen=True)
-class Tab:
-    kind: str  # One of KINDS.
-    name: str
-
-    @property
-    def key(self) -> str:
-        """The entry key ('topics:/chatter') that per-entry state is stored under."""
-        return f'{self.kind}:{self.name}'
-
-    @staticmethod
-    def of(key: str) -> 'Tab':
-        """The tab of an entry key ('topics:/chatter'), e.g. an UndoEntry's owner."""
-        return Tab(*key.split(':', 1))
-
-
-@dataclass(frozen=True)
-class Area:
-    """One panel of an entry. Ids follow the design: msg, out, ifs, par (and rate for its editor)."""
-
-    id: str
-    title: str  # In capitals; the breadcrumb shows it in lower case.
-    enter: str = ''  # Footer "enter …" label inside the area ('' when enter does nothing there).
-    editable: bool = False  # i / a / c and enter edit its rows.
-
-
-# The areas of each screen, as AREAS in the design. A topic's screen depends on its mode.
-AREAS = {
-    'topics:echo': (Area('out', 'LATEST MESSAGE', 'show / hide field'),),
-    'topics:publish': (Area('msg', 'MESSAGE', 'edit', True),),
-    'services': (Area('msg', 'REQUEST', 'edit', True), Area('out', 'RESPONSE')),
-    'actions': (Area('msg', 'GOAL', 'edit', True), Area('out', 'RESULT')),
-    'nodes': (Area('ifs', 'INTERFACES', 'open it'), Area('par', 'PARAMETERS', 'edit', True)),
-}
-
-
-@dataclass
-class Editing:
-    """The value being typed in the EDIT layer."""
-
-    area: str  # The area id it belongs to ('rate' for the repeat-rate editor).
-    row: int
-    value: str
-    old: str = ''
-    fresh: bool = False  # The first typed character replaces the value instead of appending.
-    field: str = ''  # The field as the user sees it, for log lines.
-    note: str = '(insert)'  # Appended to the "edit <field>" log line.
-    crumb: tuple[str, ...] = ()  # Breadcrumb parts instead of the area title, e.g. ('repeat rate',).
-    back: str = AREA  # The layer to return to when the edit ends.
-
-
-@dataclass(frozen=True)
-class UndoEntry:
-    owner: str  # The tab key it was made in, or ANYWHERE.
-    kind: str  # CLOSE, or whatever the provider that pushed it understands ('edit', 'rate', …).
-    data: Any = None
-
-
-@dataclass(frozen=True)
-class Commit:
-    """A provider's answer to committing an edit: kept (with a log line), or an error message."""
-
-    ok: bool
-    text: str
-    undo: UndoEntry | None = None
-    activity: tuple[str, str] = ()  # (text, cls) of an activity line it causes, e.g. a running repeat's new rate.
 
 
 @dataclass
@@ -128,12 +49,9 @@ class Search:
     q: str = ''
     cur: int = 0
 
-
-@dataclass
-class CommandLine:
-    q: str = ''
-    cur: int = 0
-    moved: bool = False  # ↑↓ picked a suggestion, so enter runs it rather than the typed text.
+    def edit(self, text: str) -> None:
+        self.q = text
+        self.cur = 0
 
 
 @dataclass
@@ -142,39 +60,14 @@ class LogView:
 
 
 @dataclass(frozen=True)
-class Toast:
-    text: str
-    kind: str = ''  # '', 'ok', 'info' or 'bad'.
-    until: float = 0.0  # Clock time it goes away at.
+class WhichKey:
+    what: str  # 'all' (the ? popup) or 'g' (the prefix waiting for its next key).
 
 
-class Errline(NamedTuple):
-    text: str  # A bad value's message, shown under the entry's panel.
-    until: float  # Clock time it goes away at.
+Overlay = Search | CommandLine | LogView | Helper | WhichKey
 
-
-@dataclass(frozen=True)
-class ActivityLine:
-    kind: str  # The entry's kind ('' for none) and name, so :log can jump there.
-    name: str
-    text: str
-    cls: str = ''  # Its colour, as the design's classes: g ok, r bad, c live, y warn, dim.
-    time: str = ''  # The time of day it happened, as shown: '09:41:03'.
-    at: float = 0.0  # NavState.clock() when it happened, for the fresh highlight.
-
-
-def clock_text(seconds: float) -> str:
-    """A time of day in seconds since midnight as 'HH:MM:SS' (the design's now())."""
-    whole = int(seconds) % 86400
-    return f'{whole // 3600:02d}:{whole // 60 % 60:02d}:{whole % 60:02d}'
-
-
-class Running(NamedTuple):
-    """Something an entry has running, as the tab row, the top bar and the Here column show it."""
-
-    glyph: str  # '◉' an echo, '↻' a repeating publish, a frame of the '◐◓◑◒' spinner for a goal executing.
-    label: str  # The Here column's words: 'echoing', '10 Hz', 'running'.
-    tone: str  # The theme token it is drawn in: 'live' or 'ok'.
+# The keymap mode of each overlay that takes the keys as a list (which-key sits on top of the mode below).
+OVERLAY_MODES = {Helper: 'helper', CommandLine: 'command', LogView: 'activity', Search: 'search'}
 
 
 class Footer(NamedTuple):
@@ -186,254 +79,205 @@ class Footer(NamedTuple):
     helper: str  # 'Quaternion' when the row under the cursor has a helper, else ''.
 
 
-class EntryProvider:
-    """What an entry holds and does. NavState asks; each entry kind subclasses it (ros_tui/ui/entries/).
-
-    The default gives every entry the design's areas, no rows, no modes and no verbs. Hooks that
-    take `nav` may change it (log, toast, push undo, open a tab); the others only answer.
-    """
-
-    def for_tab(self, tab: Tab) -> 'EntryProvider':
-        """The provider that holds this tab's entry: itself, unless it routes by kind
-        (entries.EntryRouter). Views use it to reach an entry kind's own data, such as a node's
-        parameters."""
-        return self
-
-    def on_open(self, nav: 'NavState', tab: Tab) -> None:
-        """A tab was opened or gone to."""
-
-    def on_close(self, nav: 'NavState', tab: Tab) -> list[str]:
-        """Its tab is being closed: stop what nothing could stop once it is gone (an echo, a
-        repeat). Returns what it stopped, for the log line ('echo stopped'). A running goal keeps
-        running: canceling it would be a send."""
-        return []
-
-    def mode(self, tab: Tab) -> str | None:
-        """The entry's mode, when its kind has them (a topic's 'echo' or 'publish')."""
-        return None
-
-    def screen(self, tab: Tab) -> str:
-        """The key the area pick is remembered under, and that AREAS is indexed by."""
-        mode = self.mode(tab)
-        return f'{tab.kind}:{mode}' if mode else tab.kind
-
-    def areas(self, tab: Tab) -> tuple[Area, ...]:
-        return AREAS.get(self.screen(tab), ())
-
-    def row_count(self, tab: Tab, area: Area) -> int:
-        return 0
-
-    def start_edit(self, tab: Tab, area: Area, row: int, clear: bool) -> Editing | None:
-        """An Editing for the row, or None when it can't be edited."""
-        return None
-
-    def commit_edit(self, tab: Tab, editing: Editing) -> Commit:
-        return Commit(True, f'kept {editing.field or "the value"}')
-
-    def activate_row(self, nav: 'NavState', tab: Tab, area: Area, row: int, how: str) -> bool:
-        """enter on a row, before it is edited: open an interface, show / hide a field, fold or
-        unfold a nested message or list. True if done (then the row isn't edited)."""
-        return False
-
-    def leave_area(self, tab: Tab, area: Area) -> str | None:
-        """esc out of an area: a log line instead of "up one layer" (e.g. a frozen echo goes live)."""
-        return None
-
-    def esc_label(self, tab: Tab, area: Area) -> str | None:
-        """The footer's esc label inside an area, when it isn't the default ('go live')."""
-        return None
-
-    def enter_label(self, tab: Tab, area: Area, row: int) -> str | None:
-        """The footer's enter label on a row, when it isn't the area's ('unfold' on a folded row)."""
-        return None
-
-    def helper_name(self, tab: Tab, area: Area, row: int) -> str | None:
-        """'Quaternion' when the row has a field helper."""
-        return None
-
-    def label_vars(self, tab: Tab | None) -> dict[str, Any]:
-        """Values for keymap labels, e.g. the repeat rate in "repeat at {rate} Hz"."""
-        return {'rate': f'{PUBLISH_DEFAULT_RATE_HZ:g}'}
-
-    def running(self) -> dict[Tab, tuple[Running, ...]]:
-        """What runs in this provider's entries (echoes, repeats, goals), by entry, open or not."""
-        return {}
-
-    def tick(self, nav: 'NavState') -> bool:
-        """The clock ticked: take in what arrived (an echo's messages). True when the views should redraw."""
-        return False
-
-    def verb(self, nav: 'NavState', tab: Tab | None, name: str, how: str, arg: Any = None) -> bool:
-        """Run an entry verb: primary, secondary, repeat, rate, set_rate, toggle_mode, helper,
-        helper_apply, helper_key, history_older, history_newer, yank, paste, and on field rows fold,
-        unfold, add_item, delete_item. True if handled."""
-        if name == 'toggle_mode':
-            nav.log_line(how, 'only topics have Echo / Publish')
-            return True
-        if name == 'helper':
-            nav.show_toast('no helper for this field — fields with one show [f …]', 'bad')
-            nav.log_line(how, 'no helper on this field')
-            return True
-        if name in ('repeat', 'rate', 'set_rate') and (tab is None or tab.kind != 'topics'):
-            nav.log_line(how, 'repeating is for topics')
-            if name == 'set_rate':
-                nav.show_toast(':rate works in a topic tab', 'bad')
-            return True
-        return False
-
-    def undo(self, nav: 'NavState', entry: UndoEntry) -> str:
-        """Undo a change this provider pushed; returns the log line."""
-        return 'undid it'
-
-
 class Press(NamedTuple):
     key: str  # Canonical (keymap.normalize_key).
     char: str | None  # What it types, if anything.
     how: str  # How it reads in the log: 'esc', '^s', 'j'.
+    arg: Any = None  # The argument its keymap row gives the action (keymap.Run.arg).
 
 
 @dataclass
 class NavState:
-    provider: EntryProvider = field(default_factory=EntryProvider)
-    clock: Callable[[], float] = lambda: 0.0  # Seconds; the app passes the bridge's now().
-    wall: Callable[[], float] = lambda: 0.0  # The time of day in seconds; the app passes the bridge's time_of_day().
-    catalog: dict[str, list[CatalogItem]] = field(default_factory=lambda: {kind: [] for kind in KINDS})
+    new_entry: Callable[[Tab], Entry] = Entry  # Makes a tab's entry; the app's is entries.kinds.entry_factory.
+    feedback: Feedback = field(default_factory=Feedback)  # The log, toast, errlines, activity and send flash.
+    catalog: Catalog = field(default_factory=Catalog)
     tabs: list[Tab] = field(default_factory=list)
     active: int = -1  # -1 is the ☰ list (tab 0).
     layer: str = IN
     tab_cur: int = -1  # The cursor on the tab row (layer TABS).
     chip: int = -1  # The kind filter on the ☰ list: -1 all, else an index into KINDS.
     list_cur: int = 0
-    area_idx: dict[tuple[str, str], int] = field(default_factory=dict)  # (entry key, screen) -> area.
-    row_idx: dict[tuple[str, str], int] = field(default_factory=dict)  # (entry key, area id) -> row.
+    entries: dict[Tab, Entry] = field(default_factory=dict)  # Every entry opened so far, its tab open or not.
     editing: Editing | None = None
-    search: Search | None = None
-    cmd: CommandLine | None = None
-    logv: LogView | None = None
-    helper: Helper | None = None
-    which_key: str | None = None  # 'all' (the ? popup), 'g' (the prefix popup) or None.
-    pending: str = ''  # A typed prefix waiting for its next key ('g').
+    overlay: Overlay | None = None  # What sits on top and has the keys.
     undo_stack: list[UndoEntry] = field(default_factory=list)
-    errlines: dict[str, Errline] = field(default_factory=dict)  # Entry key -> its current error line.
-    log: list[tuple[str, str]] = field(default_factory=list)  # (key, what happened), newest first.
-    toast: Toast | None = None
-    activity: list[ActivityLine] = field(default_factory=list)  # Newest first.
-    fresh_shown: int = 0  # How many activity lines were fresh at the last tick, so it redraws when one fades.
     register: Register | None = None  # What y copied, for p (one, app-wide).
-    flash: tuple[str, float] | None = None  # (entry key, clock time it ends) of the primary button's send flash.
     quit: bool = False  # :q asked to leave; the app acts on it.
+    _area_idx: dict[tuple[Tab, str], int] = field(default_factory=dict)  # (tab, its entry's mode) -> area.
+    _row_idx: dict[tuple[Tab, str], int] = field(default_factory=dict)  # (tab, area id) -> row.
 
-    # ---------- the catalogue ----------
-    def set_catalog(self, graph: Any, publishers: Mapping[str, int] | None = None) -> None:
-        """Feed the ☰ list from a GraphSnapshot (or anything with topics / services / actions / nodes
-        of entries with a name and `types` or `type`). `publishers` counts a topic's publishers."""
-        publishers = publishers or {}
-        for kind in KINDS:
-            self.catalog[kind] = [
-                CatalogItem(entry.name, _type_of(kind, entry), publishers.get(entry.name, getattr(entry, 'publishers', 0)))
-                for entry in getattr(graph, kind, ())]
-        self.list_cur = _clamp(self.list_cur, len(self.home_rows()) - 1)
+    # ---------- driving it ----------
+    def handle_key(self, key: str) -> bool:
+        """Route one key (a textual key name or a character). False when nothing wanted it."""
+        key = normalize_key(key)
+        mode = self.input_mode()
+        how = key_display(key)
+        if mode == 'g':  # The key after g resolves the prefix, whatever it is.
+            self.overlay = None
+            how = 'g' + how
+        run = keymap.lookup(self, mode, key)
+        if run:
+            ACTIONS[run.action](self, Press(key, key_char(key), how, run.arg))
+            return True
+        if mode == 'g':
+            self.feedback.log_line(how, 'no such key')
+            return True
+        if mode != 'normal':
+            return True  # Overlays and insert are modal: they swallow what they don't use.
+        if key_char(key) is None:
+            return False
+        if self.layer != TABS:
+            self.feedback.hint(how)
+        return True
 
-    def item(self, tab: Tab) -> CatalogItem | None:
-        return next((i for i in self.catalog.get(tab.kind, ()) if i.name == tab.name), None)
+    def click(self, target: tuple[str, Any] | None, on_popup: bool = False) -> None:
+        """A click on what a view tagged with `target`, (what, arg) as in `CLICKS` (None where a
+        click does nothing). It does what the keys would, and the log reads "click".
 
-    def home_rows(self) -> list[tuple[str, CatalogItem]]:
-        """The ☰ list: (kind, item), grouped by kind, filtered by the chip."""
-        kinds = KINDS if self.chip < 0 else (KINDS[self.chip],)
-        return [(kind, item) for kind in kinds for item in self.catalog[kind]]
+        An overlay (search, :log, the command line, the helper, which-key, the g popup) takes only
+        clicks on itself (`on_popup`); a click anywhere else closes it as esc does, and does nothing
+        else. A click while typing a value keeps it first, as esc does, except on the primary
+        button: that sends, as ^s does in insert."""
+        if self.overlay is not None and not on_popup:
+            self._close_overlay('click')
+            return
+        if target is None:
+            return
+        what, arg = target
+        if self.layer == EDIT and target != ('verb', 'primary'):
+            self._commit_edit('esc')
+        CLICKS[what](self, arg)
 
-    def is_open(self, kind: str, name: str) -> bool:
-        return Tab(kind, name) in self.tabs
+    def tick(self) -> str:
+        """Let the entries take in what arrived (echoes), and expire what is timed (Feedback.tick).
+        What changed, so the views redraw: 'all', 'entries' (only what the entries show: an echo's
+        values, a goal's spinner; no view moves or changes size) or '' (nothing)."""
+        changed = any([entry.tick(self) for entry in self.entries.values()])  # A list: every entry ticks.
+        return 'all' if self.feedback.tick() else 'entries' if changed else ''
 
-    def search_rows(self) -> list[tuple[str, CatalogItem]]:
-        q = self.search.q.lower() if self.search else ''
-        return [(kind, item) for kind in KINDS for item in self.catalog[kind]
-                if not q or q in item.name.lower() or q in item.type.lower()]
+    def set_catalog(self, graph: Any) -> None:
+        """Feed the ☰ list from a GraphSnapshot (see Catalog.set)."""
+        self.catalog.set(graph)
+        self.list_cur = _clamp(self.list_cur, len(self.catalog.rows(self.chip)) - 1)
 
     # ---------- where we are ----------
     @property
     def tab(self) -> Tab | None:
         return self.tabs[self.active] if 0 <= self.active < len(self.tabs) else None
 
+    def shown(self, kind: type) -> Any:
+        """The overlay if it is a `kind` (Search, CommandLine, LogView, Helper, WhichKey), else None."""
+        return self.overlay if isinstance(self.overlay, kind) else None
+
+    def entry(self, tab: Tab) -> Entry:
+        """The entry of `tab`: made the first time it is asked for, then kept, also after its tab
+        closes (its edits, history and echo are there when it opens again)."""
+        entry = self.entries.get(tab)
+        if entry is None:
+            entry = self.entries[tab] = self.new_entry(tab)
+        return entry
+
     def entry_mode(self) -> str | None:
-        return self.provider.mode(self.tab) if self.tab else None
+        return self.entry(self.tab).mode or None if self.tab else None
+
+    def is_open(self, kind: str, name: str) -> bool:
+        return Tab(kind, name) in self.tabs
 
     def areas(self) -> tuple[Area, ...]:
-        return self.provider.areas(self.tab) if self.tab else ()
+        return self.entry(self.tab).areas() if self.tab else ()
 
     def area_index(self) -> int:
         areas = self.areas()
         if not areas:
             return 0
-        return min(self.area_idx.get((self.tab.key, self.provider.screen(self.tab)), 0), len(areas) - 1)
+        return min(self._area_idx.get((self.tab, self.entry(self.tab).mode), 0), len(areas) - 1)
 
     def area(self) -> Area | None:
         areas = self.areas()
         return areas[self.area_index()] if areas else None
 
-    def set_area(self, index: int) -> None:
-        self.area_idx[(self.tab.key, self.provider.screen(self.tab))] = index
-
     def row_count(self, area: Area | None = None) -> int:
         area = area or self.area()
-        return self.provider.row_count(self.tab, area) if self.tab and area else 0
+        return self.entry(self.tab).row_count(area) if self.tab and area else 0
 
     def row_index(self, area: Area | None = None) -> int:
         """The current row of the area, kept within its rows (they can change when the bridge answers)."""
         area = area or self.area()
         if not self.tab or not area:
             return 0
-        return _clamp(self.row_idx.get((self.tab.key, area.id), 0), self.row_count(area) - 1)
-
-    def set_row(self, index: int, area: Area | None = None) -> None:
-        area = area or self.area()
-        self.row_idx[(self.tab.key, area.id)] = index
+        return _clamp(self._row_idx.get((self.tab, area.id), 0), self.row_count(area) - 1)
 
     def running(self, kind: str, name: str) -> tuple[Running, ...]:
         """What the entry has running (◉ echoing, ↻ 10 Hz), for its tab, list row and search row."""
-        return self.provider.running().get(Tab(kind, name), ())
+        entry = self.entries.get(Tab(kind, name))
+        return entry.running() if entry else ()
 
     def running_all(self) -> list[tuple[Tab, Running]]:
-        """Everything running, for the top bar."""
-        return [(tab, marker) for tab, markers in self.provider.running().items() for marker in markers]
+        """Everything running, for the top bar, in KINDS order."""
+        tabs = sorted(self.entries, key=lambda tab: KINDS.index(tab.kind) if tab.kind in KINDS else len(KINDS))
+        return [(tab, marker) for tab in tabs for marker in self.entries[tab].running()]
+
+    def editing_in(self, area_id: str) -> Editing | None:
+        """The value being typed in the area (or editor) `area_id`, or None."""
+        editing = self.editing
+        return editing if self.layer == EDIT and editing is not None and editing.area == area_id else None
 
     def helper_name(self) -> str | None:
-        """The helper of the field under the cursor (message areas only), as the design's helperAt()."""
+        """The helper of the field under the cursor (areas with helpers only)."""
         area = self.area()
-        if self.layer == TABS or area is None or area.id != 'msg':
+        if self.layer == TABS or area is None or not area.helpers:
             return None
-        return self.provider.helper_name(self.tab, area, self.row_index(area))
+        return self.entry(self.tab).helper_name(area, self.row_index(area))
 
     def label_vars(self) -> dict[str, Any]:
-        return {'rate': '', 'helper': self.helper_name() or '', 'jump': self.helper.jump_keys() if self.helper else '',
-                **self.provider.label_vars(self.tab)}
+        helper = self.shown(Helper)
+        return {'rate': '', 'helper': self.helper_name() or '', 'jump': helper.jump_keys() if helper else '',
+                **(self.entry(self.tab).label_vars() if self.tab else {})}
 
     def list_mode(self) -> str:
-        """The keymap mode whose keys "Keys right now" lists: the topmost overlay, insert or normal."""
-        if self.helper:
-            return 'helper'
-        if self.cmd:
-            return 'command'
-        if self.logv:
-            return 'activity'
-        if self.search:
-            return 'search'
-        return 'insert' if self.layer == EDIT else 'normal'
+        """The keymap mode whose keys "Keys right now" lists: the overlay's, insert or normal."""
+        return OVERLAY_MODES.get(type(self.overlay)) or ('insert' if self.layer == EDIT else 'normal')
 
     def input_mode(self) -> str:
-        """The keymap mode that gets the next key: the popups (? and g…) sit on top of list_mode."""
-        if self.which_key == 'all':
-            return 'whichkey'
-        mode = self.list_mode()
-        return 'g' if mode == 'normal' and self.pending == 'g' else mode
+        """The keymap mode that gets the next key: the which-key popups (? and g…) sit on top of list_mode."""
+        which = self.shown(WhichKey)
+        if which:
+            return 'g' if which.what == 'g' else 'whichkey'
+        return self.list_mode()
 
     # ---------- the footer ----------
-    def mode_name(self) -> str:
-        """The footer's mode badge: the :log view keeps NORMAL."""
+    def footer(self) -> Footer:
+        which = self.shown(WhichKey)
+        hide = self.shown(Search) is not None or which == WhichKey('all')
+        helper = None
+        if not (hide or self.shown(Helper) or self.shown(LogView) or self.layer == EDIT):
+            helper = self.helper_name()
         mode = self.list_mode()
-        return 'normal' if mode == 'activity' else mode
+        return Footer('normal' if mode == 'activity' else mode,  # The :log view keeps NORMAL.
+                      self._path(), '' if hide else self._esc_label(), '' if hide else self._enter_label(),
+                      'g' if which == WhichKey('g') else '', helper or '')
 
-    def path(self) -> tuple[str, ...]:
+    def summary(self) -> dict[str, Any]:
+        """Plain data for the harness's state JSON and for tests."""
+        foot = self.footer()
+        search, cmd, which, log = self.shown(Search), self.shown(CommandLine), self.shown(WhichKey), self.feedback.log
+        toast = self.feedback.toast
+        return {
+            'layer': self.layer, 'mode': foot.mode, 'path': list(foot.path), 'esc': foot.esc,
+            'enter': foot.enter, 'pending': foot.pending, 'active': self.active, 'tab_cur': self.tab_cur,
+            'tabs': [tab.name for tab in self.tabs], 'entry_mode': self.entry_mode(), 'chip': self.chip,
+            'list_cur': self.list_cur,
+            'area': self.area().id if self.tab and self.area() else None,
+            'row': self.row_index() if self.tab else None,
+            'overlay': type(self.overlay).__name__ if self.overlay else None,
+            'overlay_cur': getattr(self.overlay, 'cur', None),  # The picked row of search, :, :log.
+            'search': search.q if search else None, 'cmd': cmd.q if cmd else None,
+            'which_key': which.what if which else None, 'log': log[0] if log else None,
+            'toast': [toast.text, toast.kind] if toast else None,
+            'register': f'{self.register.label} from {self.register.source}' if self.register else None,
+        }
+
+    def _path(self) -> tuple[str, ...]:
         parts = ['tabs']
         if self.layer == TABS:
             return tuple(parts)
@@ -448,26 +292,26 @@ class NavState:
             return tuple(parts)
         return tuple(parts) + ('editing',)
 
-    def esc_label(self) -> str:
-        if self.helper:
+    def _esc_label(self) -> str:
+        if self.shown(Helper):
             return 'cancel'
-        if self.logv:
+        if self.shown(LogView):
             return 'close'
         if self.layer == AREA and self.tab:
-            label = self.provider.esc_label(self.tab, self.area())
+            label = self.entry(self.tab).esc_label(self.area())
             return label or ('pick another area' if len(self.areas()) > 1 else 'back out')
         return {EDIT: 'keep it', IN: 'tab row', TABS: ''}[self.layer]
 
-    def enter_label(self) -> str:
-        if self.helper:
+    def _enter_label(self) -> str:
+        if self.shown(Helper):
             return 'apply'
-        if self.logv:
+        if self.shown(LogView):
             return 'go there'
         if self.layer == TABS:
             return 'go in'
         if self.layer == IN:
             if not self.tab:
-                rows = self.home_rows()
+                rows = self.catalog.rows(self.chip)
                 return f'open {rows[self.list_cur][1].name}' if 0 <= self.list_cur < len(rows) else ''
             area = self.area()
             return f'into {area.title.lower()}' if area else ''
@@ -475,146 +319,71 @@ class NavState:
             area = self.area()
             if area is None:
                 return ''
-            return self.provider.enter_label(self.tab, area, self.row_index(area)) or area.enter
+            return self.entry(self.tab).enter_label(area, self.row_index(area)) or area.enter
         return 'keep it'
 
-    def footer(self) -> Footer:
-        hide = self.search is not None or self.which_key == 'all'
-        helper = self.helper_name() if not (hide or self.helper or self.logv or self.layer == EDIT) else None
-        return Footer(self.mode_name(), self.path(), '' if hide else self.esc_label(),
-                      '' if hide else self.enter_label(), self.pending, helper or '')
-
-    def summary(self) -> dict[str, Any]:
-        """Plain data for the harness's state JSON and for tests."""
-        foot = self.footer()
-        return {
-            'layer': self.layer, 'mode': foot.mode, 'path': list(foot.path), 'esc': foot.esc,
-            'enter': foot.enter, 'pending': foot.pending, 'active': self.active, 'tab_cur': self.tab_cur,
-            'tabs': [tab.name for tab in self.tabs], 'chip': self.chip, 'list_cur': self.list_cur,
-            'area': self.area().id if self.tab and self.area() else None,
-            'row': self.row_index() if self.tab else None,
-            'search': self.search.q if self.search else None, 'cmd': self.cmd.q if self.cmd else None,
-            'which_key': self.which_key, 'log': self.log[0] if self.log else None,
-            'toast': [self.toast.text, self.toast.kind] if self.toast else None,
-            'register': f'{self.register.label} from {self.register.source}' if self.register else None,
-        }
-
-    # ---------- feedback ----------
-    def log_line(self, how: str, what: str) -> None:
-        self.log.insert(0, (how, what))
-        del self.log[NAV_LOG_LINES:]
-
-    def show_toast(self, text: str, kind: str = '') -> None:
-        self.toast = Toast(text, kind, self.clock() + NAV_TOAST_S)
-
-    def errline(self, tab: Tab) -> str:
-        line = self.errlines.get(tab.key)
-        return line.text if line else ''
-
-    def report_error(self, tab: Tab, message: str) -> None:
-        """A bad value or a blocked send (the design's inl): an errline under the entry's panel and a
-        red activity line."""
-        self.errlines[tab.key] = Errline(message, self.clock() + NAV_ERRLINE_S)
-        self.add_activity(tab, f'✗ {message}', 'r')
-
-    def tick(self) -> bool:
-        """Let the entries take in what arrived (echoes), and expire what is timed (the toast,
-        errlines, the send flash, the highlight of fresh activity lines). True when something
-        changed, so the views redraw."""
-        changed = self.provider.tick(self)
-        now = self.clock()
-        expired = [key for key, line in self.errlines.items() if now >= line.until]
-        for key in expired:
-            del self.errlines[key]
-        if self.toast and now >= self.toast.until:
-            self.toast = None
-            changed = True
-        if self.flash and now >= self.flash[1]:
-            self.flash = None
-            changed = True
-        # A new line is drawn by whatever added it; only its highlight fading needs a redraw.
-        fresh = self.fresh_lines()
-        faded, self.fresh_shown = fresh < self.fresh_shown, fresh
-        return changed or faded or bool(expired)
-
-    def add_activity(self, tab: Tab | None, text: str, cls: str = '') -> None:
-        self.activity.insert(0, ActivityLine(tab.kind if tab else '', tab.name if tab else '', text, cls,
-                                             clock_text(self.wall()), self.clock()))
-        del self.activity[NAV_ACTIVITY_MAX:]
-
-    def fresh_lines(self) -> int:
-        """How many of the newest activity lines are fresh (highlighted for NAV_ACTIVITY_FRESH_S)."""
-        now = self.clock()
-        return next((i for i, line in enumerate(self.activity) if now - line.at >= NAV_ACTIVITY_FRESH_S),
-                    len(self.activity))
-
-    def is_fresh(self, line: ActivityLine) -> bool:
-        return self.clock() - line.at < NAV_ACTIVITY_FRESH_S
-
-    def flash_send(self, tab: Tab) -> None:
-        """Something went out on space / ^s: the entry's primary button flashes for NAV_FLASH_S."""
-        self.flash = (tab.key, self.clock() + NAV_FLASH_S)
-
-    def flashing(self, tab: Tab) -> bool:
-        return self.flash is not None and self.flash[0] == tab.key and self.clock() < self.flash[1]
-
-    def hint(self, how: str) -> None:
-        self.log_line(how, f'nothing on "{how}" here — ? shows the keys')
-
-    # ---------- the key router ----------
-    def handle_key(self, key: str) -> bool:
-        """Route one key (a textual key name or a character). False when nothing wanted it."""
-        key = normalize_key(key)
-        mode = self.input_mode()
-        how = key_display(key)
-        if mode == 'g':  # The key after g resolves the prefix, whatever it is.
-            self.pending = ''
-            self.which_key = None
-            how = 'g' + how
-        press = Press(key, key_char(key), how)
-        action = keymap.lookup(self, mode, key)
-        if action:
-            ACTIONS[action](self, press)
-            return True
-        if mode == 'g':
-            self.log_line(how, 'no such key')
-            return True
-        if mode != 'normal':
-            return True  # Overlays and insert are modal: they swallow what they don't use.
-        if press.char is None:
-            return False
-        if self.layer != TABS:
-            self.hint(press.how)
-        return True
-
-    # ---------- tabs ----------
-    def activate(self, index: int, how: str, quiet: bool = False) -> None:
-        self.active = index
-        self.layer = IN
-        self.editing = None
-        if not quiet:
-            self.log_line(how, '☰ the list' if index < 0 else f'tab {index + 1}: {self.tabs[index].name}')
+    # ---------- what entries call ----------
+    def set_row(self, index: int, area: Area | None = None) -> None:
+        area = area or self.area()
+        self._row_idx[(self.tab, area.id)] = index
 
     def open_entity(self, kind: str, name: str, how: str) -> None:
+        """Open (or go to) the tab of `name`, inside it at its area pick."""
         tab = Tab(kind, name)
         is_new = tab not in self.tabs
         if is_new:
             self.tabs.append(tab)
         index = self.tabs.index(tab)
-        self.provider.on_open(self, tab)
-        self.search = None
+        self.entry(tab).on_open(self)
+        if self.shown(Search):
+            self.overlay = None
         self.active = index
         self.layer = IN
         self.editing = None
-        self.log_line(how, f'{"opened" if is_new else "went to"} {name} (tab {index + 1})')
+        self.feedback.log_line(how, f'{"opened" if is_new else "went to"} {name} (tab {index + 1})')
 
-    def close_tab(self, index: int, how: str) -> None:
+    def start_edit(self, how: str, clear: bool = False) -> bool:
+        """Edit the row under the cursor (the AREA layer). False when the row isn't editable."""
+        area = self.area()
+        if self.tab is None or area is None:
+            return False
+        editing = self.entry(self.tab).start_edit(area, self.row_index(area), clear)
+        if editing is None:
+            return False
+        self.begin_edit(editing)
+        self.feedback.log_line(how, f'{"clear and edit" if clear else "edit"} {editing.field} {editing.note}')
+        return True
+
+    def begin_edit(self, editing: Editing) -> None:
+        """Go into insert, typing `editing` (an entry's own editor, such as the repeat rate, starts it
+        this way too); keeping it returns to `editing.back`, by default the layer it starts on."""
+        if editing.back is None:
+            editing.back = self.layer
+        self.editing = editing
+        self.layer = EDIT
+
+    def push_undo(self, entry: UndoEntry) -> None:
+        self.undo_stack.append(entry)
+
+    def drop_undo(self, gone: Callable[[UndoEntry], bool]) -> None:
+        """Forget the undo steps `gone` picks (a change that can't be undone any more)."""
+        self.undo_stack[:] = [entry for entry in self.undo_stack if not gone(entry)]
+
+    # ---------- tabs ----------
+    def _activate(self, index: int, how: str, quiet: bool = False) -> None:
+        self.active = index
+        self.layer = IN
+        self.editing = None
+        if not quiet:
+            self.feedback.log_line(how, '☰ the list' if index < 0 else f'tab {index + 1}: {self.tabs[index].name}')
+
+    def _close_tab(self, index: int, how: str) -> None:
         if index < 0:
-            self.log_line(how, 'the ☰ list always stays')
+            self.feedback.log_line(how, 'the ☰ list always stays')
             return
         tab = self.tabs.pop(index)
-        stopped = self.provider.on_close(self, tab)
-        self.undo_stack.append(UndoEntry(ANYWHERE, CLOSE, (tab, index)))
+        stopped = self.entry(tab).on_close(self)
+        self.push_undo(UndoEntry(None, lambda nav: self._reopen(tab, index)))
         if self.active == index:
             self.active = min(index, len(self.tabs) - 1)
         elif self.active > index:
@@ -624,40 +393,30 @@ class NavState:
         else:
             self.layer = IN
         self.editing = None
-        self.log_line(how, f'closed {tab.name} — {" · ".join(stopped + ["u reopens it"])}')
-        self.show_toast(f'closed {tab.name} · u undoes', 'info')
+        self.feedback.log_line(how, f'closed {tab.name} — {" · ".join(stopped + ["u reopens it"])}')
+        self.feedback.show_toast(f'closed {tab.name} · u undoes', 'info')
 
-    def step_tab(self, delta: int, how: str) -> None:
-        """H / L, gT / gt: the previous / next tab, wrapping through the ☰ list."""
-        self.activate(_cycle(self.active, delta, len(self.tabs)), how)
-
-    def goto_tab(self, digit: str) -> None:
+    def _goto_tab(self, digit: str) -> None:
         if digit == '0':
-            self.activate(-1, digit)
+            self._activate(-1, digit)
         elif int(digit) <= len(self.tabs):
-            self.activate(int(digit) - 1, digit)
+            self._activate(int(digit) - 1, digit)
         else:
-            self.log_line(digit, f'no tab {digit}')
+            self.feedback.log_line(digit, f'no tab {digit}')
 
-    # ---------- undo ----------
-    def push_undo(self, entry: UndoEntry) -> None:
-        self.undo_stack.append(entry)
-
-    def undo(self, how: str) -> None:
+    def _undo(self, how: str) -> None:
         """Undo your last change in this entry, or reopen the tab you just closed: a closed tab has
         no tab of its own to undo from, so any tab can reopen it."""
-        here = self.tab.key if self.tab else 'home'
         index = next((i for i in range(len(self.undo_stack) - 1, -1, -1)
-                      if self.undo_stack[i].owner in (ANYWHERE, here)), -1)
+                      if self.undo_stack[i].owner in (None, self.tab)), -1)
         if index < 0:
-            self.log_line(how, NOTHING_TO_UNDO)
-            self.show_toast(NOTHING_TO_UNDO, 'info')
+            self.feedback.log_line(how, NOTHING_TO_UNDO)
+            self.feedback.show_toast(NOTHING_TO_UNDO, 'info')
             return
-        entry = self.undo_stack.pop(index)
-        if entry.kind != CLOSE:
-            self.log_line(how, self.provider.undo(self, entry))
-            return
-        tab, at = entry.data
+        self.feedback.log_line(how, self.undo_stack.pop(index).revert(self))
+
+    def _reopen(self, tab: Tab, at: int) -> str:
+        """Undo closing `tab` (it was tab `at`): back in its place, or gone to if it is open again."""
         if tab in self.tabs:
             self.active = self.tabs.index(tab)
         else:
@@ -665,99 +424,89 @@ class NavState:
             self.tabs.insert(at, tab)
             self.active = at
         self.layer = IN
-        self.log_line(how, f'reopened {tab.name}')
+        return f'reopened {tab.name}'
 
     # ---------- layers ----------
-    def go_up(self, how: str) -> None:
+    def _go_up(self, how: str) -> None:
         if self.layer == EDIT:
-            self.commit_edit(how)
+            self._commit_edit(how)
         elif self.layer == AREA:
             self.layer = IN
-            self.log_line(how, self.provider.leave_area(self.tab, self.area()) or 'up one layer')
+            self.feedback.log_line(how, self.entry(self.tab).leave_area(self.area()) or 'up one layer')
         elif self.layer == IN:
             self.layer = TABS
             self.tab_cur = self.active
-            self.log_line(how, 'up to the tab row')
+            self.feedback.log_line(how, 'up to the tab row')
         else:
-            self.log_line(how, 'top layer — :q quits')
+            self.feedback.log_line(how, 'top layer — :q quits')
 
-    def go_down(self, how: str) -> None:
+    def _go_down(self, how: str) -> None:
         if self.layer == TABS:
-            self.activate(self.tab_cur, how)
+            self._activate(self.tab_cur, how)
         elif self.layer == IN:
             if not self.tab:
-                rows = self.home_rows()
+                rows = self.catalog.rows(self.chip)
                 if 0 <= self.list_cur < len(rows):
                     self.open_entity(rows[self.list_cur][0], rows[self.list_cur][1].name, how)
                 return
             area = self.area()
             if area is None:
-                self.log_line(how, 'nothing inside this tab yet')
+                self.feedback.log_line(how, 'nothing inside this tab yet')
                 return
             self.layer = AREA
-            self.log_line(how, f'inside {area.title.lower()}')
+            self.feedback.log_line(how, f'inside {area.title.lower()}')
         elif self.layer == AREA:
-            self.activate_row(how)
+            # enter on a row: the entry's own action first (fold a list, open an interface), else edit it.
+            if not self.entry(self.tab).activate_row(self, self.area(), self.row_index(), how) \
+                    and not self.start_edit(how):
+                self.feedback.log_line(how, 'nothing to edit here — esc goes back up')
         else:
-            self.commit_edit(how)
+            self._commit_edit(how)
 
-    def activate_row(self, how: str) -> None:
-        """enter on a row: the entry's own action first (fold a list, open an interface), else edit it."""
-        if self.provider.activate_row(self, self.tab, self.area(), self.row_index(), how):
+    def _enter_area(self, index: int, how: str) -> None:
+        """Go inside the entry's area at `index` (a click on its panel)."""
+        if self.tab is None or not 0 <= index < len(self.areas()):
             return
-        if not self.start_edit(how):
-            self.log_line(how, 'nothing to edit here — esc goes back up')
+        self._area_idx[(self.tab, self.entry(self.tab).mode)] = index
+        self.layer = AREA
+        self.feedback.log_line(how, f'inside {self.area().title.lower()}')
 
     # ---------- insert ----------
-    def start_edit(self, how: str, clear: bool = False) -> bool:
-        """Edit the row under the cursor (the AREA layer). False when the row isn't editable."""
-        area = self.area()
-        if self.tab is None or area is None:
-            return False
-        editing = self.provider.start_edit(self.tab, area, self.row_index(area), clear)
-        if editing is None:
-            return False
-        self.editing = editing
-        self.layer = EDIT
-        self.log_line(how, f'{"clear and edit" if clear else "edit"} {editing.field} {editing.note}')
-        return True
-
-    def commit_edit(self, how: str) -> bool:
+    def _commit_edit(self, how: str) -> bool:
         """Keep the typed value. On a bad value, esc drops it (keeping the old one) and anything else
         stays in insert with an error line. True when the edit ended."""
         editing = self.editing
         if editing is None:
             return True
-        result = self.provider.commit_edit(self.tab, editing)
+        result = self.entry(self.tab).commit_edit(editing)
         if not result.ok:
             return self._bad_value(how, result.text)
         if result.undo:
             self.push_undo(result.undo)
         if result.activity:
-            self.add_activity(self.tab, *result.activity)
-        self.errlines.pop(self.tab.key, None)
-        self.log_line(how, result.text)
+            self.feedback.add_activity(self.tab, *result.activity)
+        self.feedback.clear_error(self.tab)
+        self.feedback.log_line(how, result.text)
         self.editing = None
         self.layer = editing.back
         return True
 
     def _bad_value(self, how: str, message: str) -> bool:
         if how == 'esc':
-            self.log_line(how, f'✗ {message} — dropped, kept the old value')
-            self.show_toast(f'{message} — kept the old value', 'bad')
-            self.errlines.pop(self.tab.key, None)
+            self.feedback.refuse(how, f'{message} — kept the old value', f'✗ {message} — dropped, kept the old value')
+            self.feedback.clear_error(self.tab)
             self.layer = self.editing.back
             self.editing = None
             return True
-        self.log_line(how, f'✗ {message} — still editing (esc drops it)')
-        self.report_error(self.tab, message)
+        self.feedback.log_line(how, f'✗ {message} — still editing (esc drops it)')
+        self.feedback.report_error(self.tab, message)
         return False
 
-    def edit_step(self, how: str, delta: int) -> None:
+    def _edit_step(self, how: str, delta: int) -> None:
         """tab / shift+tab in insert: keep the value and edit the next / previous field, skipping
         rows that aren't edited (a folded message). Past the last one it edits the same field again."""
         row = self.editing.row
-        if not self.commit_edit(how):
+        if not self._commit_edit(how):
             return
         last = self.row_count() - 1
         for index in range(row + delta, last + 1 if delta > 0 else -1, delta):
@@ -767,281 +516,169 @@ class NavState:
         self.set_row(_clamp(row, last))
         self.start_edit(how)
 
-    def type_char(self, char: str) -> None:
+    def _type_char(self, char: str) -> None:
         if self.editing.fresh:
             self.editing.value = ''
             self.editing.fresh = False
         self.editing.value += char
 
-    def backspace(self) -> None:
+    def _backspace(self) -> None:
         self.editing.value = '' if self.editing.fresh else self.editing.value[:-1]
         self.editing.fresh = False
 
-    # ---------- verbs ----------
-    def verb(self, name: str, how: str, arg: Any = None) -> None:
-        if self.tab is None and name in ('yank', 'paste'):
-            self.log_line(how, 'open an entry first')
-            return
-        if not self.provider.verb(self, self.tab, name, how, arg):
-            self.log_line(how, 'nothing to do here')
-
-    def primary(self, how: str) -> None:
-        """space / ^s: the entry's one sending verb. In insert it keeps the value first."""
-        if self.tab is None:
-            return
-        if self.layer == EDIT and not self.commit_edit(how):
-            return
-        self.verb('primary', how)
-
-    def open_helper(self, how: str) -> None:
-        area = self.area()
-        if self.layer == IN and area and area.id == 'msg':
-            self.layer = AREA
-        self.verb('helper', how)
-
-    # ---------- moving ----------
-    def move_top(self, how: str) -> None:
-        if self.layer == IN and not self.tab:
-            self.list_cur = 0
-        elif self.layer == AREA:
-            self.set_row(0)
-        elif self.layer == TABS:
-            self.tab_cur = -1
-        self.log_line(how, 'to the top')
-
-    def move_bottom(self, how: str) -> None:
-        if self.layer == IN and not self.tab:
-            self.list_cur = max(0, len(self.home_rows()) - 1)
-        elif self.layer == AREA:
-            self.set_row(max(0, self.row_count() - 1))
-        elif self.layer == TABS:
-            self.tab_cur = len(self.tabs) - 1
-        self.log_line(how, 'to the bottom')
-
-    def step_tab_cursor(self, delta: int) -> None:
-        """h / l on the tab row: wraps from the last tab to ☰ and back."""
-        self.tab_cur = _cycle(self.tab_cur, delta, len(self.tabs))
-
-    def step_list(self, delta: int) -> None:
-        self.list_cur = _clamp(self.list_cur + delta, len(self.home_rows()) - 1)
-
-    def step_chip(self, delta: int, how: str) -> None:
-        """tab / shift+tab on the ☰ list: all › topics › services › actions › nodes › all."""
-        self.set_chip(_cycle(self.chip, delta, len(KINDS)), how)
-
-    def set_chip(self, chip: int, how: str) -> None:
-        """Filter the ☰ list by a kind chip (-1 all), the cursor on its first row."""
-        self.chip = chip
-        self.list_cur = 0
-        self.log_line(how, f'showing {"everything" if self.chip < 0 else KINDS[self.chip]}')
-
-    def step_area(self, delta: int) -> None:
-        count = len(self.areas())
-        if count:
-            self.set_area((self.area_index() + delta) % count)
-
-    def step_row(self, delta: int) -> None:
-        count = self.row_count()
-        if count:
-            self.set_row(_clamp(self.row_index() + delta, count - 1))
-
-    def edit_row(self, how: str, clear: bool = False) -> None:
+    def _edit_row(self, how: str, clear: bool = False) -> None:
         """i / a / c: edit the row under the cursor. From the area pick (IN) they go into the area first."""
         back = self.layer
         self.layer = AREA
         if not self.start_edit(how, clear):
             self.layer = back
-            self.hint(how)
+            self.feedback.hint(how)
 
-    # ---------- search ----------
-    def search_open(self, how: str) -> None:
-        self.search = Search()
-        self.log_line(how, 'search everything')
+    # ---------- verbs ----------
+    def _verb(self, name: str, how: str, arg: Any = None) -> None:
+        """Run the entry's verb `name`; where it has none (or on the ☰ list), say it isn't here."""
+        entry = self.entry(self.tab) if self.tab else None
+        run = entry.verbs().get(name) if entry else None
+        if run is not None:
+            run(self, how, arg)
+            return
+        if entry is None and name in ('yank', 'paste'):
+            self.feedback.log_line(how, 'open an entry first')
+            return
+        log, toast = NOT_HERE.get(name, ('nothing to do here', ''))
+        self.feedback.log_line(how, log)
+        if toast:
+            self.feedback.show_toast(toast, 'bad')
 
-    def search_close(self) -> None:
-        self.search = None
-        self.log_line('esc', 'search closed — back where you were')
+    def _primary(self, how: str) -> None:
+        """space / ^s: the entry's one sending verb. In insert it keeps the value first."""
+        if self.tab is None:
+            return
+        if self.layer == EDIT and not self._commit_edit(how):
+            return
+        self._verb('primary', how)
 
-    def search_step(self, delta: int) -> None:
-        self.search.cur = _clamp(self.search.cur + delta, len(self.search_rows()) - 1)
+    def _open_helper(self, how: str) -> None:
+        """f: the entry opens the helper of the field under the cursor (from the area pick it goes
+        into the area first)."""
+        area = self.area()
+        if self.layer == IN and area and area.helpers:
+            self.layer = AREA
+        if self.helper_name() is None:
+            self.feedback.refuse(how, 'no helper for this field — fields with one show [f …]', 'no helper on this field')
+            return
+        self._verb('helper', how)
 
-    def search_enter(self, how: str) -> None:
-        rows = self.search_rows()
-        if 0 <= self.search.cur < len(rows):
-            kind, item = rows[self.search.cur]
+    def _switch_mode(self, how: str, to: str | None = None) -> None:
+        """e, :echo, :pub, a click on the switch: switch the entry to mode `to`, or its next one (a
+        topic's Echo / Publish). What is being typed is kept first; the cursor goes back to the area pick."""
+        modes = self.entry(self.tab).modes() if self.tab else ()
+        if not modes:
+            self.feedback.log_line(how, 'only topics have Echo / Publish')
+            return
+        if self.layer == EDIT:
+            self._commit_edit(how)
+        entry = self.entry(self.tab)
+        entry.mode = to or modes[(modes.index(entry.mode) + 1) % len(modes) if entry.mode in modes else 0]
+        self.layer = IN
+        self.feedback.log_line(how, f'now in {entry.mode}')
+
+    # ---------- moving ----------
+    def _move_end(self, how: str, bottom: bool) -> None:
+        """gg / G: the first / last list row, area row or tab."""
+        if self.layer == IN and not self.tab:
+            self.list_cur = max(0, len(self.catalog.rows(self.chip)) - 1) if bottom else 0
+        elif self.layer == AREA:
+            self.set_row(max(0, self.row_count() - 1) if bottom else 0)
+        elif self.layer == TABS:
+            self.tab_cur = len(self.tabs) - 1 if bottom else -1
+        self.feedback.log_line(how, 'to the bottom' if bottom else 'to the top')
+
+    def _set_chip(self, chip: int, how: str) -> None:
+        """Filter the ☰ list by a kind chip (-1 all), the cursor on its first row."""
+        self.chip = chip
+        self.list_cur = 0
+        self.feedback.log_line(how, f'showing {"everything" if self.chip < 0 else KINDS[self.chip]}')
+
+    def _step_area(self, delta: int) -> None:
+        count = len(self.areas())
+        if count:
+            self._area_idx[(self.tab, self.entry(self.tab).mode)] = (self.area_index() + delta) % count
+
+    def _step_row(self, delta: int) -> None:
+        count = self.row_count()
+        if count:
+            self.set_row(_clamp(self.row_index() + delta, count - 1))
+
+    # ---------- overlays ----------
+    def _close_overlay(self, how: str) -> None:
+        """Close the overlay, as esc does there (a click outside it reads `how`)."""
+        overlay, self.overlay = self.overlay, None
+        if overlay == WhichKey('g'):
+            self.feedback.log_line(how, 'g canceled')
+        elif isinstance(overlay, Helper):
+            self.feedback.log_line('esc', 'helper closed, nothing changed')
+        elif isinstance(overlay, Search):
+            self.feedback.log_line('esc', 'search closed — back where you were')
+
+    def _open(self, overlay: Overlay, how: str = '', what: str = '') -> None:
+        self.overlay = overlay
+        if what:
+            self.feedback.log_line(how, what)
+
+    def _search_step(self, delta: int) -> None:
+        search = self.overlay
+        search.cur = _clamp(search.cur + delta, len(self.catalog.search(search.q)) - 1)
+
+    def _search_enter(self, how: str) -> None:
+        rows = self.catalog.search(self.overlay.q)
+        if 0 <= self.overlay.cur < len(rows):
+            kind, item = rows[self.overlay.cur]
             self.open_entity(kind, item.name, how)
 
-    def search_edit(self, text: str) -> None:
-        self.search.q = text
-        self.search.cur = 0
-
-    # ---------- command line ----------
-    def cmd_suggestions(self) -> list[tuple[str, str]]:
-        """The design's cmdSuggest(): prefix matches, or the one command once an argument is typed."""
-        q = self.cmd.q.lstrip() if self.cmd else ''
-        word = q.split(' ')[0]
-        return [c for c in COMMANDS if not q or (c[0].strip() == word if ' ' in q else c[0].startswith(word))
-                ][:MAX_SUGGESTIONS]
-
-    def _cmd_clamp(self) -> list[tuple[str, str]]:
-        suggestions = self.cmd_suggestions()
-        self.cmd.cur = min(self.cmd.cur, max(0, len(suggestions) - 1))
-        return suggestions
-
-    def cmd_edit(self, text: str) -> None:
-        self.cmd.q = text
-        self.cmd.cur = 0
-        self.cmd.moved = False
-
-    def cmd_backspace(self) -> None:
+    def _cmd_backspace(self) -> None:
         """Backspace on an empty command line closes it."""
-        if self.cmd.q:
-            self.cmd_edit(self.cmd.q[:-1])
+        if self.overlay.q:
+            self.overlay.edit(self.overlay.q[:-1])
         else:
-            self.cmd = None
+            self.overlay = None
 
-    def cmd_complete(self) -> None:
-        suggestions = self._cmd_clamp()
-        if ' ' not in self.cmd.q and suggestions:
-            self.cmd_edit(suggestions[self.cmd.cur][0])
+    def _cmd_enter(self) -> None:
+        """enter runs the picked command (CommandLine.picked). One that takes an argument stays open for it."""
+        text = self.overlay.picked()
+        self.overlay = None
+        if text.endswith(' '):
+            self.overlay = CommandLine(text)
+        elif text.strip():
+            name, *rest = text.split()
+            run = COMMANDS.get(name)
+            if run is None:
+                self.feedback.refuse(':' + name, f'unknown command :{name} — : then tab lists them', 'unknown command')
+            else:
+                run(self, name, ' '.join(rest))
 
-    def cmd_move(self, delta: int) -> None:
-        suggestions = self._cmd_clamp()
-        if suggestions:
-            self.cmd.cur = (self.cmd.cur + delta) % len(suggestions)
-            self.cmd.moved = True
+    def _list_kind(self, name: str) -> None:
+        """:topics … :nodes, :all: the ☰ list, showing only that kind (or everything)."""
+        self.chip = KINDS.index(name) if name in KINDS else -1
+        self.list_cur = 0
+        self._activate(-1, '', quiet=True)
+        self.feedback.log_line(':' + name, f'☰ lists {"everything" if name == "all" else name}')
 
-    def cmd_enter(self) -> None:
-        """enter runs the typed command, or the picked suggestion for a partial word ('se' runs
-        services) or picked with ↑↓. A command that takes an argument stays open for it."""
-        suggestions = self._cmd_clamp()
-        q = self.cmd.q
-        word = q.strip().split(' ')[0]
-        partial = q.strip() and not any(c[0].strip() == word for c in COMMANDS)
-        if suggestions and ' ' not in q and (self.cmd.moved or partial):
-            q = suggestions[self.cmd.cur][0]
-        self.cmd = None
-        if q.endswith(' '):
-            self.cmd = CommandLine(q)
-            return
-        self.run_command(q)
+    def _log_goto(self, index: int) -> None:
+        self.overlay.cur = _clamp(index, len(self.feedback.activity) - 1)
 
-    def run_command(self, text: str) -> None:
-        if not text.strip():
-            return
-        name, *rest = text.split()
-        arg = ' '.join(rest)
-        how = ':' + name
-        if name in KINDS or name == 'all':
-            self.chip = KINDS.index(name) if name in KINDS else -1
-            self.list_cur = 0
-            self.activate(-1, how, quiet=True)
-            self.log_line(how, f'☰ lists {"everything" if name == "all" else name}')
-        elif name == 'rate':
-            self.verb('set_rate', how, arg)
-        elif name in ('echo', 'pub'):
-            self.verb('toggle_mode', how, 'echo' if name == 'echo' else 'publish')
-        elif name == 'close':
-            self.close_tab(self.active, how)
-        elif name == 'help':
-            self.which_key = 'all'
-            self.log_line(how, 'showing the keys')
-        elif name in ('log', 'messages'):
-            self.logv = LogView()
-            self.log_line(':log', 'all activity')
-        elif name in ('q', 'quit'):
-            self.quit = True
-            self.log_line(':q', 'quit')
-        else:
-            self.show_toast(f'unknown command :{name} — : then tab lists them', 'bad')
-            self.log_line(how, 'unknown command')
-
-    # ---------- popups ----------
-    def g_prefix(self) -> None:
-        self.pending = 'g'
-        self.which_key = 'g'
-
-    def helper_close(self) -> None:
-        self.helper = None
-        self.log_line('esc', 'helper closed, nothing changed')
-
-    # ---------- activity log ----------
-    def log_goto(self, index: int) -> None:
-        self.logv.cur = _clamp(index, len(self.activity) - 1)
-
-    def log_enter(self) -> None:
-        line = self.activity[self.logv.cur] if self.logv.cur < len(self.activity) else None
-        self.logv = None
+    def _log_enter(self) -> None:
+        activity, cur = self.feedback.activity, self.overlay.cur
+        line = activity[cur] if cur < len(activity) else None
+        self.overlay = None
         if line and line.kind:
             self.open_entity(line.kind, line.name, 'enter')
 
-    # ---------- the mouse ----------
-    def click(self, target: tuple[str, Any] | None, on_popup: bool = False) -> None:
-        """A click on what a view tagged with `target`, (what, arg) as in `CLICKS` (None where a
-        click does nothing): the design's mousedown handler. It does what the keys would, and the
-        log reads "click".
-
-        A popup that has the keys (search, :log, the command line, the helper, which-key, the g
-        popup) takes only clicks on itself (`on_popup`); a click anywhere else closes it as esc
-        does, and does nothing else (the design's veil). A click while typing a value keeps it
-        first, as esc does, except on the primary button: that sends, as ^s does in insert."""
-        if self.list_mode() not in ('normal', 'insert') or self.which_key:
-            if not on_popup:
-                self.close_popup()
-                return
-        if target is None:
-            return
-        what, arg = target
-        if self.layer == EDIT and target != ('verb', 'primary'):
-            self.commit_edit('esc')
-        CLICKS[what](self, arg)
-
-    def close_popup(self) -> None:
-        """Close the popup that has the keys, as esc does there."""
-        if self.which_key == 'g':
-            self.pending = ''
-            self.log_line('click', 'g canceled')
-        self.which_key = None
-        if self.helper:
-            self.helper_close()
-        elif self.cmd:
-            self.cmd = None
-        elif self.logv:
-            self.logv = None
-        elif self.search:
-            self.search_close()
-
-    def enter_area(self, index: int, how: str) -> None:
-        """Go inside the entry's area at `index` (a click on its panel)."""
-        if self.tab is None or not 0 <= index < len(self.areas()):
-            return
-        self.set_area(index)
-        self.layer = AREA
-        self.log_line(how, f'inside {self.area().title.lower()}')
-
-    def click_mode(self, mode: str) -> None:
-        """A click on the Echo / Publish switch: switch to `mode`, if it isn't the mode already."""
-        if self.entry_mode() != mode:
-            self.verb('toggle_mode', 'click', mode)
-
-    def click_open(self, kind: str, name: str) -> None:
+    def _click_open(self, kind: str, name: str) -> None:
         """A click on a list row, a search match or an activity line: open its entry."""
-        self.logv = None
+        if self.shown(LogView):
+            self.overlay = None
         self.open_entity(kind, name, 'click')
-
-
-# What a click does, by the `what` of its target (NavState.click); the views tag what they draw
-# with a target through widgets.base.clickable.
-CLICKS: dict[str, Callable[['NavState', Any], None]] = {
-    'tab': lambda nav, index: nav.activate(index, 'click'),  # a tab, ☰ (-1) included
-    'close': lambda nav, index: nav.close_tab(index, 'click'),  # a tab's ×
-    'chip': lambda nav, chip: nav.set_chip(chip, 'click'),  # a kind chip on the ☰ list
-    'open': lambda nav, entry: nav.click_open(*entry),  # (kind, name): a row, a match, an activity line
-    'area': lambda nav, index: nav.enter_area(index, 'click'),  # a panel
-    'mode': lambda nav, mode: nav.click_mode(mode),  # 'echo' / 'publish' on the switch
-    'verb': lambda nav, name: nav.primary('click') if name == 'primary' else nav.verb(name, 'click'),  # a button
-    'search': lambda nav, _: nav.search_open('click'),  # the top bar's search box
-}
 
 
 def _clamp(index: int, last: int) -> int:
@@ -1054,104 +691,97 @@ def _cycle(index: int, delta: int, count: int) -> int:
     return (index + 1 + delta) % (count + 1) - 1
 
 
-def short_type(kind: str, type_name: str) -> str:
-    """The type as search results show it: 'String' for std_msgs/msg/String, 'node' for a node."""
-    return 'node' if kind == 'nodes' else type_name.rsplit('/', 1)[-1]
+# What a verb says where the entry doesn't offer it (and on the ☰ list): (the log line, a red toast or '').
+NOT_HERE = {
+    'repeat': ('repeating is for topics', ''),
+    'rate': ('repeating is for topics', ''),
+    'set_rate': ('repeating is for topics', ':rate works in a topic tab'),
+}
 
 
-def _type_of(kind: str, entry: Any) -> str:
-    """The type shown and searched: a GraphSnapshot node's types[0] is its namespace ('namespace /')."""
-    if hasattr(entry, 'type'):
-        return entry.type
-    types = getattr(entry, 'types', ())
-    if kind == 'nodes':
-        return f'namespace {types[0] if types else "/"}'
-    return types[0] if types else ''
+def _quit(nav: NavState) -> None:
+    nav.quit = True
+    nav.feedback.log_line(':q', 'quit')
 
 
-def _set(name: str, value: Any) -> Callable[[NavState, Press], None]:
-    return lambda nav, press: setattr(nav, name, value)
+# The `:` commands (command_line.COMMANDS lists them): name -> what it does, given (nav, name, argument).
+COMMANDS: dict[str, Callable[[NavState, str, str], None]] = {
+    **dict.fromkeys((*KINDS, 'all'), lambda nav, name, arg: nav._list_kind(name)),
+    'rate': lambda nav, name, arg: nav._verb('set_rate', ':rate', arg),
+    'echo': lambda nav, name, arg: nav._switch_mode(':echo', 'echo'),
+    'pub': lambda nav, name, arg: nav._switch_mode(':pub', 'publish'),
+    'close': lambda nav, name, arg: nav._close_tab(nav.active, ':close'),
+    'help': lambda nav, name, arg: nav._open(WhichKey('all'), ':help', 'showing the keys'),
+    **dict.fromkeys(('log', 'messages'), lambda nav, name, arg: nav._open(LogView(), ':log', 'all activity')),
+    **dict.fromkeys(('q', 'quit'), lambda nav, name, arg: _quit(nav)),
+}
 
+# What a click does, by the `what` of its target (NavState.click); the views tag what they draw
+# with a target through widgets.base.clickable.
+CLICKS: dict[str, Callable[[NavState, Any], None]] = {
+    'tab': lambda nav, index: nav._activate(index, 'click'),  # a tab, ☰ (-1) included
+    'close': lambda nav, index: nav._close_tab(index, 'click'),  # a tab's ×
+    'chip': lambda nav, chip: nav._set_chip(chip, 'click'),  # a kind chip on the ☰ list
+    'open': lambda nav, entry: nav._click_open(*entry),  # (kind, name): a row, a match, an activity line
+    'area': lambda nav, index: nav._enter_area(index, 'click'),  # a panel
+    # 'echo' / 'publish' on the switch, if it isn't the mode already
+    'mode': lambda nav, mode: nav.entry_mode() != mode and nav._switch_mode('click', mode),
+    'verb': lambda nav, name: nav._primary('click') if name == 'primary' else nav._verb(name, 'click'),  # a button
+    'search': lambda nav, _: nav._open(Search(), 'click', 'search everything'),  # the top bar's search box
+}
 
-# keymap action name -> what it does. Every action in keymap.KEYMAP is here, and nothing else (test_keymap).
+# keymap action name -> what it does, given the key (Press; `arg` from its keymap row). Every action
+# in keymap.KEYMAP is here, and nothing else (test_keymap).
 ACTIONS: dict[str, Callable[[NavState, Press], None]] = {
-    # popups
-    'which_key': _set('which_key', 'all'),
-    'which_key_close': _set('which_key', None),
-    'g_prefix': lambda nav, p: nav.g_prefix(),
-    'g_cancel': lambda nav, p: nav.log_line('esc', 'g canceled'),
-    # field helper: the entry opens it, hands it its keys and writes its value (entries/message.py)
-    'helper_key': lambda nav, p: nav.verb('helper_key', p.how, p.key),
-    'helper_apply': lambda nav, p: nav.verb('helper_apply', p.how),
-    'helper_close': lambda nav, p: nav.helper_close(),
+    # overlays
+    'which_key': lambda nav, p: nav._open(WhichKey('all')),
+    'g_prefix': lambda nav, p: nav._open(WhichKey('g')),
+    'g_cancel': lambda nav, p: nav.feedback.log_line('esc', 'g canceled'),
+    'close_overlay': lambda nav, p: nav._close_overlay(p.how),
+    # field helper: the entry opens it and writes its value (entries/message.py); its keys go to it
+    'helper_key': lambda nav, p: nav.overlay.press(p.key, p.char),
     # command line
-    'cmd_open': lambda nav, p: setattr(nav, 'cmd', CommandLine()),
-    'cmd_type': lambda nav, p: nav.cmd_edit(nav.cmd.q + p.char),
-    'cmd_back': lambda nav, p: nav.cmd_backspace(),
-    'cmd_complete': lambda nav, p: nav.cmd_complete(),
-    'cmd_up': lambda nav, p: nav.cmd_move(-1),
-    'cmd_down': lambda nav, p: nav.cmd_move(1),
-    'cmd_run': lambda nav, p: nav.cmd_enter(),
-    'cmd_cancel': _set('cmd', None),
+    'cmd_open': lambda nav, p: nav._open(CommandLine()),
+    'cmd_type': lambda nav, p: nav.overlay.edit(nav.overlay.q + p.char),
+    'cmd_back': lambda nav, p: nav._cmd_backspace(),
+    'cmd_complete': lambda nav, p: nav.overlay.complete(),
+    'cmd_move': lambda nav, p: nav.overlay.move(p.arg),
+    'cmd_run': lambda nav, p: nav._cmd_enter(),
     # activity log
-    'log_down': lambda nav, p: nav.log_goto(nav.logv.cur + 1),
-    'log_up': lambda nav, p: nav.log_goto(nav.logv.cur - 1),
-    'log_top': lambda nav, p: nav.log_goto(0),
-    'log_bottom': lambda nav, p: nav.log_goto(len(nav.activity)),
-    'log_enter': lambda nav, p: nav.log_enter(),
-    'log_close': _set('logv', None),
+    'log_step': lambda nav, p: nav._log_goto(nav.overlay.cur + p.arg),
+    'log_end': lambda nav, p: nav._log_goto(len(nav.feedback.activity) if p.arg else 0),
+    'log_enter': lambda nav, p: nav._log_enter(),
     # search
-    'search_open': lambda nav, p: nav.search_open(p.how),
-    'search_type': lambda nav, p: nav.search_edit(nav.search.q + p.char),
-    'search_back': lambda nav, p: nav.search_edit(nav.search.q[:-1]),
-    'search_down': lambda nav, p: nav.search_step(1),
-    'search_up': lambda nav, p: nav.search_step(-1),
-    'search_enter': lambda nav, p: nav.search_enter(p.how),
-    'search_close': lambda nav, p: nav.search_close(),
+    'search_open': lambda nav, p: nav._open(Search(), p.how, 'search everything'),
+    'search_type': lambda nav, p: nav.overlay.edit(nav.overlay.q + p.char),
+    'search_back': lambda nav, p: nav.overlay.edit(nav.overlay.q[:-1]),
+    'search_step': lambda nav, p: nav._search_step(p.arg),
+    'search_enter': lambda nav, p: nav._search_enter(p.how),
     # insert
-    'edit_keep': lambda nav, p: nav.commit_edit(p.how),
-    'edit_next': lambda nav, p: nav.edit_step(p.how, 1),
-    'edit_prev': lambda nav, p: nav.edit_step(p.how, -1),
-    'edit_back': lambda nav, p: nav.backspace(),
-    'edit_type': lambda nav, p: nav.type_char(p.char),
+    'edit_keep': lambda nav, p: nav._commit_edit(p.how),
+    'edit_step': lambda nav, p: nav._edit_step(p.how, p.arg),
+    'edit_back': lambda nav, p: nav._backspace(),
+    'edit_type': lambda nav, p: nav._type_char(p.char),
     # layers
-    'go_down': lambda nav, p: nav.go_down(p.how),
-    'go_up': lambda nav, p: nav.go_up(p.how),
-    # moving
-    'move_top': lambda nav, p: nav.move_top(p.how),
-    'move_bottom': lambda nav, p: nav.move_bottom(p.how),
-    'tab_cursor_next': lambda nav, p: nav.step_tab_cursor(1),
-    'tab_cursor_prev': lambda nav, p: nav.step_tab_cursor(-1),
-    'list_down': lambda nav, p: nav.step_list(1),
-    'list_up': lambda nav, p: nav.step_list(-1),
-    'chip_next': lambda nav, p: nav.step_chip(1, p.how),
-    'chip_prev': lambda nav, p: nav.step_chip(-1, p.how),
-    'area_next': lambda nav, p: nav.step_area(1),
-    'area_prev': lambda nav, p: nav.step_area(-1),
-    'row_down': lambda nav, p: nav.step_row(1),
-    'row_up': lambda nav, p: nav.step_row(-1),
-    'edit': lambda nav, p: nav.edit_row(p.how),
-    'clear': lambda nav, p: nav.edit_row(p.how, clear=True),
-    # field rows (fields.py): fold / unfold, add / delete a list element
-    'fold': lambda nav, p: nav.verb('fold', p.how),
-    'unfold': lambda nav, p: nav.verb('unfold', p.how),
-    'add_item': lambda nav, p: nav.verb('add_item', p.how),
-    'delete_item': lambda nav, p: nav.verb('delete_item', p.how),
+    'go_down': lambda nav, p: nav._go_down(p.how),
+    'go_up': lambda nav, p: nav._go_up(p.how),
+    # moving (arg: the step, or for move_end True for the bottom)
+    'move_end': lambda nav, p: nav._move_end(p.how, p.arg),
+    'step_tab_cursor': lambda nav, p: setattr(nav, 'tab_cur', _cycle(nav.tab_cur, p.arg, len(nav.tabs))),
+    'step_list': lambda nav, p: setattr(nav, 'list_cur', _clamp(nav.list_cur + p.arg,
+                                                                len(nav.catalog.rows(nav.chip)) - 1)),
+    'step_chip': lambda nav, p: nav._set_chip(_cycle(nav.chip, p.arg, len(KINDS)), p.how),
+    'step_area': lambda nav, p: nav._step_area(p.arg),
+    'step_row': lambda nav, p: nav._step_row(p.arg),
+    'edit': lambda nav, p: nav._edit_row(p.how, clear=bool(p.arg)),  # arg: clear it first
     # tabs
-    'goto_tab': lambda nav, p: nav.goto_tab(p.key),
-    'tab_next': lambda nav, p: nav.step_tab(1, p.how),
-    'tab_prev': lambda nav, p: nav.step_tab(-1, p.how),
-    'close': lambda nav, p: nav.close_tab(nav.tab_cur if nav.layer == TABS else nav.active, p.how),
-    'undo': lambda nav, p: nav.undo(p.how),
-    # verbs
-    'primary': lambda nav, p: nav.primary(p.how),
-    'secondary': lambda nav, p: nav.verb('secondary', p.how),
-    'repeat': lambda nav, p: nav.verb('repeat', p.how),
-    'rate': lambda nav, p: nav.verb('rate', p.how),
-    'toggle_mode': lambda nav, p: nav.verb('toggle_mode', p.how),
-    'helper': lambda nav, p: nav.open_helper(p.how),
-    'history_older': lambda nav, p: nav.verb('history_older', p.how),
-    'history_newer': lambda nav, p: nav.verb('history_newer', p.how),
-    'yank': lambda nav, p: nav.verb('yank', p.how),
-    'paste': lambda nav, p: nav.verb('paste', p.how),
+    'goto_tab': lambda nav, p: nav._goto_tab(p.key),
+    'step_tab': lambda nav, p: nav._activate(_cycle(nav.active, p.arg, len(nav.tabs)), p.how),
+    'close': lambda nav, p: nav._close_tab(nav.tab_cur if nav.layer == TABS else nav.active, p.how),
+    'undo': lambda nav, p: nav._undo(p.how),
+    # verbs: the entry's own (arg: its name), and those NavState prepares first
+    'verb': lambda nav, p: nav._verb(p.arg, p.how),
+    'primary': lambda nav, p: nav._primary(p.how),
+    'switch_mode': lambda nav, p: nav._switch_mode(p.how),
+    'helper': lambda nav, p: nav._open_helper(p.how),
 }

@@ -6,21 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The "Hybrid Keys" redesign: the four-tab UI is replaced by a keyboard-first one
-built on a layer model. Rationale and rules: [docs/design-principles.md](docs/design-principles.md);
+A new keyboard-first UI: one list of everything, a tab per entry, and layers
+instead of focus. Rules: [docs/design-principles.md](docs/design-principles.md);
 every key: [docs/usage.md](docs/usage.md).
 
 ### Changed
 - **One ☰ list and a tab per entry** instead of the Topics, Services, Actions
   and Nodes tabs with their list panes. The list mixes every kind, with chips
   (`tab`, `:topics` …) to filter it; `/` searches everything; an opened entry
-  gets the full width (there is no sidebar). Open entries stay as tabs (`0`…`9`,
-  `H` `L`, `x`).
+  gets the full width. Open entries stay as tabs (`0`…`9`, `H` `L`, `x`).
 - **Layers instead of focus.** The tab row › inside a tab › inside an area ›
   insert: `esc` always goes up one layer and `enter` down one, and the footer
-  always says which layer you're on and what `esc` and `enter` do. A key's
-  meaning depends only on the layer and the entry, never on focus. `?` lists
-  every key that works right now; `:` opens a command line.
+  always says which layer you're on and what `esc` and `enter` do. `?` lists
+  every key that works where you are; `:` opens a command line. Clicking works
+  too and goes to the same places.
 - **Field rows instead of the YAML editor.** Messages are edited one field
   per row (fold and unfold nested messages, `o` / `d` add and delete list
   elements), checked as you type, with the error under the panel naming the
@@ -28,23 +27,21 @@ every key: [docs/usage.md](docs/usage.md).
 - **Field helpers** open with `f` on a field that shows `[f …]`, under the
   row, instead of `ctrl+w` and a modal screen.
 - **Topics** open in Echo when someone publishes them and in Publish when
-  nobody does (`e` switches), instead of asking. Going into an echo freezes it;
-  `esc` goes live again.
+  nobody does (`e` switches). Going into an echo freezes it; `esc` goes live
+  again.
 - **Nodes** show changed parameters until space sets them all.
-- The keys: `ctrl+t`, `ctrl+k`, `ctrl+r`, `ctrl+w`, `ctrl+l` and `f2` are
-  gone. `ctrl+s` stays as an alias of space, `ctrl+f` now opens search (as `/`
-  does), and `ctrl+q` still quits (as does `:q`). The mouse is no longer used.
+- Keys: `ctrl+t`, `ctrl+k`, `ctrl+r`, `ctrl+w`, `ctrl+l` and `f2` are gone.
+  `ctrl+s` is an alias of space, `ctrl+f` opens search (as `/` does), and
+  `ctrl+q` quits (as does `:q`).
 
 ### Added
 - **Only space and `^s` send.** Space publishes once, calls, sends the goal,
-  sets the changed parameters, or starts and stops an echo. The prototype's
-  `.` (resend the last send) was dropped, so no other key sends what's in the
-  editor. **`r` repeats** a publish at the shown rate (`R` or `:rate 5`
-  changes it) and **`s` stops**: it stops a repeat or cancels a goal, and
-  never sends.
+  sets the changed parameters, or starts and stops an echo. **`r` repeats** a
+  publish at the shown rate (`R` or `:rate 5` changes it) and **`s` stops**: it
+  stops a repeat or cancels a goal, and never sends.
 - **`u` undoes per tab**: edits, pastes, applied helpers, rate and parameter
   changes, in the tab they were made in; right after `x` it reopens the closed
-  tab. With nothing to undo it says `nothing to undo here`.
+  tab.
 - `y` / `p`: a typed copy / paste register (a message, a request or a goal)
   across entries of the same type; `y` in Echo copies the message exactly as
   it arrived.

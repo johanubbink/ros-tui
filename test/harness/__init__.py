@@ -16,7 +16,10 @@
 """The agentic dev harness: a fake ROS world and a screenshot-taking UI session.
 
 - ``fake_bridge``: ``FakeBridge`` (the bridge contract without rclpy), its ``ManualClock`` and the
-  ``DEMO_GRAPH`` world that mirrors the demo servers and the design prototype.
+  ``DEMO_GRAPH`` world that mirrors the demo servers.
+- ``live_world``: ``live_nav`` and ``advance``, the nav model with the real entries over a
+  ``FakeBridge``, for the model tests.
+- ``nav_world``: a small fixed world with stand-in entries, for the pure nav-model tests.
 - ``screens``: ``ui_session``, which drives the app headless and writes SVG / PNG / text / JSON
   shots into ``test/artifacts/`` when ``ROS_TUI_SHOTS=1``.
 

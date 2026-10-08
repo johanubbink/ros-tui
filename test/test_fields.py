@@ -16,17 +16,12 @@
 """The field-row model (ros_tui/ui/fields.py) over real message structures, without textual."""
 
 import functools
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 from ros_tui.ros.message_yaml import build_message, import_type, message_structure, message_to_plain, request_class
 from ros_tui.ui.fields import (ARRAY, COMPACT, LEAF, MESSAGE, Element, FieldRows, array_info, default_value, parse,
                                parse_path, path_text, short_type, summary)
 from test_message_yaml import ROUNDTRIP_TYPES
-
-REPO = Path(__file__).resolve().parents[1]
 
 
 def form_for(kind, type_name, values=None):
@@ -257,14 +252,6 @@ def test_paths_hints_and_summaries():
     assert array_info('sequence<string<=5, 3>') == ('string<=5', None, 3)
     assert summary({'a': 19, 'b': 23}, 60) == 'a: 19, b: 23'
     assert summary({'data': 'x' * 100}, 20) == 'data: xxxxxxxxxxxxx…'
-
-
-def test_pure_python():
-    """fields.py imports neither textual nor rclpy."""
-    code = ('import sys; import ros_tui.ui.fields; '
-            'print(sorted({m.split(".")[0] for m in sys.modules} & {"textual", "rclpy", "rich", "rosidl_runtime_py"}))')
-    out = subprocess.run([sys.executable, '-c', code], cwd=REPO, capture_output=True, text=True, check=True)
-    assert out.stdout.strip() == '[]'
 
 
 def leaf_row(label):

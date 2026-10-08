@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The :log view (the design's renderLogv): every activity line, newest first, over a veil.
+"""The :log view: every activity line, newest first, over a veil.
 
 j k move, gg G go to the newest / oldest, enter goes to that entry's tab, esc closes. The list
 scrolls to keep the picked line in the middle.
@@ -21,10 +21,11 @@ scrolls to keep the picked line in the middle.
 
 from rich.text import Text
 
+from ros_tui.ui.nav import LogView
 from ros_tui.ui.widgets.activity_strip import activity_row
-from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, keyed, rule, style
+from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, keyed, rule, scroll_top, style
 
-SIDE = 10  # Cells left free on each side (the design's left / right: 80px).
+SIDE = 10  # Cells left free on each side.
 BOTTOM = 3  # Rows left free above the bottom of the screen (the footer and some of the strip).
 
 
@@ -34,21 +35,21 @@ class LogPopup(Overlay):
     """
 
     def place(self, width, height):
-        if not self.nav.logv:
+        if not self.nav.shown(LogView):
             return None
         return SIDE, BODY_TOP, max(10, width - 2 * SIDE), max(5, height - BODY_TOP - BOTTOM)
 
     def lines(self, width, height):
         nav = self.nav
-        activity = nav.activity
+        activity = nav.feedback.activity
         title = Text.assemble(' ', (f'All activity ({len(activity)})', style('bright', bold=True)), '   ',
                               keyed('j k', 'move'), ('  ·  ', style('dim')), keyed('enter', 'goes there'))
         lines = [title, rule(width)]
         if not activity:
             return lines + [Text(' nothing yet', style('dim'))]
         room = max(1, height - len(lines))
-        cur = nav.logv.cur
-        top = max(0, min(cur - room // 2, len(activity) - room))
+        cur = nav.overlay.cur
+        top = scroll_top(cur - room // 2, cur, cur, room, len(activity))
         for index in range(top, min(len(activity), top + room)):
             sel = index == cur
             row = Text.assemble(cursor_bar(sel), activity_row(activity[index]))

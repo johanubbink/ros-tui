@@ -105,10 +105,10 @@ async def test_topic_echo_and_publish_through_ui(bridge, fixture_servers):
 async def test_node_parameter_set_through_ui(bridge, fixture_servers):
     async with ui_session(bridge=bridge) as s:
         await open_entry(s, 'nodes', FIXTURE_NODE, 'fixtures')
-        entry = s.app.nav.provider.for_tab(s.app.nav.tab)
+        entry = s.app.nav.entry(s.app.nav.tab)
 
         def params():
-            return entry.data(s.app.nav.tab).params
+            return entry.params
 
         assert await s.wait_until(params, timeout=GRAPH_TIMEOUT_S), 'the parameters never loaded'
         row = [param.name for param in params()].index('test_param')

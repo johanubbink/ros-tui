@@ -23,9 +23,10 @@ The register's type rules are pure. The rest runs the nav model over the live de
 import math
 
 import pytest
-from harness.fake_bridge import FakeBridge, TopicFeed
-from ros_tui.ui.entries import entry_router
-from ros_tui.ui.nav import NOTHING_TO_UNDO, ActivityLine, NavState, Tab, clock_text
+from harness.fake_bridge import TopicFeed
+from harness.live_world import advance, live_nav, press, toast
+from ros_tui.ui.feedback import ActivityLine, clock_text
+from ros_tui.ui.nav import NOTHING_TO_UNDO, Tab
 from ros_tui.ui.register import Register, type_label
 from std_msgs.msg import String
 
@@ -39,31 +40,8 @@ OPEN_ADD = ['/', *'add', 'enter']
 OPEN_POSE = ['/', *'locali', 'enter']
 
 
-def make_nav(*keys, bridge=None):
-    bridge = bridge or FakeBridge.demo()
-    nav = NavState(entry_router(bridge), clock=bridge.now, wall=bridge.time_of_day)
-    nav.set_catalog(bridge.latest_graph, {name: 1 for name in bridge.feeds})
-    press(nav, *keys)
-    return nav, bridge
-
-
-def press(nav, *keys):
-    for key in keys:
-        nav.handle_key(key)
-
-
-def advance(nav, bridge, seconds):
-    for _ in range(round(seconds / 0.1)):
-        bridge.clock.advance(0.1)
-        nav.tick()
-
-
 def editor(nav, tab):
-    return nav.provider.for_tab(tab).data(tab).editor
-
-
-def toast(nav):
-    return nav.toast.text if nav.toast else None
+    return nav.entry(tab).editor
 
 
 # ---------- the type rules (pure) ----------
@@ -97,16 +75,16 @@ def test_a_register_keeps_its_own_copy():
 # ---------- y ----------
 
 def test_y_in_echo_copies_the_latest_message():
-    nav, bridge = make_nav(*OPEN_CHATTER, 'space')
+    nav, bridge = live_nav(*OPEN_CHATTER, 'space')
     advance(nav, bridge, 2.0)
     press(nav, 'y')
     assert nav.register == Register(STRING, 'message', '/chatter', {'data': 'chatter 2'})
-    assert toast(nav) == 'copied the latest String from /chatter' and nav.toast.kind == 'info'
+    assert toast(nav) == 'copied the latest String from /chatter' and nav.feedback.toast.kind == 'info'
     assert nav.summary()['register'] == 'String from /chatter'
 
 
 def test_y_while_frozen_copies_the_frozen_message():
-    nav, bridge = make_nav(*OPEN_CHATTER, 'space')
+    nav, bridge = live_nav(*OPEN_CHATTER, 'space')
     advance(nav, bridge, 1.0)
     press(nav, 'enter')  # Freeze on chatter 1.
     advance(nav, bridge, 2.0)
@@ -116,7 +94,7 @@ def test_y_while_frozen_copies_the_frozen_message():
 
 
 def test_y_copies_the_message_exactly_not_as_it_is_shown():
-    nav, bridge = make_nav(*OPEN_POSE, 'space')
+    nav, bridge = live_nav(*OPEN_POSE, 'space')
     bridge.feeds = {**bridge.feeds, '/chatter': TopicFeed(1.0, lambda index, now: String(data='x' * 300))}
     advance(nav, bridge, 0.5)
     press(nav, 'y')
@@ -129,14 +107,14 @@ def test_y_copies_the_message_exactly_not_as_it_is_shown():
 
 
 def test_y_in_echo_says_why_there_is_nothing_to_copy():
-    nav, bridge = make_nav(*OPEN_CHATTER, 'y')
+    nav, bridge = live_nav(*OPEN_CHATTER, 'y')
     assert toast(nav) == 'start the echo first (space)' and nav.register is None
     press(nav, '/', *'inbox', 'enter', 'e', 'space', 'y')  # /inbox in Echo: nobody publishes it.
     assert toast(nav) == 'no messages to copy: nobody publishes /inbox' and nav.register is None
 
 
 def test_y_in_an_editor_copies_the_editor():
-    nav, bridge = make_nav(*OPEN_INBOX, 'enter', 'enter', *'hello', 'enter', 'y')
+    nav, bridge = live_nav(*OPEN_INBOX, 'enter', 'enter', *'hello', 'enter', 'y')
     assert nav.register == Register(STRING, 'message', '/inbox', {'data': 'hello'}) and toast(nav) == 'copied the message'
     press(nav, *OPEN_ADD, 'y')
     assert nav.register.label == 'AddTwoInts request' and nav.register.values == {'a': 0, 'b': 0}
@@ -146,14 +124,14 @@ def test_y_in_an_editor_copies_the_editor():
 
 
 def test_y_on_a_node_copies_nothing():
-    nav, bridge = make_nav('/', *'talker', 'enter', 'y')
+    nav, bridge = live_nav('/', *'talker', 'enter', 'y')
     assert toast(nav) == 'nothing to copy on a node' and nav.register is None
 
 
 # ---------- p ----------
 
 def test_p_pastes_the_same_type_as_one_undo_step():
-    nav, bridge = make_nav(*OPEN_CHATTER, 'space')
+    nav, bridge = live_nav(*OPEN_CHATTER, 'space')
     advance(nav, bridge, 1.0)
     press(nav, 'y', *OPEN_INBOX, 'p')
     assert editor(nav, INBOX).to_plain() == {'data': 'chatter 1'}
@@ -162,25 +140,25 @@ def test_p_pastes_the_same_type_as_one_undo_step():
     assert bridge.published[-1][2].data == 'chatter 1'
     press(nav, 'u')
     assert editor(nav, INBOX).to_plain() == {'data': ''}
-    assert nav.log[0] == ('u', 'undid the paste from /chatter on /inbox')
+    assert nav.feedback.log[0] == ('u', 'undid the paste from /chatter on /inbox')
     press(nav, 'u')
-    assert nav.log[0] == ('u', NOTHING_TO_UNDO)
+    assert nav.feedback.log[0] == ('u', NOTHING_TO_UNDO)
 
 
 def test_p_refuses_another_type():
-    nav, bridge = make_nav(*OPEN_CHATTER, 'space')
+    nav, bridge = live_nav(*OPEN_CHATTER, 'space')
     advance(nav, bridge, 1.0)
     press(nav, 'y', *OPEN_GOAL_POSE)
     before = editor(nav, Tab('topics', '/goal_pose')).to_plain()
     press(nav, 'p')
-    assert toast(nav) == 'copied a String, this needs a PoseStamped' and nav.toast.kind == 'bad'
+    assert toast(nav) == 'copied a String, this needs a PoseStamped' and nav.feedback.toast.kind == 'bad'
     assert editor(nav, Tab('topics', '/goal_pose')).to_plain() == before
     press(nav, 'u')
-    assert nav.log[0] == ('u', NOTHING_TO_UNDO)
+    assert nav.feedback.log[0] == ('u', NOTHING_TO_UNDO)
 
 
 def test_p_says_what_is_missing():
-    nav, bridge = make_nav(*OPEN_INBOX, 'p')
+    nav, bridge = live_nav(*OPEN_INBOX, 'p')
     assert toast(nav) == 'nothing copied yet (y copies)'
     press(nav, 'y', *OPEN_CHATTER, 'p')
     assert toast(nav) == 'switch to Publish (e) to paste'
@@ -195,48 +173,48 @@ def test_p_says_what_is_missing():
 def test_activity_lines_carry_the_time_of_day():
     assert clock_text(9 * 3600 + 41 * 60 + 3.7) == '09:41:03'
     assert clock_text(86400 + 5) == '00:00:05'
-    nav, bridge = make_nav(*OPEN_ADD)
+    nav, bridge = live_nav(*OPEN_ADD)
     advance(nav, bridge, 2.0)
     press(nav, 'space')
     advance(nav, bridge, 0.1)
-    assert [(line.time, line.text) for line in nav.activity] == [
+    assert [(line.time, line.text) for line in nav.feedback.activity] == [
         ('09:41:02', '✓ response · sum: 0 (50.0 ms)'), ('09:41:02', '▶ called · a: 0, b: 0')]
-    line = nav.activity[0]
+    line = nav.feedback.activity[0]
     assert line == ActivityLine('services', '/add_two_ints', '✓ response · sum: 0 (50.0 ms)', 'g', '09:41:02', line.at)
     assert line.at == pytest.approx(2.05)  # The clock time, for the fresh highlight.
 
 
 def test_a_new_activity_line_is_fresh_for_a_while():
-    nav, bridge = make_nav(*OPEN_ADD, 'space')
-    line = nav.activity[0]
-    assert nav.is_fresh(line) and nav.fresh_lines() == 1
+    nav, bridge = live_nav(*OPEN_ADD, 'space')
+    line = nav.feedback.activity[0]
+    assert nav.feedback.is_fresh(line) and nav.feedback.fresh_lines() == 1
     advance(nav, bridge, 1.0)
-    assert nav.fresh_lines() == 2  # The response came in at 0.05 s.
+    assert nav.feedback.fresh_lines() == 2  # The response came in at 0.05 s.
     advance(nav, bridge, 0.5)
     bridge.clock.advance(0.12)  # 1.62 s: "called" (at 0.0) has faded, the response (at 0.05) not yet.
     assert nav.tick() and not nav.tick()  # One redraw for the fade, then none.
-    assert not nav.is_fresh(line) and nav.fresh_lines() == 1
+    assert not nav.feedback.is_fresh(line) and nav.feedback.fresh_lines() == 1
     advance(nav, bridge, 0.1)
-    assert nav.fresh_lines() == 0 and not nav.tick()
+    assert nav.feedback.fresh_lines() == 0 and not nav.tick()
 
 
 def test_a_send_flashes_the_primary_button_for_half_a_second():
-    nav, bridge = make_nav(*OPEN_ADD)
-    assert not nav.flashing(nav.tab)
+    nav, bridge = live_nav(*OPEN_ADD)
+    assert not nav.feedback.flashing(nav.tab)
     press(nav, 'space')
-    assert nav.flashing(nav.tab) and not nav.flashing(INBOX)
+    assert nav.feedback.flashing(nav.tab) and not nav.feedback.flashing(INBOX)
     advance(nav, bridge, 0.4)
-    assert nav.flashing(nav.tab)
+    assert nav.feedback.flashing(nav.tab)
     bridge.clock.advance(0.1)
-    assert nav.tick() and nav.flash is None
+    assert nav.tick() and nav.feedback.flash is None
 
 
 def test_only_a_send_that_goes_out_flashes():
-    nav, bridge = make_nav('/', *'talker', 'enter', 'space')  # No changed parameters: nothing goes out.
-    assert toast(nav) == 'change a value first (enter edits it)' and nav.flash is None
-    nav, bridge = make_nav(*OPEN_CHATTER, 'space')  # An echo sends nothing to the robot.
-    assert nav.activity[0].text == '◉ echo started' and nav.flash is None
-    nav, bridge = make_nav('/', *'fib', 'enter', 'space')
+    nav, bridge = live_nav('/', *'talker', 'enter', 'space')  # No changed parameters: nothing goes out.
+    assert toast(nav) == 'change a value first (enter edits it)' and nav.feedback.flash is None
+    nav, bridge = live_nav(*OPEN_CHATTER, 'space')  # An echo sends nothing to the robot.
+    assert nav.feedback.activity[0].text == '◉ echo started' and nav.feedback.flash is None
+    nav, bridge = live_nav('/', *'fib', 'enter', 'space')
     advance(nav, bridge, 0.5)
     press(nav, 'space')  # A goal is already running: refused.
-    assert nav.errline(nav.tab).startswith('a goal is already running') and nav.flash is None
+    assert nav.feedback.errline(nav.tab).startswith('a goal is already running') and nav.feedback.flash is None

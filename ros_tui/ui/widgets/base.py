@@ -15,14 +15,16 @@
 
 """What every widget shares: `NavView` (render the NavState as lines) and text helpers."""
 
-from typing import Any
+from typing import Any, Iterable
 
+from rich.cells import cell_len
 from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.widget import Widget
 
-from ros_tui.ui.nav import NavState, Running, Tab
+from ros_tui.ui.entries.base import Running, Tab
+from ros_tui.ui.nav import NavState
 from ros_tui.ui.theme import KINDS, TOKENS
 
 BODY_TOP = 3  # Screen rows above the body: the top bar and the two-line tab row.
@@ -117,7 +119,7 @@ def spread(left: Text, right: Text, width: int, bg: str = '', optional: bool = F
 def switch(*parts: tuple[Text | str, bool, tuple[str, Any] | None]) -> Text:
     """A pill of (label, on, click target) parts (a kind chip; the Echo / Publish switch): each label
     on its fill, `chip-on` and bright bold when it is on, else `chip` and grey, with a half-cell end
-    in the fill of the part next to it (the design's rounded .chip / .seg)."""
+    in the fill of the part next to it."""
     fills = ['chip-on' if on else 'chip' for _, on, _ in parts]
     text = Text('▐', style(fills[0]))
     for (label, on, target), fill in zip(parts, fills):
@@ -141,18 +143,40 @@ def markers(running: tuple[Running, ...], labels: bool = False) -> Text:
     return Text.assemble(*((' ' + m.glyph, style(m.tone)) for m in running))
 
 
+def here(nav: NavState, kind: str, name: str, opened: str) -> Text:
+    """What an entry has running, with its labels, then `opened` (dim) when it has a tab: the ☰
+    list's Here column ("◉ echoing open"), a search match's right side."""
+    text = markers(nav.running(kind, name), labels=True)
+    if nav.is_open(kind, name):
+        text.append((' ' if text else '') + opened, style('dim'))
+    return text
+
+
+def column_width(cells: Iterable[str], least: int, pad: int = 1) -> int:
+    """The width of a column: its widest cell (in cells, so wide characters count twice) plus `pad`,
+    and at least `least`."""
+    return max([least] + [cell_len(cell) + pad for cell in cells])
+
+
+def scroll_top(top: int, first: int, last: int, room: int, count: int) -> int:
+    """The first of `count` lines to show in `room` lines: `top` (the first one shown last time)
+    moved as little as keeps lines [first, last] in view, and no further down than fills the room."""
+    top = max(min(top, first), last - room + 1)
+    return max(0, min(top, count - room))
+
+
 def cursor_bar(on: bool) -> Text:
     """The first cell of a row: the cursor's `▍` bar in the key colour when `on`, else a space."""
     return Text('▍' if on else ' ', style('key'))
 
 
 def rule(width: int) -> Text:
-    """A rule across a popup (the design's 1px border-bottom of a popup's header)."""
+    """A rule across a popup."""
     return Text('─' * width, style('pop-line'))
 
 
 def cursor_cell() -> Text:
-    """The text cursor at the end of a typed value (the design's .cur block)."""
+    """The text cursor at the end of a typed value."""
     return Text(' ', style('term', 'text'))
 
 
@@ -162,37 +186,35 @@ def keyed(key: str, label: str, label_color: str = 'grey') -> Text:
 
 
 def edit_value(value: str, fresh: bool = False) -> Text:
-    """A value being typed (the design's .edit, or .edit.fresh when the first key replaces it), with
-    the text cursor at its end. The value is underlined, standing in for the design's outline."""
+    """A value being typed, underlined, with the text cursor at its end."""
     return Text.assemble((value, style('bright', 'edit-fresh' if fresh else 'edit') + Style(underline=True)),
                          cursor_cell())
 
 
-BUTTON_LOOKS = {  # The design's .btn looks -> (text colour, background, its key's colour).
+BUTTON_LOOKS = {  # A button's look -> (text colour, background, its key's colour).
     '': ('btn-text', 'btn', 'key'),
     'pri': ('bright', 'accent-fill', 'pri-key'),
     'stop': ('warn', 'stop-bg', 'warn'),
     'off': ('btn-off', 'btn-off-bg', 'btn-off'),  # Disabled: say why next to it.
-    'flash': ('bright', 'accent', 'bright'),  # A send just went out: a lighter blue (the design's .btn.flash outline).
+    'flash': ('bright', 'accent', 'bright'),  # A send just went out: a lighter blue.
 }
 
 
 def primary_look(nav: NavState, tab: Tab, look: str) -> str:
     """The look of an entry's primary (space) button: lighter for NAV_FLASH_S after a send goes out."""
-    return 'flash' if nav.flashing(tab) else look
+    return 'flash' if nav.feedback.flashing(tab) else look
 
 
 BUTTON_VERBS = {'space': 'primary', 's': 'secondary', 'r': 'repeat'}  # A button's key -> the verb a click runs.
 
 
 def button(label: Text | str, key: str, look: str = '') -> Text:
-    """A button with its key, as the design's `<button class="btn pri">▶ Call<span class="k">space`:
-    the label (a Text may style parts of itself) and the key on the look's background. A click on
-    it does what its key does (`BUTTON_VERBS`), unless it is disabled ('off')."""
+    """A button with its key ("▶ Call space"): the label (a Text may style parts of itself) and the
+    key on the look's background. A click on it does what its key does (`BUTTON_VERBS`), unless it is disabled ('off')."""
     color, bg, key_color = BUTTON_LOOKS[look]
     text = Text.assemble(' ', label, ' ')
     text.stylize_before(style(color, bg, bold=look in ('pri', 'stop', 'flash')))
-    text.append(key, style(key_color, bg, bold=look != 'off'))  # Keys are bold, as the design's .k.
+    text.append(key, style(key_color, bg, bold=look != 'off'))  # Keys are bold.
     text.append(' ', style(bg=bg))
     verb = BUTTON_VERBS.get(key) if look != 'off' else None
     return clickable(text, ('verb', verb) if verb else None, before=True)

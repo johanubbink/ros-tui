@@ -1,7 +1,7 @@
 # Docker playground
 
 The playground runs ros_tui against a set of example servers in a container,
-so you can try it without ROS on your machine. You need Docker Engine with the
+so you can run it without ROS on your machine. You need Docker Engine with the
 Compose plugin (Linux).
 
 ```bash
@@ -46,7 +46,7 @@ desktop, so this needs an X11 display (Linux):
 ```bash
 xhost +local:                    # once per login: let the container reach your X server
 docker compose -f compose.yaml -f docker/compose.gui.yaml up --build
-# second terminal, as before:
+# second terminal:
 docker compose exec ros_tui bash
 ros2 run ros_tui ros_tui
 # when you're done:

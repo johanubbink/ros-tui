@@ -13,19 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The node entry (ros_tui/ui/entries/node.py) and the entry router, without textual.
+"""The node entry (ros_tui/ui/entries/node.py), without textual.
 
 The nav model runs over the demo world with a canned FakeBridge (it answers at once), except in
-the loading test, which uses the live one and its clock. Expectations follow the design's 'par'
-branches of startEdit / commitEdit / undo and setParams (docs/design/hybrid-keys.html).
+the loading test, which uses the live one and its clock.
 """
 
 import pytest
-from harness.fake_bridge import DEMO_GRAPH, DEMO_PARAMS, SERVICE_DELAY_S, FakeBridge
-from ros_tui.ui.entries import EntryRouter, entry_router
+from harness.fake_bridge import DEMO_PARAMS, SERVICE_DELAY_S, FakeBridge
+from harness.live_world import live_nav, press
+from ros_tui.ui.entries.base import Entry
 from ros_tui.ui.entries.action import ActionEntry
 from ros_tui.ui.entries.node import NodeEntry, Param, parse_value, render_value
-from ros_tui.ui.nav import AREA, EDIT, IN, NavState, Tab
+from ros_tui.ui.nav import AREA, EDIT, IN, Tab
 
 NODE = '/ros_tui_demo_servers'
 NODE_TAB = Tab('nodes', NODE)
@@ -34,20 +34,12 @@ TO_RATE = ['l', 'enter', 'j']  # PARAMETERS, inside, the publish_rate row.
 
 
 def node_nav(*keys, bridge=None):
-    bridge = bridge or FakeBridge()
-    nav = NavState(entry_router(bridge))
-    nav.set_catalog(DEMO_GRAPH, {'/chatter': 1})
-    press(nav, *keys)
-    return nav, bridge
-
-
-def press(nav, *keys):
-    for key in keys:
-        nav.handle_key(key)
+    """Over the canned FakeBridge (it answers at once) unless given the live one."""
+    return live_nav(*keys, bridge=bridge or FakeBridge())
 
 
 def node_data(nav):
-    return nav.provider.for_tab(NODE_TAB).data(NODE_TAB)
+    return nav.entry(NODE_TAB)
 
 
 @pytest.mark.parametrize('kind, text, value', [
@@ -128,17 +120,17 @@ def test_a_node_that_does_not_answer_says_why():
 def test_space_with_nothing_changed_sets_nothing():
     nav, bridge = node_nav(*OPEN_NODE, 'space')
     assert bridge.set_param_calls == []
-    assert nav.toast.text == 'change a value first (enter edits it)'
+    assert nav.feedback.toast.text == 'change a value first (enter edits it)'
 
 
 def test_a_reload_keeps_the_cursor_and_the_edit_on_their_parameter():
     nav, bridge = node_nav(*OPEN_NODE, 'l', 'enter', 'G')  # frame_id, row 2.
     bridge.params = DEMO_PARAMS[1:]
-    nav.provider.on_open(nav, NODE_TAB)  # The list shrinks: the cursor stays within it.
+    nav.entry(NODE_TAB).on_open(nav)  # The list shrinks: the cursor stays within it.
     assert nav.row_index() == 1
     press(nav, 'c', *'odom')
     bridge.params = DEMO_PARAMS
-    nav.provider.on_open(nav, NODE_TAB)  # It grows back while frame_id is typed (now row 2 again).
+    nav.entry(NODE_TAB).on_open(nav)  # It grows back while frame_id is typed (now row 2 again).
     press(nav, 'enter')
     assert node_data(nav).changes == {'frame_id': 'odom'}
 
@@ -146,26 +138,26 @@ def test_a_reload_keeps_the_cursor_and_the_edit_on_their_parameter():
 def test_enter_on_an_interface_opens_it_in_a_tab():
     nav, _ = node_nav(*OPEN_NODE, 'enter', *['j'] * 6, 'enter')
     assert nav.tab == Tab('services', '/add_two_ints') and nav.layer == IN
-    assert nav.log[0] == ('enter', 'opened /add_two_ints (tab 2)')
+    assert nav.feedback.log[0] == ('enter', 'opened /add_two_ints (tab 2)')
 
 
 def test_edit_a_parameter_with_a_bad_value_then_keep_it():
     nav, bridge = node_nav(*OPEN_NODE, *TO_RATE, 'enter')
     assert nav.layer == EDIT and nav.editing.value == '10.0' and not nav.editing.fresh
-    assert nav.footer().mode == 'insert' and nav.path() == ('tabs', NODE, 'parameters', 'editing')
+    assert nav.footer().mode == 'insert' and nav.footer().path == ('tabs', NODE, 'parameters', 'editing')
     press(nav, *['backspace'] * 4, '5', 'x', 'enter')
-    assert nav.layer == EDIT and nav.errline(NODE_TAB) == 'publish_rate needs a number, got "5x"'
+    assert nav.layer == EDIT and nav.feedback.errline(NODE_TAB) == 'publish_rate needs a number, got "5x"'
     press(nav, 'backspace', 'enter')
-    assert nav.layer == AREA and NODE_TAB.key not in nav.errlines
+    assert nav.layer == AREA and nav.feedback.errline(NODE_TAB) == ''
     assert node_data(nav).changes == {'publish_rate': 5.0}
-    assert nav.log[0] == ('enter', 'publish_rate = 5.0 (not set yet: space sets it, u undoes)')
+    assert nav.feedback.log[0] == ('enter', 'publish_rate = 5.0 (not set yet: space sets it, u undoes)')
     assert bridge.set_param_calls == []  # Nothing is sent before space.
 
 
 def test_esc_on_a_bad_value_keeps_the_old_one():
     nav, _ = node_nav(*OPEN_NODE, 'l', 'enter', 'enter', 'x', 'escape')
     assert nav.layer == AREA and node_data(nav).changes == {}
-    assert (nav.toast.text, nav.toast.kind) == ('use_sim_time needs true or false, got "x" — kept the old value', 'bad')
+    assert nav.summary()['toast'] == ['use_sim_time needs true or false, got "x" — kept the old value', 'bad']
 
 
 def test_a_bool_starts_fresh_and_c_clears():
@@ -183,21 +175,21 @@ def test_typing_the_old_value_back_is_no_change():
     nav, _ = node_nav(*OPEN_NODE, *TO_RATE, 'c', '7', 'enter')
     assert node_data(nav).changes == {'publish_rate': 7.0}
     press(nav, 'c', *'10', 'enter')
-    assert node_data(nav).changes == {} and nav.log[0] == ('enter', 'publish_rate unchanged')
+    assert node_data(nav).changes == {} and nav.feedback.log[0] == ('enter', 'publish_rate unchanged')
     press(nav, 'enter', 'enter')  # Unchanged again: no new undo step.
     assert len(nav.undo_stack) == 2
 
 
 def test_space_sets_the_changed_parameters():
     nav, bridge = node_nav(*OPEN_NODE, 'space')
-    assert (nav.toast.text, nav.toast.kind) == ('change a value first (enter edits it)', 'bad')
+    assert nav.summary()['toast'] == ['change a value first (enter edits it)', 'bad']
     assert bridge.set_param_calls == []
     press(nav, 'l', 'enter', 'enter', *'true', 'enter', 'j', 'c', '5', 'enter', 'space')
     assert bridge.set_param_calls == [(NODE, 'use_sim_time', 'true'), (NODE, 'publish_rate', '5.0')]
-    assert [line.text for line in nav.activity] == ['✓ set publish_rate = 5.0', '✓ set use_sim_time = true']
+    assert [line.text for line in nav.feedback.activity] == ['✓ set publish_rate = 5.0', '✓ set use_sim_time = true']
     data = node_data(nav)
     assert data.changes == {} and [p.value for p in data.params] == [True, 5.0, 'map']
-    assert nav.log[0] == ('space', f'set 2 parameters on {NODE}')
+    assert nav.feedback.log[0] == ('space', f'set 2 parameters on {NODE}')
 
 
 def test_ctrl_s_in_insert_keeps_and_sets():
@@ -209,7 +201,7 @@ def test_a_failed_set_keeps_the_change():
     nav, bridge = node_nav(*OPEN_NODE)
     bridge.rejected_params['frame_id'] = 'frame_id is read-only'
     press(nav, 'l', 'enter', 'G', 'c', *'odom', 'enter', 'space')
-    assert nav.activity[0].text == '✗ set frame_id: frame_id is read-only' and nav.activity[0].cls == 'r'
+    assert nav.feedback.activity[0].text == '✗ set frame_id: frame_id is read-only' and nav.feedback.activity[0].cls == 'r'
     assert node_data(nav).changes == {'frame_id': 'odom'}
 
 
@@ -217,10 +209,10 @@ def test_undo_only_in_this_tab():
     nav, _ = node_nav(*OPEN_NODE, *TO_RATE, 'c', '5', 'enter', '0', 'g', 'g', 'enter')  # Change it, open /chatter.
     assert nav.tab == Tab('topics', '/chatter')
     press(nav, 'u')
-    assert nav.log[0] == ('u', 'nothing to undo here')
+    assert nav.feedback.log[0] == ('u', 'nothing to undo here')
     assert node_data(nav).changes == {'publish_rate': 5.0}
     press(nav, '1', 'u')
-    assert node_data(nav).changes == {} and nav.log[0] == ('u', f'undid the change to publish_rate on {NODE}')
+    assert node_data(nav).changes == {} and nav.feedback.log[0] == ('u', f'undid the change to publish_rate on {NODE}')
 
 
 def test_undo_steps_back_through_changes():
@@ -236,12 +228,11 @@ def test_reopening_keeps_changes_that_are_not_set():
     assert node_data(nav).changes == {'publish_rate': 5.0}
 
 
-def test_the_router_hands_each_kind_to_its_entry():
+def test_each_tab_gets_an_entry_of_its_kind():
     nav, _ = node_nav('/', *'fib', 'enter')
-    assert isinstance(nav.provider, EntryRouter) and nav.tab.kind == 'actions'
-    assert isinstance(nav.provider.for_tab(nav.tab), ActionEntry)
-    assert isinstance(nav.provider.for_tab(NODE_TAB), NodeEntry)
-    assert nav.provider.for_tab(None) is nav.provider.default
+    assert nav.tab.kind == 'actions' and isinstance(nav.entry(nav.tab), ActionEntry)
+    assert isinstance(nav.entry(NODE_TAB), NodeEntry) and nav.entry(NODE_TAB) is nav.entry(NODE_TAB)
+    assert type(nav.entry(Tab('things', '/x'))) is Entry  # A kind without a class of its own gets the base.
 
 
 def test_a_set_change_leaves_nothing_to_undo():
@@ -249,4 +240,4 @@ def test_a_set_change_leaves_nothing_to_undo():
     nav, _ = node_nav(*OPEN_NODE, *TO_RATE, 'c', '5', 'enter', 'c', '6', 'enter', 'space')
     assert node_data(nav).changes == {} and nav.undo_stack == []
     press(nav, 'u')
-    assert nav.log[0] == ('u', 'nothing to undo here')
+    assert nav.feedback.log[0] == ('u', 'nothing to undo here')

@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every tunable number of the TUI in one place. Nothing here is configurable at runtime."""
+"""Every tunable number of the TUI in one place, and the stamp-at-send words. Nothing here is
+configurable at runtime."""
 
 # ROS bridge thread.
 GRAPH_POLL_PERIOD_S = 1.0
@@ -37,19 +38,24 @@ ECHO_HZ_WINDOW = 64
 ECHO_DISPLAY_DIGITS = 6  # Significant digits of an echoed float on screen (the value keeps them all).
 FEEDBACK_BUFFER_MAXLEN = 200
 
+# Stamp-at-send words: a field holding one is stamped with the time the message is sent
+# (message_yaml.build_message). An editor seeds a nested header with HEADER_AUTO.
+HEADER_AUTO = 'auto'  # A std_msgs/Header: stamped, with an empty frame_id.
+TIME_NOW = 'now'  # A builtin_interfaces/Time, such as a header's stamp.
+
 # Topic publishing.
 PUBLISH_RATE_MIN_HZ = 0.1
 PUBLISH_RATE_MAX_HZ = 100.0
 PUBLISH_DEFAULT_RATE_HZ = 10.0  # The repeat rate of a topic nobody publishes yet.
 
 # Navigation model (ros_tui/ui/nav.py).
-NAV_LOG_LINES = 8  # Key log lines kept (the design's "what the keys did" list).
+NAV_LOG_LINES = 8  # Key log lines kept.
 NAV_ACTIVITY_MAX = 200  # Activity lines kept for :log.
 NAV_TOAST_S = 1.6  # How long a toast shows.
-NAV_FLASH_S = 0.5  # How long the primary button flashes after a send (the design's flashT, 0.5 s).
-NAV_ACTIVITY_FRESH_S = 1.6  # How long a new activity line stays highlighted (the design's .fl.new, 1.6 s).
-NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel (the design's inl, 6 s).
-SEND_HISTORY_MAX = 20  # Sends kept per entry for [ and ] (the design's hist, 20).
+NAV_FLASH_S = 0.5  # How long the primary button flashes after a send.
+NAV_ACTIVITY_FRESH_S = 1.6  # How long a new activity line stays highlighted.
+NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel.
+SEND_HISTORY_MAX = 20  # Sends kept per entry for [ and ].
 SUMMARY_MAX_CHARS = 60  # A message summarised in an activity line ('a: 19, b: 23') is cut here.
-ACTION_SPINNER_HZ = 4.0  # Frames per second of the ◐◓◑◒ spinner of an executing goal (the design's S.t*4).
+ACTION_SPINNER_HZ = 4.0  # Frames per second of the ◐◓◑◒ spinner of an executing goal.
 UI_TICK_PERIOD_S = 0.1  # The UI's clock tick: drains the echoes and expires toasts.

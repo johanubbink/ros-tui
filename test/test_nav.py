@@ -13,18 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The nav model (ros_tui/ui/nav.py) against the design prototype's keydown handler.
-
-Each scripted sequence's expectations were worked out by reading docs/design/hybrid-keys.html
-(goUp / goDown / activate / openEntity / closeTab / undo / stepTab / the keydown handler and the
-footer helpers modeName / pathParts / upLabel / downLabel), in its world (harness.nav_world).
+"""The nav model (ros_tui/ui/nav.py): key sequences and clicks against the layers, tabs, undo and
+footer they end in, over the stand-in world of harness.nav_world.
 """
+
+import dataclasses
 
 import pytest
 from harness.fake_bridge import DEMO_GRAPH
-from harness.nav_world import DESIGN_CATALOG, DesignProvider, RowsProvider, design_nav, nav_after
+from harness.nav_world import FIXTURE_CATALOG, FixtureEntry, RowsWorld, fixture_nav, nav_after
 from ros_tui.constants import NAV_ERRLINE_S, NAV_TOAST_S
-from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, NavState, Tab, short_type
+from ros_tui.ros.graph import TopicInfo
+from ros_tui.ui.catalog import Catalog
+from ros_tui.ui.command_line import CommandLine
+from ros_tui.ui.feedback import Feedback
+from ros_tui.ui.nav import AREA, EDIT, IN, TABS, Helper, LogView, NavState, Search, Tab
 
 HOME = ('tabs', '☰ list')
 OPEN3 = ['enter', '0', 'j', 'enter', '0', 'j', 'enter']  # /chatter, /counter, /diagnostic_status.
@@ -62,7 +65,7 @@ SEQUENCES = [
     # search opens, then the area pick of a two-area entry
     ('search opens a tab', ['/', 'a', 'd', 'd', 'enter'],
      state(IN, 0, ['/add_two_ints'], ['tabs', '/add_two_ints'], enter='into request')),
-    ('l picks the next area', ['slash', 'a', 'd', 'd', 'enter', 'l'],
+    ('l picks the next area', ['/', 'a', 'd', 'd', 'enter', 'l'],
      state(IN, 0, ['/add_two_ints'], ['tabs', '/add_two_ints'], enter='into response')),
     ('tab wraps the area pick', ['/', 'a', 'd', 'd', 'enter', 'l', 'tab'],
      state(IN, 0, ['/add_two_ints'], ['tabs', '/add_two_ints'], enter='into request')),
@@ -116,7 +119,7 @@ SEQUENCES = [
     (':topics from a tab', ['enter', ':', 't', 'tab', 'enter'], state(IN, -1, ['/chatter'], HOME)),
     ('which-key closes on any key', ['?', 'j'], state(IN, -1, [], HOME, enter='open /chatter')),
     ('g then a wrong key does nothing', ['g', 'j'], state(IN, -1, [], HOME, enter='open /chatter')),
-    # found by the verifier against the prototype
+    # Edge cases of x, u and H on the tab row.
     ('x on the only tab goes to the list', ['enter', 'x'], state(IN, -1, [], HOME)),
     ('u after x on the tab row goes in', OPEN3 + ['escape', 'h', 'x', 'u'], state(IN, 1, THREE, ['tabs', '/counter'])),
     ('H on the tab row steps from the active tab', OPEN3 + ['escape', 'h', 'h', 'H'],
@@ -136,12 +139,8 @@ def test_sequence(keys, expected):
     assert {key: summary[key] for key in expected} == expected
 
 
-def test_enough_sequences():
-    assert len(SEQUENCES) >= 25
-
-
 def last_log(nav):
-    return nav.log[0]
+    return nav.feedback.log[0]
 
 
 def test_open_and_went_to_messages():
@@ -199,53 +198,70 @@ def test_tab_row_cursor_wraps():
     assert (nav.layer, nav.active) == (IN, -1)
 
 
+PLACE = ('layer', 'mode', 'path', 'active', 'tab_cur', 'chip', 'list_cur', 'area', 'row')  # Where you are.
+
+
+@pytest.mark.parametrize('opens, closes', [
+    (['/'], ['escape']),
+    (['ctrl+f', 'c', 'h'], ['escape']),
+    ([':', 'x'], ['escape']),
+    ([':'], ['backspace']),
+    ([':', 'l', 'o', 'g', 'enter', 'j'], ['escape']),
+    (['?'], ['escape']),
+    (['g'], ['escape']),
+], ids=['search', 'ctrl-f', 'command', 'command-backspace', 'log', 'which-key', 'g-prefix'])
+def test_an_overlay_closes_back_to_the_exact_layer(opens, closes):
+    """Each overlay, opened deep inside an entry (the MESSAGE area of /goal_pose, a second tab), closes
+    back to the same layer, tab, area, row and list cursor."""
+    nav = nav_after(['j', 'enter', '0', 'tab', 'j', 'j', 'j', 'j', 'j', 'enter', 'enter'], RowsWorld())
+    before = [nav.summary()[key] for key in PLACE]
+    assert before[:4] == [AREA, 'normal', ['tabs', '/goal_pose', 'message'], 1]
+    for key in opens:
+        nav.handle_key(key)
+    assert nav.summary()['overlay'] is not None
+    for key in closes:
+        nav.handle_key(key)
+    assert nav.summary()['overlay'] is None and [nav.summary()[key] for key in PLACE] == before
+
+
 def test_close_toasts_and_undo_reopens():
     nav = nav_after(OPEN3 + ['2', 'x'])
     assert last_log(nav) == ('x', 'closed /counter — u reopens it')
-    assert (nav.toast.text, nav.toast.kind) == ('closed /counter · u undoes', 'info')
+    assert nav.summary()['toast'] == ['closed /counter · u undoes', 'info']
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'reopened /counter')
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'nothing to undo here')
-    assert (nav.toast.text, nav.toast.kind) == ('nothing to undo here', 'info')
+    assert nav.summary()['toast'] == ['nothing to undo here', 'info']
 
 
 def test_toast_expires_on_the_clock():
     now = [10.0]
-    nav = design_nav()
-    nav.clock = lambda: now[0]
+    nav = fixture_nav()
+    nav.feedback.clock = lambda: now[0]
     nav.handle_key(':')
     for key in 'foo':
         nav.handle_key(key)
     nav.handle_key('enter')
-    assert nav.toast.until == pytest.approx(10.0 + NAV_TOAST_S)
+    assert nav.feedback.toast.until == pytest.approx(10.0 + NAV_TOAST_S)
     now[0] += NAV_TOAST_S - 0.1
-    assert not nav.tick() and nav.toast is not None
+    assert not nav.tick() and nav.feedback.toast is not None
     now[0] += 0.1
-    assert nav.tick() and nav.toast is None
+    assert nav.tick() and nav.feedback.toast is None
     assert not nav.tick()
 
 
 def test_errline_expires_on_the_clock():
     now = [10.0]
     nav = rows_nav(INBOX + ['enter', 'c', 'x'])
-    nav.clock = lambda: now[0]
+    nav.feedback.clock = lambda: now[0]
     nav.handle_key('enter')
     inbox = Tab('topics', '/inbox')
-    assert nav.errline(inbox) and nav.layer == EDIT
+    assert nav.feedback.errline(inbox) and nav.layer == EDIT
     now[0] += NAV_ERRLINE_S - 0.1
-    assert not nav.tick() and nav.errline(inbox)
+    assert not nav.tick() and nav.feedback.errline(inbox)
     now[0] += 0.1
-    assert nav.tick() and nav.errline(inbox) == '' and nav.layer == EDIT
-
-
-@pytest.mark.parametrize('kind, type_name, short', [
-    ('topics', 'std_msgs/msg/String', 'String'),
-    ('services', 'turtlesim/srv/TeleportAbsolute', 'TeleportAbsolute'),
-    ('nodes', 'namespace /', 'node'),
-])
-def test_short_type(kind, type_name, short):
-    assert short_type(kind, type_name) == short
+    assert nav.tick() and nav.feedback.errline(inbox) == '' and nav.layer == EDIT
 
 
 def test_x_on_the_list():
@@ -267,7 +283,7 @@ def test_chips_cycle_and_reset_the_cursor():
     assert seen == [(0, 'showing topics', 0), (1, 'showing services', 0), (2, 'showing actions', 0),
                     (3, 'showing nodes', 0), (-1, 'showing everything', 0)]
     nav.handle_key('shift+tab')
-    assert (nav.chip, len(nav.home_rows())) == (3, 2)
+    assert (nav.chip, len(nav.catalog.rows(nav.chip))) == (3, 2)
     assert last_log(nav) == ('shift+tab', 'showing nodes')
 
 
@@ -275,7 +291,7 @@ def test_list_cursor_clamps():
     nav = nav_after(['k', 'up'])
     assert nav.list_cur == 0
     nav = nav_after(['j'] * 30)
-    assert nav.list_cur == len(nav.home_rows()) - 1 == 11
+    assert nav.list_cur == len(nav.catalog.rows(nav.chip)) - 1 == 11
 
 
 def test_unknown_key_hints():
@@ -286,7 +302,7 @@ def test_unknown_key_hints():
 
 
 def test_unwanted_keys_are_not_consumed():
-    nav = design_nav()
+    nav = fixture_nav()
     assert nav.handle_key('f5') is False
     assert nav.handle_key('j') is True
 
@@ -298,30 +314,30 @@ def test_search_type_move_open():
     assert last_log(nav) == ('/', 'search everything')
     for key in 'pose':
         nav.handle_key(key)
-    assert [item.name for _, item in nav.search_rows()] == [
+    assert [item.name for _, item in nav.catalog.search(nav.overlay.q)] == [
         '/localisation_pose', '/goal_pose', '/set_pose', '/navigate_to_pose']
     nav.handle_key('up')
-    assert nav.search.cur == 0
+    assert nav.shown(Search).cur == 0
     for key in ['down'] * 9:
         nav.handle_key(key)
-    assert nav.search.cur == 3
+    assert nav.shown(Search).cur == 3
     nav.handle_key('backspace')
-    assert (nav.search.q, nav.search.cur) == ('pos', 0)
+    assert (nav.shown(Search).q, nav.shown(Search).cur) == ('pos', 0)
     nav.handle_key('enter')
-    assert nav.search is None and nav.tab.name == '/localisation_pose'
+    assert nav.shown(Search) is None and nav.tab.name == '/localisation_pose'
     assert last_log(nav) == ('enter', 'opened /localisation_pose (tab 1)')
 
 
 def test_search_matches_types_and_keeps_typing_keys():
     nav = nav_after(['/', 'A', 'd', 'd', 'T', 'w', 'o'])  # In the type, case-insensitive.
-    assert [item.name for _, item in nav.search_rows()] == ['/add_two_ints']
+    assert [item.name for _, item in nav.catalog.search(nav.overlay.q)] == ['/add_two_ints']
     nav = nav_after(['/', 'x', 'space', 'q', 'question_mark'])  # Keys that mean something in normal mode type.
-    assert nav.search.q == 'x q?' and nav.which_key is None and nav.tabs == []
+    assert nav.shown(Search).q == 'x q?' and nav.summary()['which_key'] is None and nav.tabs == []
 
 
 def test_search_without_matches_stays_open():
     nav = nav_after(['/', 'z', 'z', 'z', 'enter'])
-    assert nav.search is not None and nav.tabs == []
+    assert nav.shown(Search) is not None and nav.tabs == []
 
 
 def test_search_esc_message():
@@ -331,7 +347,7 @@ def test_search_esc_message():
 # ---------- command line ----------
 
 def suggestions(nav):
-    return [name for name, _ in nav.cmd_suggestions()]
+    return [name for name, _ in nav.overlay.suggestions()]
 
 
 def test_command_suggestions_and_tab_completion():
@@ -339,14 +355,14 @@ def test_command_suggestions_and_tab_completion():
     assert suggestions(nav) == ['log', 'topics', 'services', 'actions', 'nodes', 'all', 'rate ']
     nav.handle_key('a')
     assert suggestions(nav) == ['actions', 'all']
-    nav.handle_key('shift+tab')  # The design reads shift+tab as tab here too.
-    assert nav.cmd.q == 'actions'
+    nav.handle_key('shift+tab')  # shift+tab reads as tab here too.
+    assert nav.shown(CommandLine).q == 'actions'
     nav = nav_after([':', 'r', 'tab'])
-    assert nav.cmd.q == 'rate '
+    assert nav.shown(CommandLine).q == 'rate '
     nav.handle_key('5')
     assert suggestions(nav) == ['rate ']
     nav.handle_key('tab')  # Nothing to complete once an argument is typed.
-    assert nav.cmd.q == 'rate 5'
+    assert nav.shown(CommandLine).q == 'rate 5'
 
 
 @pytest.mark.parametrize('keys, chip', [
@@ -359,7 +375,7 @@ def test_command_suggestions_and_tab_completion():
 ])
 def test_list_commands(keys, chip):
     nav = nav_after(['enter', 'escape'] + keys)
-    assert (nav.chip, nav.active, nav.layer, nav.list_cur, nav.cmd) == (chip, -1, IN, 0, None)
+    assert (nav.chip, nav.active, nav.layer, nav.list_cur, nav.shown(CommandLine)) == (chip, -1, IN, 0, None)
 
 
 def test_topics_command_message():
@@ -371,77 +387,88 @@ def test_topics_command_message():
 
 def test_unknown_command_toasts():
     nav = nav_after([':', 'f', 'o', 'o', 'enter'])
-    assert (nav.toast.text, nav.toast.kind) == ('unknown command :foo — : then tab lists them', 'bad')
+    assert nav.summary()['toast'] == ['unknown command :foo — : then tab lists them', 'bad']
     assert last_log(nav) == (':foo', 'unknown command')
-    assert nav.cmd is None
+    assert nav.shown(CommandLine) is None
 
 
 def test_command_with_an_argument_stays_open():
     nav = nav_after([':', 'up', 'enter'])  # Up wraps to the last suggestion, 'rate '.
-    assert nav.cmd is not None and nav.cmd.q == 'rate '
-    nav = nav_after(['/', 'i', 'n', 'b', 'enter', ':', 'r', 'tab', 'enter', '5', 'enter'], RowsProvider())
-    assert nav.cmd is None
-    assert nav.provider.verbs[-1] == ('set_rate', ':rate', '5')
+    assert nav.shown(CommandLine) is not None and nav.shown(CommandLine).q == 'rate '
+    nav = nav_after(['/', 'i', 'n', 'b', 'enter', ':', 'r', 'tab', 'enter', '5', 'enter'], RowsWorld())
+    assert nav.shown(CommandLine) is None
+    assert verbs(nav)[-1] == ('set_rate', ':rate', '5')
 
 
 def test_command_word_without_its_argument_runs():
-    nav = nav_after(['/', 'i', 'n', 'b', 'enter', ':', 'r', 'a', 't', 'e', 'enter'], RowsProvider())
-    assert nav.cmd is None and nav.provider.verbs[-1] == ('set_rate', ':rate', '')
+    nav = nav_after(['/', 'i', 'n', 'b', 'enter', ':', 'r', 'a', 't', 'e', 'enter'], RowsWorld())
+    assert nav.shown(CommandLine) is None and verbs(nav)[-1] == ('set_rate', ':rate', '')
     nav = nav_after([':', 'r', 'a', 'enter'])  # A partial word picks 'rate ', which waits for its argument.
-    assert nav.cmd.q == 'rate '
+    assert nav.shown(CommandLine).q == 'rate '
 
 
 def test_command_line_opens_empty_each_time():
     nav = nav_after([':', 'x', 'escape', ':'])
-    assert nav.cmd.q == ''
+    assert nav.shown(CommandLine).q == ''
 
 
 def test_command_cancel():
     for keys in ([':', 'escape'], [':', 'backspace'], [':', 'x', 'backspace', 'backspace']):
         nav = nav_after(keys)
-        assert nav.cmd is None and nav.footer().mode == 'normal'
+        assert nav.shown(CommandLine) is None and nav.footer().mode == 'normal'
     nav = nav_after([':', 'x', 'y', 'backspace'])
-    assert nav.cmd.q == 'x'
+    assert nav.shown(CommandLine).q == 'x'
 
 
 def test_other_commands():
     assert nav_after([':', 'q', 'enter']).quit
-    assert nav_after([':', 'h', 'e', 'l', 'p', 'enter']).which_key == 'all'
+    assert nav_after([':', 'h', 'e', 'l', 'p', 'enter']).summary()['which_key'] == 'all'
     nav = nav_after([':', 'l', 'o', 'g', 'enter'])
-    assert nav.logv is not None
+    assert nav.shown(LogView) is not None
     nav.handle_key('escape')
-    assert nav.logv is None
+    assert nav.shown(LogView) is None
     nav = nav_after(['/', 'd', 'i', 'a', 'g', 'enter', ':', 'p', 'u', 'b', 'enter'])
     assert (nav.entry_mode(), last_log(nav)) == ('publish', (':pub', 'now in publish'))
-    nav.run_command('echo')
+    for key in ':echo':
+        nav.handle_key(key)
+    nav.handle_key('enter')
     assert nav.entry_mode() == 'echo'
-    assert nav_after([':', 'e', 'c', 'h', 'o', 'enter']).log[0] == (':echo', 'only topics have Echo / Publish')
+    assert nav_after([':', 'e', 'c', 'h', 'o', 'enter']).feedback.log[0] == (':echo', 'only topics have Echo / Publish')
 
 
 # ---------- popups ----------
 
 def test_which_key_closes_on_the_next_key():
     nav = nav_after(['?'])
-    assert nav.which_key == 'all'
+    assert nav.summary()['which_key'] == 'all'
     assert nav.footer()[2:4] == ('', '')  # esc / enter are hidden under the popup.
     nav.handle_key('escape')  # Any key just closes it: esc doesn't also go up.
-    assert (nav.which_key, nav.layer) == (None, IN)
+    assert (nav.summary()['which_key'], nav.layer) == (None, IN)
 
 
 def test_g_prefix_popup():
     nav = nav_after(['g'])
-    assert (nav.pending, nav.which_key, nav.footer().pending) == ('g', 'g', 'g')
+    assert (nav.footer().pending, nav.summary()['which_key'], nav.footer().pending) == ('g', 'g', 'g')
     nav.handle_key('j')
-    assert (nav.pending, nav.which_key, nav.list_cur) == ('', None, 0)
+    assert (nav.footer().pending, nav.summary()['which_key'], nav.list_cur) == ('', None, 0)
     assert last_log(nav) == ('gj', 'no such key')
     nav = nav_after(['g', 'escape'])
     assert (last_log(nav), nav.layer) == (('esc', 'g canceled'), IN)
 
 
-# ---------- the area and insert layers (RowsProvider) ----------
+# ---------- the area and insert layers (RowsEntry) ----------
 
 def rows_nav(keys):
-    return nav_after(keys, RowsProvider())
+    return nav_after(keys, RowsWorld())
+
+
+def verbs(nav):
+    """The verbs the RowsEntries of `nav` ran: (name, how, arg)."""
+    return nav.new_entry.verbs
+
+
+def values(nav, name='/inbox', area='msg'):
+    return nav.entry(Tab('topics', name)).values.get(area, ['1', '2', '3'])
 
 
 def test_rows_move_and_clamp():
@@ -477,20 +504,20 @@ def test_edit_and_keep():
 def test_typing_in_insert_doesnt_run_keys():
     nav = rows_nav(INBOX + ['enter', 'c', 'x', 'u', 'g', 'question_mark', 'space', '0'])
     assert nav.editing.value == 'xug? 0'
-    assert (nav.tabs[0].name, len(nav.tabs), nav.which_key, nav.pending) == ('/inbox', 1, None, '')
+    assert (nav.tabs[0].name, len(nav.tabs), nav.summary()['which_key'], nav.footer().pending) == ('/inbox', 1, None, '')
 
 
 def test_invalid_value_enter_stays_esc_drops():
     nav = rows_nav(INBOX + ['enter', 'c', 'x', 'enter'])
     assert nav.layer == EDIT
     assert last_log(nav) == ('enter', '✗ a needs a number, got "x" — still editing (esc drops it)')
-    assert nav.errline(Tab('topics', '/inbox')) == 'a needs a number, got "x"'
+    assert nav.feedback.errline(Tab('topics', '/inbox')) == 'a needs a number, got "x"'
     nav.handle_key('escape')
     assert nav.layer == AREA and nav.editing is None
-    assert (nav.toast.text, nav.toast.kind) == ('a needs a number, got "x" — kept the old value', 'bad')
+    assert nav.summary()['toast'] == ['a needs a number, got "x" — kept the old value', 'bad']
     assert last_log(nav) == ('esc', '✗ a needs a number, got "x" — dropped, kept the old value')
-    assert 'topics:/inbox' not in nav.errlines
-    assert nav.provider.values['topics:/inbox|msg'] == ['1', '2', '3']
+    assert nav.feedback.errline(Tab('topics', '/inbox')) == ''
+    assert values(nav) == ['1', '2', '3']
 
 
 def test_tab_keeps_and_edits_the_next_field():
@@ -514,30 +541,30 @@ def test_i_and_c_from_the_area_pick():
 
 def test_ctrl_s_in_insert_keeps_then_sends():
     nav = rows_nav(INBOX + ['i', '9', 'ctrl+s'])
-    assert nav.layer == AREA and nav.provider.verbs == [('primary', '^s', None)]
-    assert nav.provider.values['topics:/inbox|msg'][0] == '19'
+    assert nav.layer == AREA and verbs(nav) == [('primary', '^s', None)]
+    assert values(nav)[0] == '19'
     nav = rows_nav(INBOX + ['c', 'x', 'ctrl+s'])  # A bad value is never sent.
-    assert nav.layer == EDIT and nav.provider.verbs == []
+    assert nav.layer == EDIT and verbs(nav) == []
 
 
 def test_space_sends_only_from_an_entry():
     nav = rows_nav(['space'])
-    assert nav.provider.verbs == []
+    assert verbs(nav) == []
     nav = rows_nav(['enter', 'escape', 'space'])  # Not from the tab row either.
-    assert nav.provider.verbs == []
+    assert verbs(nav) == []
     nav = rows_nav(['enter', 'space', 'enter', 'ctrl+s'])
-    assert nav.provider.verbs == [('primary', 'space', None), ('primary', '^s', None)]
+    assert verbs(nav) == [('primary', 'space', None), ('primary', '^s', None)]
 
 
-def test_verbs_reach_the_provider():
+def test_verbs_reach_the_entry():
     nav = rows_nav(INBOX + ['s', 'r', 'R', 'left_square_bracket', ']', 'y', 'p'])
-    assert [v[0] for v in nav.provider.verbs] == [
+    assert [v[0] for v in verbs(nav)] == [
         'secondary', 'repeat', 'rate', 'history_older', 'history_newer', 'yank', 'paste']
 
 
 def test_full_stop_does_nothing():
     nav = rows_nav(INBOX + ['.', 'full_stop'])
-    assert nav.provider.verbs == []
+    assert verbs(nav) == []
     assert last_log(nav) == ('.', 'nothing on "." here — ? shows the keys')
 
 
@@ -555,11 +582,11 @@ def test_e_toggles_the_topic_mode():
 def test_helper_hint_and_f():
     nav = rows_nav(INBOX + ['enter', 'j', 'j'])
     assert nav.footer().helper == 'Quaternion'
-    nav = rows_nav(INBOX + ['f'])  # f on a picked message goes in first.
-    assert nav.layer == AREA and nav.provider.verbs == [('helper', 'f', None)]
+    nav = rows_nav(INBOX + ['enter', 'j', 'j', 'escape', 'f'])  # f on a picked message goes in first.
+    assert nav.layer == AREA and verbs(nav) == [('helper', 'f', None)]
     nav = nav_after(INBOX + ['enter', 'f'])
-    assert (nav.toast.text, last_log(nav)) == ('no helper for this field — fields with one show [f …]',
-                                               ('f', 'no helper on this field'))
+    assert (nav.feedback.toast.text, last_log(nav)) == ('no helper for this field — fields with one show [f …]',
+                                                        ('f', 'no helper on this field'))
 
 
 def test_enter_on_an_interface_row_opens_it():
@@ -584,18 +611,18 @@ def test_node_footer_labels():
     assert nav.footer()[1:4] == (('tabs', '/ros_tui_demo_servers', 'parameters'), 'pick another area', 'edit')
 
 
-def test_helper_overlay_routes_to_the_provider():
+def test_helper_overlay_takes_the_keys():
     nav = rows_nav(INBOX + ['enter', 'j', 'j'])
-    nav.helper = Helper('quat')
+    helper = nav.overlay = Helper('quat')
     assert nav.footer()[0:4] == ('helper', ('tabs', '/inbox', 'message'), 'cancel', 'apply')
     for key in ['tab', 'j', '9']:  # Everything goes to the helper; nothing moves underneath.
         nav.handle_key(key)
-    nav.handle_key('enter')
-    assert nav.provider.verbs == [('helper_key', 'tab', 'tab'), ('helper_key', 'j', 'j'), ('helper_key', '9', '9'),
-                                  ('helper_apply', 'enter', None)]
+    assert (helper.mode, helper.values) == (1, {'roll': 'j9'})
+    nav.handle_key('enter')  # The entry writes its value.
+    assert verbs(nav) == [('helper_apply', 'enter', None)]
     assert (nav.row_index(), nav.layer) == (2, AREA)
     nav.handle_key('escape')
-    assert nav.helper is None and last_log(nav) == ('esc', 'helper closed, nothing changed')
+    assert nav.shown(Helper) is None and last_log(nav) == ('esc', 'helper closed, nothing changed')
 
 
 # ---------- per-tab undo ----------
@@ -604,11 +631,11 @@ def test_undo_is_per_tab():
     nav = rows_nav(INBOX + ['enter', 'enter', '5', 'escape', '0', 'G', 'k', 'enter'])  # Edit /inbox, open a node.
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'nothing to undo here')
-    assert nav.provider.values['topics:/inbox|msg'][0] == '15'
+    assert values(nav)[0] == '15'
     nav.handle_key('1')
     nav.handle_key('u')
     assert last_log(nav) == ('u', 'undid the edit of a on /inbox')
-    assert nav.provider.values['topics:/inbox|msg'][0] == '1'
+    assert values(nav)[0] == '1'
 
 
 def test_reopen_is_the_global_exception():
@@ -623,38 +650,39 @@ def test_reopen_is_the_global_exception():
 # ---------- activity log ----------
 
 def test_activity_log_moves_and_jumps():
-    nav = design_nav()
+    nav = fixture_nav()
     nav.open_entity('topics', '/chatter', 'test')
     nav.open_entity('services', '/add_two_ints', 'test')
-    nav.add_activity(nav.tabs[0], 'echo started')
-    nav.add_activity(nav.tabs[1], '▶ called · a: 1, b: 2')
+    nav.feedback.add_activity(nav.tabs[0], 'echo started')
+    nav.feedback.add_activity(nav.tabs[1], '▶ called · a: 1, b: 2')
     nav.handle_key('0')
-    nav.run_command('log')
+    for key in [':', 'l', 'o', 'g', 'enter']:
+        nav.handle_key(key)
     assert nav.footer()[2:4] == ('close', 'go there')
     for key, cur in [('j', 1), ('j', 1), ('k', 0), ('G', 1), ('g', 0), ('down', 1)]:
         nav.handle_key(key)
-        assert nav.logv.cur == cur
+        assert nav.shown(LogView).cur == cur
     nav.handle_key('enter')
-    assert nav.logv is None and nav.tab.name == '/chatter'
+    assert nav.shown(LogView) is None and nav.tab.name == '/chatter'
 
 
 # ---------- footer details ----------
 
 def test_breadcrumb_override_for_a_custom_editor():
     nav = rows_nav(INBOX)
-    nav.editing = nav.provider.start_edit(nav.tab, nav.area(), 0, False)
+    nav.begin_edit(nav.entry(nav.tab).start_edit(nav.area(), 0, False))
     nav.editing.crumb = ('repeat rate',)
     nav.editing.back = IN
-    nav.layer = EDIT
-    assert nav.path() == ('tabs', '/inbox', 'repeat rate', 'editing')
+    assert nav.footer().path == ('tabs', '/inbox', 'repeat rate', 'editing')
     nav.handle_key('enter')
     assert nav.layer == IN
 
 
 def test_set_catalog_from_a_graph_snapshot():
-    nav = NavState(DesignProvider())
-    nav.set_catalog(DEMO_GRAPH, publishers={'/chatter': 1})
-    assert [item.name for _, item in nav.home_rows()][:2] == ['/chatter', '/counter']
+    nav = NavState(FixtureEntry)
+    nav.set_catalog(dataclasses.replace(DEMO_GRAPH, topics=(TopicInfo('/chatter', ('std_msgs/msg/String',), 1),
+                                                            TopicInfo('/counter', ('std_msgs/msg/Int32',)))))
+    assert [item.name for _, item in nav.catalog.rows(nav.chip)][:2] == ['/chatter', '/counter']
     assert nav.catalog['services'][0].type == 'example_interfaces/srv/AddTwoInts'
     nav.handle_key('enter')
     assert nav.entry_mode() == 'echo'
@@ -666,14 +694,14 @@ def test_set_catalog_from_a_graph_snapshot():
 
 def test_set_catalog_clamps_the_cursor():
     nav = nav_after(['G'])
-    nav.set_catalog(type(DESIGN_CATALOG)(topics=DESIGN_CATALOG.topics[:2], services=[], actions=[], nodes=[]))
+    nav.set_catalog(type(FIXTURE_CATALOG)(topics=FIXTURE_CATALOG.topics[:2], services=[], actions=[], nodes=[]))
     assert nav.list_cur == 1
 
 
-# ---------- the mouse (the design's mousedown handler) ----------
+# ---------- the mouse ----------
 
 def test_clicks_do_what_the_keys_do():
-    nav = design_nav()
+    nav = fixture_nav()
     nav.click(('chip', 1))
     assert (nav.chip, nav.list_cur) == (1, 0) and last_log(nav) == ('click', 'showing services')
     nav.click(('open', ('services', '/add_two_ints')))
@@ -701,7 +729,7 @@ def test_a_click_on_a_button_runs_its_verb():
     nav = rows_nav(INBOX)
     nav.click(('verb', 'repeat'))
     nav.click(('verb', 'primary'))
-    assert nav.provider.verbs == [('repeat', 'click', None), ('primary', 'click', None)]
+    assert verbs(nav) == [('repeat', 'click', None), ('primary', 'click', None)]
 
 
 def test_a_click_keeps_the_value_being_typed_first():
@@ -709,25 +737,60 @@ def test_a_click_keeps_the_value_being_typed_first():
     assert nav.layer == EDIT
     nav.click(('area', 1))  # Kept as esc keeps it: a bad value is dropped, with its toast.
     assert (nav.layer, nav.area().id, nav.editing) == (AREA, 'out', None)
-    assert nav.toast.kind == 'bad'
+    assert nav.feedback.toast.kind == 'bad'
 
 
 def test_a_click_outside_a_popup_closes_it_and_does_nothing_else():
     nav = nav_after(['/'])
     nav.click(('chip', 2))  # Under the veil.
-    assert nav.search is None and nav.chip == -1
+    assert nav.shown(Search) is None and nav.chip == -1
     assert last_log(nav) == ('esc', 'search closed — back where you were')
     nav = nav_after(['/', 'a', 'd', 'd'])
     nav.click(('open', ('services', '/add_two_ints')), on_popup=True)  # A match.
-    assert nav.search is None and nav.tab.name == '/add_two_ints'
-    for keys, gone in ((['question_mark'], lambda n: n.which_key is None), (['g'], lambda n: n.pending == ''),
-                       (['colon'], lambda n: n.cmd is None)):
+    assert nav.shown(Search) is None and nav.tab.name == '/add_two_ints'
+    for keys in (['question_mark'], ['g'], ['colon']):
         nav = nav_after(keys)
         nav.click(('chip', 1))
-        assert gone(nav) and nav.chip == -1, keys
+        assert nav.overlay is None and nav.chip == -1, keys
     nav = nav_after(['enter', 'space', 'colon', 'l', 'o', 'g', 'enter'])
-    nav.add_activity(Tab('topics', '/counter'), '◉ echo started', 'c')
+    nav.feedback.add_activity(Tab('topics', '/counter'), '◉ echo started', 'c')
     nav.click(None, on_popup=True)  # The log's title: nothing.
-    assert nav.logv is not None
+    assert nav.shown(LogView) is not None
     nav.click(('open', ('topics', '/counter')), on_popup=True)
-    assert nav.logv is None and nav.tab.name == '/counter'
+    assert nav.shown(LogView) is None and nav.tab.name == '/counter'
+
+
+# ---------- the pieces beside NavState, on their own ----------
+
+def test_catalog_alone():
+    catalog = Catalog()
+    catalog.set(FIXTURE_CATALOG)
+    assert len(catalog) == 12 and [item.name for _, item in catalog.rows(1)] == ['/add_two_ints', '/set_pose']
+    assert [item.name for _, item in catalog.search('TWO')] == ['/add_two_ints']
+    assert catalog.item(Tab('nodes', '/talker')).type == 'namespace /' and catalog.item(Tab('nodes', '/x')) is None
+
+
+def test_command_line_alone():
+    cmd = CommandLine()
+    cmd.edit('se')
+    assert cmd.suggestions() == [('services', 'list only services')] and cmd.picked() == 'services'
+    cmd.edit('')
+    cmd.move(-1)
+    assert cmd.picked() == 'rate '  # ↑ from the first wraps to the last of the 7 shown.
+    cmd.edit('r')
+    cmd.complete()
+    assert cmd.q == 'rate ' and cmd.picked() == 'rate '
+
+
+def test_feedback_alone():
+    now = [0.0]
+    feedback = Feedback(lambda: now[0])
+    tab = Tab('topics', '/chatter')
+    feedback.report_error(tab, 'bad value')
+    feedback.refuse('x', 'no')
+    feedback.flash_send(tab)
+    assert (feedback.errline(tab), feedback.toast.text, feedback.log[0]) == ('bad value', 'no', ('x', 'no'))
+    assert feedback.flashing(tab) and feedback.fresh_lines() == 1 and not feedback.tick()
+    now[0] = NAV_ERRLINE_S
+    assert feedback.tick() and (feedback.errline(tab), feedback.toast, feedback.flash) == ('', None, None)
+    assert feedback.activity[0].text == '✗ bad value' and feedback.fresh_lines() == 0

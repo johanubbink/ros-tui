@@ -48,7 +48,7 @@ from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from ros_tui.ros.events import ActionEvent, ActionEventKind
-from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo
+from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo, TopicInfo
 from ros_tui.ros.message_yaml import import_type
 from sensor_msgs.srv import SetCameraInfo
 from std_msgs.msg import Int32, String
@@ -57,7 +57,7 @@ import yaml
 
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
-STAMP_EPOCH_S = 1728036000  # Stamps of simulated messages count from here (as the design does).
+STAMP_EPOCH_S = 1728036000  # Stamps of simulated messages count from here.
 TIME_OF_DAY_S = 9 * 3600 + 41 * 60  # The fake clock's 0.0 is 09:41:00, so activity times are repeatable.
 
 # ---------------------------------------------------------------- the demo world
@@ -84,12 +84,16 @@ DEMO_NODES = {
     'talker': InterfaceEntry('/talker', ('/',)),
 }
 
-# Mirrors ros_tui/demo/demo_servers.py (plus /talker) and the KINDS table of the design prototype.
+# The demo servers publish these topics (one publisher each) and subscribe to the others.
+DEMO_PUBLISHED = ('/chatter', '/counter', '/diagnostic_status', '/localisation_pose')
+
+# Mirrors ros_tui/demo/demo_servers.py (plus /talker).
 DEMO_GRAPH = GraphSnapshot(
     version=1,
     actions=tuple(DEMO_ACTIONS.values()),
     services=tuple(DEMO_SERVICES.values()),
-    topics=tuple(DEMO_TOPICS.values()),
+    topics=tuple(TopicInfo(t.name, t.types, *((1, 0) if t.name in DEMO_PUBLISHED else (0, 1)))
+                 for t in DEMO_TOPICS.values()),
     nodes=tuple(DEMO_NODES.values()),
 )
 
@@ -212,7 +216,7 @@ DEMO_ACTION_SCRIPTS = {
 
 
 # A service with a nested request (messages, a list, fixed arrays) for the field-row editor's tests.
-# Not in DEMO_GRAPH: the demo servers and the design don't have it.
+# Not in DEMO_GRAPH: the demo servers don't have it.
 CAMERA_INFO_SERVICE = InterfaceEntry('/camera/set_camera_info', ('sensor_msgs/srv/SetCameraInfo',))
 
 
@@ -323,7 +327,6 @@ class FakeBridge:
         self.periodic_started = []
         self.periodic_stopped = []
         self.subscriptions = {}
-        self.topic_counts_requests = []
         self.node_info_requests = []
         self.param_list_requests = []
         self.set_param_calls = []
@@ -339,7 +342,7 @@ class FakeBridge:
 
     @classmethod
     def demo(cls, clock: ManualClock | None = None) -> 'FakeBridge':
-        """A live bridge over ``DEMO_GRAPH``: the same world as the demo servers and the design."""
+        """A live bridge over ``DEMO_GRAPH``: the same world as the demo servers."""
         return cls(
             live=True,
             clock=clock,
@@ -488,17 +491,6 @@ class FakeBridge:
         if timer is not None:
             timer.cancel()
         return completed_future()
-
-    def pending_echo(self) -> int:
-        """Messages pushed into echo buffers that the UI has not drained yet."""
-        return sum(buffer.pending() for buffer in self.subscriptions.values())
-
-    def topic_endpoint_counts(self, name):
-        self.topic_counts_requests.append(name)
-        if self.live:
-            publishers = 1 if name in self.feeds or name in self._periodic_timers else 0
-            return completed_future((publishers, 0 if publishers else 1))
-        return completed_future((1, 2))
 
     def shutdown(self):
         for timer in [*self._feed_timers.values(), *self._periodic_timers.values()]:

@@ -22,6 +22,8 @@ A header is written as one of three values, which all go through ``build_message
 
 from typing import Any
 
+from ros_tui.constants import TIME_NOW
+
 
 def parse_header(value: Any) -> tuple[str, str, Any]:
     """Best-effort (mode, frame_id, stamp) from a header field value: mode is 'auto', 'now' or
@@ -30,7 +32,7 @@ def parse_header(value: Any) -> tuple[str, str, Any]:
         return 'auto', '', None
     frame_id = str(value.get('frame_id', ''))
     stamp = value.get('stamp')
-    if stamp == 'now':
+    if stamp == TIME_NOW:
         return 'now', frame_id, None
     if isinstance(stamp, dict):
         return 'manual', frame_id, {

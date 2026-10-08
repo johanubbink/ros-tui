@@ -85,6 +85,7 @@ def test_graph_lists_fixture_entities(bridge, fixture_servers):
     assert action.types == (FIBONACCI_TYPE,)
     service = next(entry for entry in graph.services if entry.name == ADD_TWO_INTS_SERVICE)
     assert service.types == (ADD_TWO_INTS_TYPE,)
+    assert next(entry for entry in graph.topics if entry.name == CHATTER_TOPIC).publishers >= 1
     all_names = [
         entry.name for group in (graph.actions, graph.services, graph.topics) for entry in group
     ]

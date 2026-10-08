@@ -27,16 +27,16 @@ from dataclasses import replace
 
 import pytest
 from harness.fake_bridge import CAMERA_INFO_SERVICE, DEMO_GRAPH, FakeBridge, camera_demo
+from harness.live_world import live_nav
 from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ros.message_yaml import message_structure
-from ros_tui.ui.entries import entry_router
 from ros_tui.ui.fields import FieldRows, enum_matches, enum_value
 from ros_tui.ui.helpers import ENUM, HEADER, QUAT, TIME, Helper, helper_kind, helper_name
 from ros_tui.ui.helpers.header import parse_header
 from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler
 from ros_tui.ui.helpers.time import parse_time, seconds_str_to_stamp, stamp_to_seconds_str
 from ros_tui.ui.keymap import KeyRow, key_char, keys_now
-from ros_tui.ui.nav import AREA, EDIT, NavState, Tab
+from ros_tui.ui.nav import AREA, EDIT, Tab
 from ros_tui.ui.widgets.entry_body import row_line
 
 YAW_90 = {'x': 0.0, 'y': 0.0, 'z': 0.707107, 'w': 0.707107}
@@ -287,18 +287,9 @@ def test_an_enum_row_takes_a_name():
 
 
 # ---------- in the editors ----------
-def entry_nav(*keys, bridge=None):
-    bridge = bridge or FakeBridge.demo()
-    nav = NavState(entry_router(bridge), clock=bridge.now)
-    nav.set_catalog(bridge.latest_graph, {name: 1 for name in bridge.feeds})  # Published topics open in Echo.
-    for key in keys:
-        nav.handle_key(key)
-    return nav
-
-
 def editor(nav, tab=None):
     tab = tab or nav.tab
-    return nav.provider.for_tab(tab).data(tab).editor
+    return nav.entry(tab).editor
 
 
 GOAL_POSE_ORIENTATION = ['/', *'goal', 'enter', 'enter', 'j', 'j', 'j']  # pose starts unfolded.
@@ -307,7 +298,7 @@ GOAL_POSE_ORIENTATION = ['/', *'goal', 'enter', 'enter', 'j', 'j', 'j']  # pose 
 def test_the_popup_goes_under_the_row_where_it_is_drawn():
     """Header, a blank line, toolbar, a blank line, the panel's border and title, then rows 0–3; a
     short panel scrolls the row up."""
-    nav = entry_nav(*GOAL_POSE_ORIENTATION)
+    nav, _ = live_nav(*GOAL_POSE_ORIENTATION)
     assert row_line(nav, 120, 30) == 9
     assert row_line(nav, 120, 9) == 7  # Room for two rows: rows 2 and 3 show.
     nav.handle_key('0')
@@ -315,83 +306,84 @@ def test_the_popup_goes_under_the_row_where_it_is_drawn():
 
 
 def test_f_yaw_90_enter_fills_the_row_and_u_undoes_it():
-    nav = entry_nav(*GOAL_POSE_ORIENTATION)
+    nav, _ = live_nav(*GOAL_POSE_ORIENTATION)
     assert nav.footer().helper == 'Quaternion'
     nav.handle_key('f')
-    assert nav.helper.kind == QUAT and nav.mode_name() == 'helper' and nav.footer().helper == ''
-    assert nav.log[0] == ('f', 'opened the Quaternion helper for pose.orientation')
+    assert nav.shown(Helper).kind == QUAT and nav.footer().mode == 'helper' and nav.footer().helper == ''
+    assert nav.feedback.log[0] == ('f', 'opened the Quaternion helper for pose.orientation')
     for key in ['tab', 'tab', '9', '0', 'enter']:
         nav.handle_key(key)
-    assert nav.helper is None and nav.layer == AREA and nav.row_index() == 3
+    assert nav.shown(Helper) is None and nav.layer == AREA and nav.row_index() == 3
     assert editor(nav).get(('pose', 'orientation')) == YAW_90
-    assert nav.log[0] == ('enter', 'filled pose.orientation = {x: 0.0, y: 0.0, z: 0.707107, w: 0.707107} (u undoes)')
+    assert nav.feedback.log[0] == ('enter', 'filled pose.orientation = {x: 0.0, y: 0.0, z: 0.707107, w: 0.707107} (u undoes)')
     nav.handle_key('u')
     assert editor(nav).get(('pose', 'orientation')) == IDENTITY
-    assert nav.log[0] == ('u', 'undid the Quaternion helper on pose.orientation on /goal_pose')
+    assert nav.feedback.log[0] == ('u', 'undid the Quaternion helper on pose.orientation on /goal_pose')
 
 
 def test_esc_changes_nothing():
-    nav = entry_nav(*GOAL_POSE_ORIENTATION, 'f', 'tab', '4', '5', 'escape')
-    assert nav.helper is None and editor(nav).get(('pose', 'orientation')) == IDENTITY
-    assert nav.log[0] == ('esc', 'helper closed, nothing changed')
+    nav, _ = live_nav(*GOAL_POSE_ORIENTATION, 'f', 'tab', '4', '5', 'escape')
+    assert nav.shown(Helper) is None and editor(nav).get(('pose', 'orientation')) == IDENTITY
+    assert nav.feedback.log[0] == ('esc', 'helper closed, nothing changed')
     nav.handle_key('u')
-    assert nav.log[0] == ('u', 'nothing to undo here')
+    assert nav.feedback.log[0] == ('u', 'nothing to undo here')
 
 
 def test_a_helper_without_a_value_stays_open():
-    nav = entry_nav(*GOAL_POSE_ORIENTATION, 'f', 'x', 'enter')
-    assert nav.helper is not None and nav.toast.text == 'fix the highlighted values first'
+    nav, _ = live_nav(*GOAL_POSE_ORIENTATION, 'f', 'x', 'enter')
+    assert nav.shown(Helper) is not None and nav.feedback.toast.text == 'fix the highlighted values first'
 
 
 def test_the_same_value_is_no_undo_step():
-    nav = entry_nav(*GOAL_POSE_ORIENTATION, 'f', 'enter')
-    assert nav.log[0] == ('enter', 'filled pose.orientation = {x: 0.0, y: 0.0, z: 0.0, w: 1.0}')
+    nav, _ = live_nav(*GOAL_POSE_ORIENTATION, 'f', 'enter')
+    assert nav.feedback.log[0] == ('enter', 'filled pose.orientation = {x: 0.0, y: 0.0, z: 0.0, w: 1.0}')
     assert not nav.undo_stack
 
 
 def test_f_from_the_area_pick_goes_in_first():
-    nav = entry_nav('/', *'goal', 'enter', 'f')
-    assert nav.layer == AREA and nav.helper.kind == HEADER
+    nav, _ = live_nav('/', *'goal', 'enter', 'f')
+    assert nav.layer == AREA and nav.shown(Helper).kind == HEADER
     nav.handle_key('tab')
     nav.handle_key('enter')
     assert editor(nav).get(('header',)) == {'stamp': 'now', 'frame_id': 'map'}
 
 
 def test_f_on_a_row_without_a_helper():
-    nav = entry_nav('/', *'goal', 'enter', 'enter', 'j', 'f')
-    assert nav.helper is None and nav.toast.text == 'no helper for this field — fields with one show [f …]'
-    assert nav.log[0] == ('f', 'no helper on this field')
+    nav, _ = live_nav('/', *'goal', 'enter', 'enter', 'j', 'f')
+    assert nav.shown(Helper) is None and nav.feedback.toast.text == 'no helper for this field — fields with one show [f …]'
+    assert nav.feedback.log[0] == ('f', 'no helper on this field')
 
 
 def test_enum_in_a_topic_message():
-    nav = entry_nav('/', *'diag', 'enter', 'e', 'f', 'j', 'j', 'enter')
+    nav, _ = live_nav('/', *'diag', 'enter', 'e', 'f', 'j', 'j', 'enter')
     assert editor(nav).get(('level',)) == 2
     nav.handle_key('f')
     assert KeyRow('Helper', '0–3', 'jump / next field', '') in keys_now(nav)  # The real option count.
     nav.handle_key('escape')
     for key in ['i', 'backspace', 'w', 'escape']:
         nav.handle_key(key)
-    assert editor(nav).get(('level',)) == 1 and nav.log[0] == ('esc', 'kept level = 1 (u undoes)')
+    assert editor(nav).get(('level',)) == 1 and nav.feedback.log[0] == ('esc', 'kept level = 1 (u undoes)')
     for key in ['c', *'hot', 'enter']:
         nav.handle_key(key)
-    assert nav.layer == EDIT and nav.errline(nav.tab) == 'level needs OK / WARN / ERROR / STALE or a number, got "hot"'
+    assert nav.layer == EDIT
+    assert nav.feedback.errline(nav.tab) == 'level needs OK / WARN / ERROR / STALE or a number, got "hot"'
 
 
 def test_header_in_a_service_request():
     tab = Tab('services', CAMERA_INFO_SERVICE.name)
-    nav = entry_nav('/', *'camera', 'enter', 'enter', 'j', bridge=camera_demo())
+    nav, _ = live_nav('/', *'camera', 'enter', 'enter', 'j', bridge=camera_demo())
     assert nav.tab == tab and nav.footer().helper == 'Header'
     for key in ['f', 'tab', 'tab', 'down', *'2.5', 'enter']:
         nav.handle_key(key)
     assert editor(nav).get(('camera_info', 'header')) == {'stamp': {'sec': 2, 'nanosec': 500000000}, 'frame_id': 'map'}
     nav.handle_key('space')
-    assert nav.provider.for_tab(tab).data(tab).call is not None  # The request built and went out.
+    assert nav.entry(tab).call is not None  # The request built and went out.
 
 
 def test_time_in_an_action_goal():
     bridge = FakeBridge.demo()
     bridge.latest_graph = replace(DEMO_GRAPH, actions=DEMO_GRAPH.actions + (LOOKUP,))
-    nav = entry_nav('/', *'lookup', 'enter', 'enter', 'j', 'j', bridge=bridge)
+    nav, _ = live_nav('/', *'lookup', 'enter', 'enter', 'j', 'j', bridge=bridge)
     assert nav.tab == Tab('actions', LOOKUP.name) and nav.footer().helper == 'Time'
     for key in ['f', *'1.5', 'enter']:
         nav.handle_key(key)
@@ -402,7 +394,7 @@ def test_time_in_an_action_goal():
 
 
 def test_echo_rows_have_no_helper():
-    nav = entry_nav('/', *'diag', 'enter', 'enter')
+    nav, _ = live_nav('/', *'diag', 'enter', 'enter')
     assert nav.footer().helper == ''
     nav.handle_key('f')
-    assert nav.helper is None
+    assert nav.shown(Helper) is None

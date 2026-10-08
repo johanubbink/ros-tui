@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The colours of the UI, in one place: the design's :root tokens and its KC kind table.
+"""The colours of the UI, in one place: the colour tokens and the kind styles.
 
 Widgets that build Rich text use `TOKENS`, `KINDS` and `MODES` directly; textual CSS gets the same
 values as `$rt-<token>` variables (`css_variables`, merged in by the app). Don't put hex values in
-widget code or CSS. The tokens are documented in docs/design-principles.md ("Colour tokens").
+widget code or CSS. The tokens are documented in docs/design-principles.md ("Colours").
 """
 
 from typing import NamedTuple
 
 TOKENS = {
-    # The design's :root.
+    # The base palette.
     'term': '#121212',  # terminal background
     'term-2': '#181818',  # panel body
     'term-3': '#1e1e1e',  # panel title
@@ -37,7 +37,7 @@ TOKENS = {
     'live': '#4fd8e8',
     'warn': '#ffd08a',
     'bad': '#f48771',
-    # Surfaces and greys the design's terminal CSS uses.
+    # Surfaces and greys.
     'top': '#1a1f26',  # the top bar
     'strip': '#141414',  # the tab row and the activity strip
     'foot': '#1b1b1b',  # the footer
@@ -52,8 +52,8 @@ TOKENS = {
     'feed-head': '#5f6f7f',  # ACTIVITY · ALL TABS
     'type': '#5f8f99',  # the Type column
     'cursor': '#2b3a4a',  # the cursor row / the chip that is on
-    'chip': '#2a2a2a',  # a kind chip, the Echo / Publish switch (the design's .chip / .seg)
-    'chip-on': '#3d5a78',  # the chip or switch half that is on (the design's .chip.on border)
+    'chip': '#2a2a2a',  # a kind chip, the Echo / Publish switch
+    'chip-on': '#3d5a78',  # the chip or switch half that is on
     'cursor-on': '#3a414c',  # the cursor row while the list has the keys
     'tab-on': '#1d1d1d',  # the active tab
     'tab-cur': '#262b33',  # the tab-row cursor, a selected panel's title
@@ -64,21 +64,21 @@ TOKENS = {
     'err-bg': '#201414',  # an errline under a panel
     'edit': '#1c2733',  # a value being typed
     'edit-fresh': '#2f4f73',  # a value the first typed key replaces (a bool)
-    # Message rows (the design's .key .num .str .hint .ln).
+    # Message rows.
     'syn-key': '#9cdcfe',  # field names
     'syn-num': '#b5cea8',  # numbers and bools
     'syn-str': '#ce9178',  # strings
     'syn-hint': '#5c6f5c',  # "# int64" type hints
     'line-no': '#4a4a4a',  # row numbers
-    # Pills in panel titles (the design's .pill.run / .pill.can; .pill.ok is ok on ok-bg).
+    # Pills in panel titles.
     'live-bg': '#0f3a40',
     'warn-bg': '#3a3010',
-    # Buttons (the design's .btn, .btn.stop and .btn[disabled]; .btn.pri is bright on accent-fill).
+    # Buttons.
     'btn': '#1f1f1f',
     'btn-text': '#e6e6e6',
-    'pri-key': '#cfe6fa',  # the key in a primary button (the design's .btn.pri .k)
+    'pri-key': '#cfe6fa',  # the key in a primary button
     'stop-bg': '#4a2a12',
-    'btn-off': '#5a5a5a',  # a disabled button's text and key (the design's .btn[disabled])
+    'btn-off': '#5a5a5a',  # a disabled button's text and key
     'btn-off-bg': '#181818',
     'sep': '#444444',  # the breadcrumb's › separators
     'mode-text': '#121212',  # text on a mode badge
@@ -94,16 +94,26 @@ TOKENS = {
     'ok-bg': '#173a17',  # an ok toast (and ✓ OK pills)
     'bad-bg': '#3a1515',  # a bad toast
     'info': '#8fc3ec',  # an info toast's text, on panel-in
-    # The register chip in the top bar (the design's .reg) and the activity strip's fresh lines (.fl.new).
+    # The register chip in the top bar and the activity strip's fresh lines.
     'reg': '#c586c0',
     'fresh-bg': '#1d2a1d',
     'fresh-bad-bg': '#2a1a1a',
-    # Field helpers (the design's .hb badge, .hpop popup and .comp enum completion).
+    # Field helpers.
     'hb-edge': '#4a5568',  # a row's [f …] badge at rest
     'hb-text': '#aab4c3',
     'hb-on': '#2a313b',  # the badge on the row under the cursor, the helper field being typed
     'help-field': '#6a7382',  # a helper field's underline colour, the popup's key hint line
     'comp': '#7f8a99',  # an enum's completion while typing it
+}
+
+
+# A tone -> (text, background) of what is drawn in it on a fill: a state pill, a toast.
+TONES = {
+    'ok': ('ok', 'ok-bg'),
+    'bad': ('bad', 'bad-bg'),
+    'live': ('live', 'live-bg'),
+    'warn': ('warn', 'warn-bg'),
+    'info': ('info', 'panel-in'),
 }
 
 
@@ -115,7 +125,7 @@ class KindStyle(NamedTuple):
     one: str  # 'topic'
 
 
-# The design's KC table, by nav.KINDS.
+# Each kind's glyph and colours, by catalog.KINDS.
 KINDS = {
     'topics': KindStyle('≋', '#5fb3a8', '#14302c', 'Topics', 'topic'),
     'services': KindStyle('⇄', '#a597ea', '#241f3d', 'Services', 'service'),

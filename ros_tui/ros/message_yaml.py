@@ -42,7 +42,7 @@ from rosidl_runtime_py.convert import get_message_slot_types
 from rosidl_runtime_py.import_message import import_message_from_namespaced_type
 from rosidl_runtime_py.utilities import get_action, get_message, get_service
 
-from ros_tui.constants import TRUNCATE_ARRAY_ELEMENTS, TRUNCATE_STRING_CHARS, TYPE_CACHE_SIZE
+from ros_tui.constants import HEADER_AUTO, TIME_NOW, TRUNCATE_ARRAY_ELEMENTS, TRUNCATE_STRING_CHARS, TYPE_CACHE_SIZE
 
 # A deferred setter receives a builtin_interfaces/msg/Time and stamps it into the message.
 TimeSetter = Callable[[Any], None]
@@ -250,10 +250,10 @@ def _build(message_class: type, values: Any, path: str, setters: list[TimeSetter
         slot = slots[field_name]
         current = getattr(message, field_name)
         qualified = f'{type(current).__module__}.{type(current).__name__}'
-        if qualified == _HEADER_CLASS and field_value == 'auto':
+        if qualified == _HEADER_CLASS and field_value == HEADER_AUTO:
             setters.append(functools.partial(setattr, current, 'stamp'))
             continue
-        if qualified == _TIME_CLASS and field_value == 'now':
+        if qualified == _TIME_CLASS and field_value == TIME_NOW:
             setters.append(functools.partial(setattr, message, field_name))
             continue
         try:
@@ -406,7 +406,7 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
     if hasattr(value, 'get_fields_and_field_types'):
         qualified = f'{type(value).__module__}.{type(value).__name__}'
         if seed and qualified == _HEADER_CLASS:
-            return 'auto'  # Prefill the "stamp at send time" magic instead of a zeroed header.
+            return HEADER_AUTO  # Prefill the "stamp at send time" magic instead of a zeroed header.
         return _plain_message(value, max_array, max_str, seed)
     if isinstance(value, numpy.number):
         return value.item()

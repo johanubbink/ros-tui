@@ -521,17 +521,6 @@ class RosBridge:
 
         return self.submit(command)
 
-    def topic_endpoint_counts(self, name: str) -> Future:
-        """(publisher_count, subscriber_count) for ``name``, read from the graph."""
-
-        def command() -> tuple[int, int]:
-            return (
-                len(self._node.get_publishers_info_by_topic(name)),
-                len(self._node.get_subscriptions_info_by_topic(name)),
-            )
-
-        return self.submit(command)
-
     # ---------------------------------------------------------------- parameters
 
     def list_node_parameters(self, node_name: str, on_done: Callable) -> None:

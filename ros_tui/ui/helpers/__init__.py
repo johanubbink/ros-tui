@@ -15,9 +15,8 @@
 
 """The field helpers: `f` on a field row opens a small popup that fills the value for you.
 
-Pure Python (no textual, no rclpy), as the design's helper code (docs/design/hybrid-keys.html:
-helperAt, openHelper, helpResult, helperKey). A row has a helper when its type is in `BY_TYPE`, or
-when it is a whole number with enum constants (`helper_kind`). The kinds:
+Pure Python (no textual, no rclpy). A row has a helper when its type is in `BY_TYPE`, or when it is a
+whole number with enum constants (`helper_kind`). The kinds:
 
 - enum: pick one of the field's constants, "● 1 WARN = 1".
 - quat (Quaternion): x y z w, roll pitch yaw (°), yaw only (°), or axis + angle (°).
@@ -35,16 +34,17 @@ import dataclasses
 import math
 from typing import Any, NamedTuple
 
+from ros_tui.constants import HEADER_AUTO, TIME_NOW
 from ros_tui.ui.fields import COMPACT, LEAF, Row, flow_yaml
 from ros_tui.ui.helpers.header import parse_header
 from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler, yaw_of
 from ros_tui.ui.helpers.time import parse_time, seconds_str_to_stamp, stamp_to_seconds_str
 
 ENUM, QUAT, HEADER, TIME = 'enum', 'quat', 'header', 'time'
-NAMES = {ENUM: 'Enum', QUAT: 'Quaternion', HEADER: 'Header', TIME: 'Time'}  # The design's HNAME.
+NAMES = {ENUM: 'Enum', QUAT: 'Quaternion', HEADER: 'Header', TIME: 'Time'}
 BY_TYPE = {'geometry_msgs/Quaternion': QUAT, 'std_msgs/Header': HEADER, 'builtin_interfaces/Time': TIME}
 NANOSEC = 1_000_000_000
-DIGITS = 6  # What a typed number is rounded to when it is shown again (the design's r6).
+DIGITS = 6  # What a typed number is rounded to when it is shown again.
 
 
 class Mode(NamedTuple):
@@ -53,7 +53,7 @@ class Mode(NamedTuple):
     note: str = ''  # A line under the strip saying what the mode does.
 
 
-MODES = {  # The design's QMODES and HMODES.
+MODES = {  # Each helper kind's modes, in strip order.
     QUAT: (Mode('x y z w', ('x', 'y', 'z', 'w')), Mode('roll pitch yaw (°)', ('roll', 'pitch', 'yaw')),
            Mode('yaw only (°)', ('yaw',)), Mode('axis + angle (°)', ('ax', 'ay', 'az', 'angle'))),
     HEADER: (Mode('auto', (), 'empty header, stamped at send'), Mode('now', ('frame_id',), 'stamped at send, with a frame'),
@@ -104,7 +104,7 @@ class Helper:
 
     @staticmethod
     def open(row: Row | None) -> 'Helper | None':
-        """The helper for `row`, starting from its value (the design's openHelper); None without one."""
+        """The helper for `row`, starting from its value; None without one."""
         kind = helper_kind(row)
         if kind is None:
             return None
@@ -231,9 +231,9 @@ def _open_header(helper: Helper, value: Any) -> None:
 def _header_result(helper: Helper) -> Result | None:
     frame_id = helper.values['frame_id']
     if helper.mode == 0:
-        return Result('auto', 'auto — stamped when sent')
+        return Result(HEADER_AUTO, 'auto — stamped when sent')
     if helper.mode == 1:
-        return Result({'stamp': 'now', 'frame_id': frame_id}, f'stamp: now · frame_id: {frame_id}')
+        return Result({'stamp': TIME_NOW, 'frame_id': frame_id}, f'stamp: now · frame_id: {frame_id}')
     try:
         stamp = seconds_str_to_stamp(helper.values['stamp'])
     except ValueError:
@@ -252,7 +252,7 @@ def _open_time(helper: Helper, value: Any) -> None:
 
 def _time_result(helper: Helper) -> Result | None:
     if helper.mode == 0:
-        return Result('now', 'now — stamped when sent')
+        return Result(TIME_NOW, 'now — stamped when sent')
     if helper.mode == 1:
         try:
             stamp = seconds_str_to_stamp(helper.values['seconds'])

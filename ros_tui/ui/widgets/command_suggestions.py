@@ -13,18 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The command line's suggestions (the design's .cmdsug): above the footer, bottom left.
+"""The command line's suggestions: above the footer, bottom left.
 
 The command line itself replaces the footer row (widgets/footer.py). This lists up to
-keymap.MAX_SUGGESTIONS commands that match what is typed; the picked one is highlighted.
+command_line.MAX_SUGGESTIONS commands that match what is typed; the picked one is highlighted.
 """
 
 from rich.text import Text
 
+from ros_tui.ui.command_line import CommandLine
 from ros_tui.ui.widgets.base import Overlay, band, fit, style
 
-MIN_WIDTH = 46  # The design's min-width: 360px.
-NAME_WIDTH = 10  # The command column (min-width: 80px).
+MIN_WIDTH = 46  # Cells, at least.
+NAME_WIDTH = 10  # The command column, at least.
 
 
 class CommandSuggestions(Overlay):
@@ -33,7 +34,8 @@ class CommandSuggestions(Overlay):
     """
 
     def place(self, width, height):
-        suggestions = self.nav.cmd_suggestions() if self.nav.cmd else []
+        cmd = self.nav.shown(CommandLine)
+        suggestions = cmd.suggestions() if cmd else []
         if not suggestions:
             return None
         widest = max(len(text) for _, text in suggestions) + NAME_WIDTH + 5  # Lead, gap and border.
@@ -43,8 +45,9 @@ class CommandSuggestions(Overlay):
 
     def lines(self, width, height):
         lines = []
-        for index, (name, text) in enumerate(self.nav.cmd_suggestions()):
+        cmd = self.nav.overlay
+        for index, (name, text) in enumerate(cmd.suggestions()):
             line = Text.assemble(' ', fit(Text(':' + name, style('key', bold=True)), NAME_WIDTH), '  ',
                                  (text, style('grey')))
-            lines.append(band(line, width, 'cmd-sel') if index == self.nav.cmd.cur else line)
+            lines.append(band(line, width, 'cmd-sel') if index == cmd.cur else line)
         return lines

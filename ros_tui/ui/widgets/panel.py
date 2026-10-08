@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The panels (areas) of an entry, as the design's .panel / .pt / .pb / .l.sel / .errline.
+"""The panels (areas) of an entry.
 
 An entry's renderer describes each area as a `Panel`: its body lines, which line is the current
 row, the hints after the title and an errline. `draw_panel` draws it in one of three states:
@@ -33,7 +33,8 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ros_tui.ui.nav import AREA, EDIT, IN, NavState
-from ros_tui.ui.widgets.base import fit, spread, style
+from ros_tui.ui.theme import TONES
+from ros_tui.ui.widgets.base import fit, keyed, spread, style
 
 PANEL_TOP = 2  # Lines above a panel's body: the border and the title bar.
 PANEL_LOOKS = {  # panel state -> (border colour, title background)
@@ -51,13 +52,14 @@ class Panel:
     aside: Text = field(default_factory=Text)  # At the right of the title bar, e.g. "3 received · 1.0 Hz".
     cursor: int | None = None  # The line of the current row; None when the area has no rows.
     errline: str = ''  # Shown under the body, after "✗ ".
-    wrap: bool = False  # Wrap long lines (the design's .lwrap) instead of cropping them.
+    wrap: bool = False  # Wrap long lines instead of cropping them.
     edits: bool = False  # i edits its current row from the area pick, so the row is marked while selected.
 
 
 def panel_state(nav: NavState, index: int) -> str:
-    """'sel', 'in' or '' for the entry's area at `index`, as the design's pcls()."""
-    if index != nav.area_index() or nav.editing and nav.editing.area == 'rate' and nav.layer == EDIT:
+    """'sel', 'in' or '' for the entry's area at `index`. While an editor
+    outside the areas is typed in (the repeat rate), no area is."""
+    if index != nav.area_index() or nav.layer == EDIT and nav.editing_in(nav.area().id) is None:
         return ''
     return {IN: 'sel', AREA: 'in', EDIT: 'in'}.get(nav.layer, '')
 
@@ -148,17 +150,13 @@ def hint(*parts: tuple[str, str] | str, color: str = '') -> Text:
     for index, part in enumerate(parts):
         if index:
             text.append(' · ')
-        if isinstance(part, tuple):
-            text.append(part[0], style('key', bold=True))
-            text.append(' ' + part[1])
-        else:
-            text.append(part)
+        text.append_text(keyed(*part, color) if isinstance(part, tuple) else Text(part))
     return text
 
 
-def pill(text: str, color: str, bg: str) -> Text:
-    """A state pill in a panel title (the design's .pill): "calling…", "✓ OK"."""
-    return Text.assemble((f' {text} ', style(color, bg, bold=True)))
+def pill(text: str, tone: str) -> Text:
+    """A state pill in a panel title: "calling…", "✓ OK", in a `theme.TONES` tone."""
+    return Text.assemble((f' {text} ', style(*TONES[tone], bold=True)))
 
 
 def waiting(error: str) -> list[Text]:

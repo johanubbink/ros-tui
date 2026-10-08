@@ -13,57 +13,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The topic entry's button rows and panels (the topics branch of the design's renderEntry).
+"""The topic entry's button rows and panels.
 
 Echo: "▶ Start echo space" / "■ Stop echo space", then LATEST MESSAGE, one row per field:
 "[x] data   'chatter 3'", live ("● live") or frozen ("❄ FROZEN +N new since"), with what the echo
 counted at the right of its title.
 Publish: "▶ Publish once space" and "↻ Repeat at 10 Hz r" / "■ Stop repeating at 10 Hz s" with the
-rate (typed in place after R), then the MESSAGE editor. Everything shown comes from the TopicEntry
-provider (entries/topic.py).
+rate (typed in place after R), then the MESSAGE editor. Everything shown comes from the
+TopicEntry (entries/topic.py).
 """
 
 from rich.style import Style
 from rich.text import Text
 
-from ros_tui.ui.entries.topic import ECHO, RATE, TopicData, TopicEntry, rate_text
-from ros_tui.ui.nav import EDIT, Area, NavState, Tab
-from ros_tui.ui.widgets.base import button, clickable, edit_value, keyed, primary_look, spread, style
+from ros_tui.ui.entries.base import Area
+from ros_tui.ui.entries.topic import ECHO, RATE, RATE_RANGE, TopicEntry, rate_text
+from ros_tui.ui.nav import NavState
+from ros_tui.ui.widgets.base import button, clickable, column_width, edit_value, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, hint, pill, waiting
 
-KEY_WIDTH = 18  # The field column of LATEST MESSAGE, at least (the design's padEnd(18)).
+KEY_WIDTH = 18  # The field column of LATEST MESSAGE, at least.
 
 
-def _entry(nav: NavState, tab: Tab) -> tuple[TopicEntry, TopicData]:
-    entry = nav.provider.for_tab(tab)
-    return entry, entry.data(tab)
-
-
-def topic_counts(nav: NavState, tab: Tab) -> Text:
-    """The header's "1 pub · 0 sub", once the bridge has counted them."""
-    counts = _entry(nav, tab)[1].counts
+def topic_counts(nav: NavState, entry: TopicEntry) -> Text:
+    """The header's "1 pub · 0 sub", as the graph counts them."""
+    counts = entry.counts(nav)
     return Text(f'{counts[0]} pub · {counts[1]} sub' if counts else '', style('dim'))
 
 
-def topic_toolbar(nav: NavState, tab: Tab, width: int) -> Text:
-    entry, data = _entry(nav, tab)
-    if entry.mode(tab) == 'echo':
-        return echo_toolbar(nav, tab, data, width)
-    return publish_toolbar(nav, tab, entry, data, width)
+def topic_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
+    return (echo_toolbar if entry.mode == 'echo' else publish_toolbar)(nav, entry, width)
 
 
-def echo_toolbar(nav: NavState, tab: Tab, data: TopicData, width: int) -> Text:
+def echo_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
     """The echo's start / stop button and the keys of the latest message."""
-    look = primary_look(nav, tab, 'stop' if data.echo else 'pri')
-    left = button('■ Stop echo' if data.echo else '▶ Start echo', 'space', look)
+    look = primary_look(nav, entry.tab, 'stop' if entry.echo else 'pri')
+    left = button('■ Stop echo' if entry.echo else '▶ Start echo', 'space', look)
     return spread(left, hint(('enter', 'freezes the values'), ('y', 'copies'), ('e', 'publish'), color='dim'), width,
                   optional=True)
 
 
-def echo_counts(data: TopicData) -> Text:
+def echo_counts(entry: TopicEntry) -> Text:
     """What the echo counted, for the right of LATEST MESSAGE's title: "3 received · 1.0 Hz"."""
-    echo = data.echo
+    echo = entry.echo
     if echo is None:
         return Text()
     text = Text(f'{echo.received} received · {echo.hz:.1f} Hz')
@@ -72,47 +65,47 @@ def echo_counts(data: TopicData) -> Text:
     return text
 
 
-def publish_toolbar(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData, width: int) -> Text:
+def publish_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
     """Publish once, repeat at the rate (typed in place after R), and how many the repeat sent."""
-    repeat = data.repeat
-    editing = nav.editing if nav.layer == EDIT and nav.editing and nav.editing.area == RATE else None
+    repeat = entry.repeat
+    editing = nav.editing_in(RATE)
     rate = edit_value(editing.value, editing.fresh) if editing else clickable(Text(
-        rate_text(repeat.rate if repeat else entry.rate(tab)), Style(underline=True)), ('verb', 'rate'))
+        rate_text(repeat.rate if repeat else entry.rate()), Style(underline=True)), ('verb', 'rate'))
     label = Text.assemble('■ Stop repeating at ' if repeat else '↻ Repeat at ', rate, ' Hz')
-    left = Text.assemble(button('▶ Publish once', 'space', primary_look(nav, tab, 'pri')), ' ',
+    left = Text.assemble(button('▶ Publish once', 'space', primary_look(nav, entry.tab, 'pri')), ' ',
                          button(label, 's' if repeat else 'r', 'stop' if repeat else ''), '  ')
     if editing:
-        left.append('type a rate · enter keeps · 0.1–100 Hz', style('dim'))
+        left.append(f'type a rate · enter keeps · {RATE_RANGE}', style('dim'))
     else:
-        left.append_text(hint(entry.rate_note(tab), ('R', 'changes it'), color='dim'))
+        left.append_text(hint(entry.rate_note(), ('R', 'changes it'), color='dim'))
     if repeat:
-        left.append(f'  {repeat.sent(nav.clock())} sent', style('ok'))
+        left.append(f'  {repeat.sent(nav.feedback.clock())} sent', style('ok'))
     return spread(left, keyed('[ ]', 'earlier messages', 'dim'), width, optional=True)
 
 
-def latest_panel(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData, area: Area) -> Panel:
+def latest_panel(nav: NavState, entry: TopicEntry, area: Area) -> Panel:
     """LATEST MESSAGE: live, frozen while the cursor is inside it, or not echoing."""
-    panel = Panel(area.title, aside=echo_counts(data))
-    if data.echo is None:
+    panel = Panel(area.title, aside=echo_counts(entry))
+    if entry.echo is None:
         panel.hint = hint('not echoing', ('space', 'starts'))
-    elif entry.frozen(nav, tab):
-        panel.hint = Text.assemble(pill('❄ FROZEN', 'warn', 'warn-bg'), ' ',
-                                   (f'+{data.new_since} new since', style('warn')), '  ',
+    elif entry.frozen(nav):
+        panel.hint = Text.assemble(pill('❄ FROZEN', 'warn'), ' ',
+                                   (f'+{entry.new_since} new since', style('warn')), '  ',
                                    hint(('esc', 'goes live'), ('enter', 'shows / hides a field')))
     else:
         panel.hint = Text.assemble(('● live', style('ok')), ' · ', hint(('enter', 'freezes it')))
-    if data.editor is None:
-        panel.lines = waiting(data.error)
+    if entry.editor is None:
+        panel.lines = waiting(entry.error)
         return panel
-    rows = entry.echo_rows(nav, tab)
-    width = max(KEY_WIDTH, *(len(row.field) + 1 for row in rows)) if rows else KEY_WIDTH
-    nobody = entry.publishers(nav, tab) == 0
+    rows = entry.echo_rows(nav)
+    width = column_width((row.field for row in rows), KEY_WIDTH)
+    nobody = entry.publishers(nav) == 0
     for row in rows:
-        shown = row.field not in data.hidden
+        shown = row.field not in entry.hidden
         line = Text.assemble('[x] ' if shown else '[ ] ', (row.field.ljust(width), style('syn-key')))
         if not shown:
             line.append('hidden', style('dim'))
-        elif data.echo is None:
+        elif entry.echo is None:
             line.append('–', style('dim'))
         elif row.value is None:
             line.append('waiting — nobody publishes this yet' if nobody else 'waiting for the first message…',
@@ -124,8 +117,7 @@ def latest_panel(nav: NavState, tab: Tab, entry: TopicEntry, data: TopicData, ar
     return panel
 
 
-def topic_panels(nav: NavState, tab: Tab) -> list[Panel]:
+def topic_panels(nav: NavState, entry: TopicEntry) -> list[Panel]:
     """LATEST MESSAGE (Echo) or MESSAGE (Publish), as the entry's one area."""
-    entry, data = _entry(nav, tab)
-    return [latest_panel(nav, tab, entry, data, area) if area.id == ECHO else editor_panel(nav, tab, data, area)
-            for area in nav.areas()]
+    return [latest_panel(nav, entry, area) if area.id == ECHO else editor_panel(nav, entry, area)
+            for area in entry.areas()]
