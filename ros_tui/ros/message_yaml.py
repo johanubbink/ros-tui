@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """
-Lazy interface-type loading and checked YAML <-> ROS message conversion.
+Lazy interface-type loading, message structure, and checked plain data <-> ROS message conversion.
 
 This module deliberately re-implements ``rosidl_runtime_py.set_message_fields`` because the
 Jazzy version neither reports the offending field path nor validates ranges/sizes (field
@@ -31,7 +31,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy
-import yaml
 from rosidl_parser.definition import (
     AbstractNestedType,
     AbstractString,
@@ -43,13 +42,7 @@ from rosidl_runtime_py.convert import get_message_slot_types
 from rosidl_runtime_py.import_message import import_message_from_namespaced_type
 from rosidl_runtime_py.utilities import get_action, get_message, get_service
 
-from ros_tui.constants import (
-    MAX_CONSTANTS_IN_COMMENT,
-    TRUNCATE_ARRAY_ELEMENTS,
-    TRUNCATE_RENDER_LINES,
-    TRUNCATE_STRING_CHARS,
-    TYPE_CACHE_SIZE,
-)
+from ros_tui.constants import HEADER_AUTO, TIME_NOW, TRUNCATE_ARRAY_ELEMENTS, TRUNCATE_STRING_CHARS, TYPE_CACHE_SIZE
 
 # A deferred setter receives a builtin_interfaces/msg/Time and stamps it into the message.
 TimeSetter = Callable[[Any], None]
@@ -65,7 +58,7 @@ class IntrospectionError(Exception):
 
 
 class FieldError(Exception):
-    """A value in the user's YAML does not fit the message, located by its field path."""
+    """A value the user entered does not fit the message, located by its field path."""
 
     def __init__(self, path: str, detail: str):
         self.path = path
@@ -93,29 +86,13 @@ def request_class(kind: str, interface: type) -> type:
     return interface
 
 
-@functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
-def default_yaml(kind: str, type_name: str) -> str:
-    """Seed text for the editor: the default message as YAML plus a constants hint."""
-    interface = import_type(kind, type_name)
-    fillable = request_class(kind, interface)
-    plain = message_to_plain(fillable(), seed=True)
-    text = _dump_yaml(plain) if plain else '# (no fields)\n'
-    constants = _constants_comment(fillable)
-    return text + constants
-
-
-def schema_path(parent_path: str, name: str) -> str:
-    """Dotted field path used by the structure tree and to_filtered_yaml (indices collapsed)."""
-    return f'{parent_path}.{name}' if parent_path else name
-
-
 @dataclass(frozen=True)
 class FieldNode:
     """A field in a message's static structure: its name, type label, and nested fields.
 
     ``constants`` holds the enum choices ``(name, int_value)`` that apply to this field, when
     the field is an integer enum backed by message constants (see :func:`_field_enum_choices`);
-    empty otherwise. The enum field wizard renders these as a single-choice list.
+    empty otherwise. The Enum helper offers these as its choices.
     """
 
     name: str
@@ -127,8 +104,12 @@ class FieldNode:
 @functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
 def message_structure(kind: str, type_name: str) -> tuple[FieldNode, ...]:
     """Static field tree for ``kind``/``type_name`` (introspected from the class, no instance)."""
-    fillable = request_class(kind, import_type(kind, type_name))
-    return _class_fields(fillable, frozenset())
+    return class_structure(request_class(kind, import_type(kind, type_name)))
+
+
+def class_structure(message_class: type) -> tuple[FieldNode, ...]:
+    """Static field tree of any message class, e.g. a service's ``Response``."""
+    return _class_fields(message_class, frozenset())
 
 
 def _class_fields(message_class: type, seen: frozenset) -> tuple[FieldNode, ...]:
@@ -207,10 +188,15 @@ def _slot_children(slot: Any, seen: frozenset) -> tuple['FieldNode', ...]:
 def message_to_plain(message: Any, seed: bool = False) -> dict:
     """Convert a message to plain dict/list/scalar values (bytes rendered as ints).
 
-    ``seed=True`` collapses nested Header fields to the scalar ``'auto'`` so editor seeds
-    prefill the "stamp at send time" magic instead of an expanded zeroed header.
+    ``seed=True`` collapses nested Header fields to the scalar ``'auto'`` so an editor seed
+    prefills the "stamp at send time" magic instead of an expanded zeroed header.
     """
     return _plain_message(message, max_array=None, max_str=None, seed=seed)
+
+
+def message_to_display(message: Any) -> dict:
+    """Like message_to_plain, but long arrays and strings are cut for display."""
+    return _plain_message(message, max_array=TRUNCATE_ARRAY_ELEMENTS, max_str=TRUNCATE_STRING_CHARS)
 
 
 def build_message(message_class: type, values: Any) -> tuple[Any, list[TimeSetter]]:
@@ -226,39 +212,6 @@ def build_message(message_class: type, values: Any) -> tuple[Any, list[TimeSette
     setters: list[TimeSetter] = []
     message = _build(message_class, values, '', setters)
     return message, setters
-
-
-def to_truncated_yaml(
-    message: Any,
-    max_array: int = TRUNCATE_ARRAY_ELEMENTS,
-    max_lines: int = TRUNCATE_RENDER_LINES,
-) -> str:
-    """Render a message as display YAML, truncating long arrays/strings and capping lines."""
-    plain = _plain_message(message, max_array=max_array, max_str=TRUNCATE_STRING_CHARS)
-    return _render_yaml_text(plain, max_lines, '(no fields)')
-
-
-def to_filtered_yaml(
-    message: Any,
-    selected_paths: Any,
-    max_array: int = TRUNCATE_ARRAY_ELEMENTS,
-    max_lines: int = TRUNCATE_RENDER_LINES,
-) -> str:
-    """Like to_truncated_yaml, but only includes fields whose dotted path is in ``selected_paths``
-    (or has a selected descendant, for nested/sequence-of-message fields)."""
-    plain = _plain_message(
-        message, max_array, TRUNCATE_STRING_CHARS, frozenset(selected_paths), ''
-    )
-    return _render_yaml_text(plain, max_lines, '(no fields)')
-
-
-def _render_yaml_text(plain: dict, max_lines: int, empty_text: str) -> str:
-    text = _dump_yaml(plain) if plain else empty_text
-    lines = text.splitlines()
-    if len(lines) > max_lines:
-        hidden_count = len(lines) - max_lines
-        lines = lines[:max_lines] + [f'… ({hidden_count} more lines)']
-    return '\n'.join(lines)
 
 
 def interface_label(message_class: type) -> str:
@@ -297,10 +250,10 @@ def _build(message_class: type, values: Any, path: str, setters: list[TimeSetter
         slot = slots[field_name]
         current = getattr(message, field_name)
         qualified = f'{type(current).__module__}.{type(current).__name__}'
-        if qualified == _HEADER_CLASS and field_value == 'auto':
+        if qualified == _HEADER_CLASS and field_value == HEADER_AUTO:
             setters.append(functools.partial(setattr, current, 'stamp'))
             continue
-        if qualified == _TIME_CLASS and field_value == 'now':
+        if qualified == _TIME_CLASS and field_value == TIME_NOW:
             setters.append(functools.partial(setattr, message, field_name))
             continue
         try:
@@ -429,38 +382,14 @@ def _byte_value(value: Any, path: str) -> bytes:
     raise FieldError(path, f'byte field must be an integer in [0, 255], got {value!r}')
 
 
-def _plain_message(
-    message: Any,
-    max_array: int | None,
-    max_str: int | None,
-    selected: frozenset[str] | None = None,
-    path: str = '',
-    seed: bool = False,
-) -> dict:
-    plain = {}
-    for field_name, slot in zip(message.get_fields_and_field_types().keys(), message.SLOT_TYPES):
-        child_path = schema_path(path, field_name)
-        if selected is not None and not _field_included(child_path, selected):
-            continue
-        plain[field_name] = _plain_value(
-            getattr(message, field_name), slot, max_array, max_str, selected, child_path, seed
-        )
-    return plain
+def _plain_message(message: Any, max_array: int | None, max_str: int | None, seed: bool = False) -> dict:
+    return {
+        field_name: _plain_value(getattr(message, field_name), slot, max_array, max_str, seed)
+        for field_name, slot in zip(message.get_fields_and_field_types().keys(), message.SLOT_TYPES)
+    }
 
 
-def _field_included(path: str, selected: frozenset[str]) -> bool:
-    return path in selected or any(candidate.startswith(f'{path}.') for candidate in selected)
-
-
-def _plain_value(
-    value: Any,
-    slot: Any,
-    max_array: int | None,
-    max_str: int | None,
-    selected: frozenset[str] | None = None,
-    path: str = '',
-    seed: bool = False,
-) -> Any:
+def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | None, seed: bool = False) -> Any:
     if isinstance(slot, AbstractNestedType):
         total = len(value)
         truncated = max_array is not None and total > max_array
@@ -468,12 +397,7 @@ def _plain_value(
         if isinstance(slot.value_type, BasicType) and slot.value_type.typename == 'octet':
             plain_items = [_byte_to_int(item) for item in items]
         else:
-            # Sequence-of-message: reuse the same collapsed path for every element, so a
-            # schema-level path like ``points.x`` filters each element uniformly.
-            plain_items = [
-                _plain_value(item, slot.value_type, max_array, max_str, selected, path, seed)
-                for item in items
-            ]
+            plain_items = [_plain_value(item, slot.value_type, max_array, max_str, seed) for item in items]
         if truncated:
             plain_items.append(f'… ({total} total)')
         return plain_items
@@ -482,8 +406,8 @@ def _plain_value(
     if hasattr(value, 'get_fields_and_field_types'):
         qualified = f'{type(value).__module__}.{type(value).__name__}'
         if seed and qualified == _HEADER_CLASS:
-            return 'auto'  # Prefill the "stamp at send time" magic instead of a zeroed header.
-        return _plain_message(value, max_array, max_str, selected, path, seed)
+            return HEADER_AUTO  # Prefill the "stamp at send time" magic instead of a zeroed header.
+        return _plain_message(value, max_array, max_str, seed)
     if isinstance(value, numpy.number):
         return value.item()
     if isinstance(value, str) and max_str is not None and len(value) > max_str:
@@ -493,34 +417,3 @@ def _plain_value(
 
 def _byte_to_int(value: Any) -> int:
     return value[0] if isinstance(value, bytes) else int(value)
-
-
-def _dump_yaml(plain: dict) -> str:
-    return yaml.safe_dump(
-        plain, sort_keys=False, default_flow_style=False, allow_unicode=True, width=2**31 - 1
-    )
-
-
-def _constants_comment(message_class: type) -> str:
-    # Real IDL constants are primitive scalars; generated classes also expose internals like
-    # _TYPE_SUPPORT and <FIELD>__DEFAULT (which str.isupper() matches), so filter those out.
-    names = [
-        name
-        for name in dir(message_class)
-        if name.isupper()
-        and not name.startswith('_')
-        and '__' not in name
-        and isinstance(getattr(message_class, name), (bool, int, float, str))
-    ]
-    if not names or len(names) > MAX_CONSTANTS_IN_COMMENT:
-        return ''
-    pairs = [f'{name}={getattr(message_class, name)!r}' for name in names]
-    lines = []
-    line = '# constants:'
-    for pair in pairs:
-        if len(line) + len(pair) + 2 > 96:
-            lines.append(line)
-            line = '#  '
-        line += f' {pair},'
-    lines.append(line.rstrip(','))
-    return '\n'.join(lines) + '\n'

@@ -18,7 +18,7 @@
 import threading
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Callable
 
 from ros_tui.constants import ECHO_BUFFER_MAXLEN, ECHO_HZ_WINDOW
 
@@ -26,10 +26,15 @@ _RATE_STALE_S = 2.0
 
 
 class EchoBuffer:
-    """push() on the ROS thread, drain() on the UI thread; overflow drops oldest."""
+    """push() on the ROS thread, drain() on the UI thread; overflow drops oldest.
 
-    def __init__(self, maxlen: int = ECHO_BUFFER_MAXLEN, hz_window: int = ECHO_HZ_WINDOW):
+    ``clock`` times the arrivals for the rate (the entries pass the bridge's ``now()``, so a fake
+    clock gives repeatable rates)."""
+
+    def __init__(self, maxlen: int = ECHO_BUFFER_MAXLEN, hz_window: int = ECHO_HZ_WINDOW,
+                 clock: Callable[[], float] = time.monotonic):
         self._lock = threading.Lock()
+        self._clock = clock
         self._messages: deque[Any] = deque(maxlen=maxlen)
         self._arrival_stamps: deque[float] = deque(maxlen=hz_window)
         self._received_total = 0
@@ -39,7 +44,12 @@ class EchoBuffer:
         with self._lock:
             self._messages.append(message)
             self._received_total += 1
-            self._arrival_stamps.append(time.monotonic())
+            self._arrival_stamps.append(self._clock())
+
+    def pending(self) -> int:
+        """How many messages the next drain() would return."""
+        with self._lock:
+            return len(self._messages)
 
     def drain(self) -> tuple[list[Any], int, int, float]:
         """Return (pending messages, received total, dropped total, receive rate in Hz)."""
@@ -53,7 +63,7 @@ class EchoBuffer:
     def _rate_locked(self) -> float:
         if len(self._arrival_stamps) < 2:
             return 0.0
-        now = time.monotonic()
+        now = self._clock()
         if now - self._arrival_stamps[-1] > _RATE_STALE_S:
             return 0.0
         span = self._arrival_stamps[-1] - self._arrival_stamps[0]

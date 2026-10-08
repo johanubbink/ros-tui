@@ -1,14 +1,15 @@
 # Testing
 
-The tests are pytest, in [`test/`](../test/). They come in four kinds,
-selected with markers (see [`pytest.ini`](../pytest.ini)):
+The tests are pytest, in [`test/`](../test/). They come in five kinds, the last
+three selected with markers (see [`pytest.ini`](../pytest.ini)):
 
 | Kind        | Marker      | Files                                                           | What                                                                     |
 | ----------- | ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| unit        | (none)      | `test_message_yaml.py`, `test_truncated_yaml.py`, `test_echo.py`, `test_graph.py`, `test_field_wizards.py` | Pure logic, no rclpy node: YAML round trips over many interface types, range and size checks, `byte`/NaN edge cases, truncation, the echo buffer, the wizard helpers. |
+| model       | (none)      | `test_nav.py`, `test_keymap.py`, `test_fields.py`, `test_entries_*.py`, `test_helpers.py`, `test_register.py`, `test_widgets.py`, `test_harness.py` | The UI's model without running the app: layers and overlays (`NavState` over a fixed catalog with stand-in entries, `harness/nav_world.py`), the keymap (and that `docs/usage.md` lists it), the field rows, each entry kind and the field helpers over a `FakeBridge` (`harness/live_world.py`: `live_nav`, `press`, `advance`), the widgets' pure layout helpers, the harness's clock. |
+| unit        | (none)      | `test_message_yaml.py`, `test_message_display.py`, `test_echo.py`, `test_graph.py` | Pure logic, no rclpy node: message round trips over many interface types, range and size checks, `byte`/NaN edge cases, display truncation, the echo buffer, the graph. |
 | bridge      | `ros_graph` | `test_bridge.py`                                                | The real `RosBridge` against in-process fixture servers.                 |
-| UI          | `ui`        | `test_ui_pilot.py`, `test_ctrl_t_focus.py`                      | The textual app headless under Pilot, against a `FakeBridge` (no rclpy). |
-| end to end  | `e2e`       | `test_e2e_smoke.py`                                             | The real app, the real bridge and real fixture servers together.         |
+| UI          | `ui`, `shots` | `ui/test_*.py`                                                | Scenarios: the textual app headless, driven by keys against the live `FakeBridge.demo()` world (no rclpy), with named screenshots. |
+| end to end  | `e2e`       | `test_e2e_smoke.py`                                             | The real app, driven by keys, over the real bridge and the fixture servers: echo, publish, call, send a goal, set a parameter. |
 
 The ROS tests run on an isolated `ROS_DOMAIN_ID` (from `domain_coordinator`),
 so they don't see or disturb other ROS nodes on the machine. The fixture
@@ -35,12 +36,38 @@ docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh        # everyth
 docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh -m ui  # one kind
 ```
 
-Extra arguments go straight to pytest. The whole suite takes about 1.5
-minutes.
+Extra arguments go straight to pytest. The whole suite takes under a
+minute.
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs flake8
 and the whole suite in an `osrf/ros:jazzy-desktop` container on every push and
 pull request to `main`.
+
+## Screenshot harness
+
+[`test/harness/`](../test/harness/) has the shared `FakeBridge` (canned, or a
+live simulated world on a manual clock: the demo servers' graph, answering
+services, actions and node requests, and echo feeds), the model tests' worlds
+(`nav_world.py`, `live_world.py`), and `ui_session`, which drives the app by keys and takes
+named screenshots. With `ROS_TUI_SHOTS=1` the scenario tests in `test/ui/` (and
+the end-to-end tests) write PNG, SVG, text and JSON shots to `test/artifacts/`.
+One command runs flake8 and the suite in Docker with shots on:
+
+```bash
+scripts/agent_check.sh               # everything
+scripts/agent_check.sh -m shots      # only the scenarios
+scripts/agent_check.sh test/ui/test_topic.py -q
+```
+
+How it works and the artifact layout are in [agentic-dev.md](agentic-dev.md).
+
+### Where a test goes
+
+Test a behaviour once, at the cheapest level that shows it: rules, messages,
+toasts, undo and what the bridge was asked go in the model tests; a UI scenario
+drives the keys a person would and checks what the screen shows (and takes the
+shots), without re-asserting the model's facts. UI tests read state through
+`s.state()` / `s.where()` and the screen through `s.line_with()` / `s.footer()`.
 
 ## Manual checks
 
@@ -53,17 +80,19 @@ against the playground with turtlesim.
 
 [`scripts/make_gif.py`](../scripts/make_gif.py) remakes
 `assets/ros-tui-demo.gif`. It isn't part of the test suite. It starts the demo
-servers on their own `ROS_DOMAIN_ID`, runs the real app headless under Pilot,
-types its way through the four tabs, and saves a screenshot of every change.
-`rsvg-convert` turns the screenshots into PNGs, and ffmpeg makes the GIF with
-each frame held for as long as it was on screen.
+servers on their own `ROS_DOMAIN_ID`, runs the real app headless under the
+harness's `UiSession` (a subclass that pauses after each key), types its way
+through an echo of /chatter, a call of /add_two_ints, a
+/fibonacci goal and a node's parameters, and saves a screenshot of every
+change. `rsvg-convert` turns the screenshots into PNGs (prepared by the
+harness's `rsvg_ready`, as the shots are), and ffmpeg makes the
+GIF with each frame held for as long as it was on screen.
 
-It needs `rsvg-convert` and `ffmpeg`, which the playground image doesn't
-include, so install them first:
+The playground image has `rsvg-convert` but not ffmpeg, so install it first:
 
 ```bash
 docker compose run --rm ros_tui bash -lc '
-  sudo apt-get update && sudo apt-get install -y librsvg2-bin ffmpeg fonts-firacode &&
+  sudo apt-get update && sudo apt-get install -y ffmpeg &&
   src/ros_tui/scripts/make_gif.py'
 ```
 

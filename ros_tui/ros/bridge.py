@@ -47,6 +47,7 @@ from ros_tui.constants import (
     HOUSEKEEPING_PERIOD_S,
     READY_TIMEOUT_S,
     RESPONSE_TIMEOUT_S,
+    SHUTDOWN_CANCEL_TIMEOUT_S,
 )
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind
@@ -254,6 +255,16 @@ class RosBridge:
             self._commands.put((command, future))
             self._guard.trigger()
         return future
+
+    def now(self) -> float:
+        """The UI's clock (seconds, monotonic). FakeBridge's ManualClock stands in for it in tests."""
+        return time.monotonic()
+
+    def time_of_day(self) -> float:
+        """The local time of day in seconds since midnight, for the activity lines' "09:41:03"."""
+        now = time.time()
+        local = time.localtime(now)
+        return local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec + now % 1
 
     @property
     def latest_graph(self) -> GraphSnapshot:
@@ -488,6 +499,7 @@ class RosBridge:
         return self.submit(functools.partial(self._stop_periodic, name))
 
     def periodic_topics(self) -> tuple[str, ...]:
+        """The topics publishing periodically (test_bridge checks that stop and shutdown clear it)."""
         return tuple(self._entities.periodic)  # Snapshot read; safe from any thread.
 
     def subscribe(self, name: str, type_name: str, buffer: EchoBuffer) -> Future:
@@ -506,17 +518,6 @@ class RosBridge:
             subscription = self._entities.subscriptions.pop(name, None)
             if subscription is not None:
                 self._node.destroy_subscription(subscription)
-
-        return self.submit(command)
-
-    def topic_endpoint_counts(self, name: str) -> Future:
-        """(publisher_count, subscriber_count) for ``name``, read from the graph."""
-
-        def command() -> tuple[int, int]:
-            return (
-                len(self._node.get_publishers_info_by_topic(name)),
-                len(self._node.get_subscriptions_info_by_topic(name)),
-            )
 
         return self.submit(command)
 
@@ -888,6 +889,22 @@ class RosBridge:
 
     # ---------------------------------------------------------------- teardown
 
+    def _cancel_goals(self) -> None:
+        """Cancel the goals still running, as ``ros2 action send_goal`` does on ctrl+c: nothing keeps
+        acting on the robot after the app quits. A goal whose acceptance is still on its way is
+        canceled once it arrives. Spins for at most SHUTDOWN_CANCEL_TIMEOUT_S, until every server
+        answered (queued commands and parked requests are already gone, so only replies run)."""
+        entities = self._entities
+        canceling: dict[str, Any] = {}
+        deadline = time.monotonic() + SHUTDOWN_CANCEL_TIMEOUT_S
+        while self._context.ok() and time.monotonic() < deadline:
+            for name, active in entities.active_goals.items():
+                if name not in canceling:
+                    canceling[name] = active.handle.cancel_goal_async()
+            if entities.inflight_actions <= canceling.keys() and all(f.done() for f in canceling.values()):
+                return
+            self._executor.spin_once(timeout_sec=0.05)
+
     def _teardown(self) -> None:
         while True:
             try:
@@ -905,6 +922,8 @@ class RosBridge:
                 record.outer.set_exception(shutdown_error)
         entities.pending_ready = []
         entities.awaiting_response = []
+        with contextlib.suppress(Exception):
+            self._cancel_goals()
         with contextlib.suppress(Exception):
             for periodic in list(entities.periodic.values()):
                 self._node.destroy_timer(periodic.timer)

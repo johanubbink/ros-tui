@@ -85,6 +85,7 @@ def test_graph_lists_fixture_entities(bridge, fixture_servers):
     assert action.types == (FIBONACCI_TYPE,)
     service = next(entry for entry in graph.services if entry.name == ADD_TWO_INTS_SERVICE)
     assert service.types == (ADD_TWO_INTS_TYPE,)
+    assert next(entry for entry in graph.topics if entry.name == CHATTER_TOPIC).publishers >= 1
     all_names = [
         entry.name for group in (graph.actions, graph.services, graph.topics) for entry in group
     ]
@@ -224,6 +225,19 @@ def test_bridge_shutdown_stops_periodic_publish(fixture_servers, ros_domain):
     assert len(fixture_servers.inbox_messages) <= settled_count + 1
 
 
+def test_bridge_shutdown_cancels_a_running_goal(fixture_servers, ros_domain):
+    own_bridge = RosBridge(node_name='ros_tui_shutdown_goal_test')
+    own_bridge.start()
+    events = []
+    own_bridge.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=200), events.append)
+    assert wait_for(lambda: ActionEventKind.FEEDBACK in event_kinds(events), timeout=10.0)
+    canceled_before = fixture_servers.canceled_goals
+    started = time.monotonic()
+    own_bridge.shutdown()
+    assert time.monotonic() - started < 3.0
+    assert wait_for(lambda: fixture_servers.canceled_goals == canceled_before + 1, timeout=5.0)
+
+
 def test_subscribe_receives_chatter(bridge, fixture_servers):
     buffer = EchoBuffer()
     bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=2.0)
@@ -305,7 +319,7 @@ def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
     assert INBOX_TOPIC in names(info.subscribers)
     assert ADD_TWO_INTS_SERVICE in names(info.service_servers)
     assert FIBONACCI_ACTION in names(info.action_servers)
-    # The fixture node's own parameter services are hidden, like the Services tab does.
+    # The fixture node's own parameter services are hidden, as the ☰ list hides them.
     assert not any(name.endswith('/get_parameters') for name in names(info.service_servers))
     # No hidden action-internal endpoints leak into the topic/service lists.
     leaked = names(info.publishers) | names(info.subscribers) | names(info.service_servers)

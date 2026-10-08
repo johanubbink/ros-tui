@@ -14,117 +14,105 @@
 # limitations under the License.
 
 """
-Full-stack smoke: real RosBridge + real fixture servers + the real app under Pilot.
+Full-stack smoke: the real app over a real RosBridge and the in-process fixture servers.
 
-The automated tests below drive the real app against the in-process fixture servers
-(``test/conftest.py``), which mirror the demo node in ``ros_tui/demo/demo_servers.py``.
+The tests drive the app with keys, as a user would, against the fixture servers in
+``test/conftest.py`` (which mirror the demo node in ``ros_tui/demo/demo_servers.py``), and wait in
+real time. With ``ROS_TUI_SHOTS=1`` each takes a shot of where it ends.
 
-Manual checklist against the Docker demo playground (run in two shells inside the dev
-container — see docs/docker.md):
+Manual checklist against the Docker demo playground (see docs/docker.md):
 
-    ros2 launch ros_tui demo.launch.py turtlesim:=true   # demo servers + turtlesim
-    ros2 run ros_tui ros_tui
+    ros2 launch ros_tui demo.launch.py turtlesim:=true   # shell 1: demo servers + turtlesim
+    ros2 run ros_tui ros_tui                             # shell 2
 
-  - App starts < 2 s and all four tabs populate with the demo graph.
-  - Filter stays responsive while typing.
-  - Echo a high-rate topic (/counter @ ~50 Hz): stats line shows Hz, drops counted,
-    UI stays smooth; best-effort publishers are received (QoS adaptation).
-  - Send a goal on an action (/fibonacci order: 20, or /turtle1/rotate_absolute
-    theta: 1.57), watch feedback, cancel it; status line ends CANCELED.
-  - Call a service (/add_two_ints, or /spawn) and check the response renders.
-  - Select a nested message type (/turtle1/cmd_vel — geometry_msgs/Twist): editor
-    seeds defaults and round-trips.
-  - Start a 10 Hz publisher on /turtle1/cmd_vel, quit with ctrl+q, verify it stops
-    (ros2 topic hz /turtle1/cmd_vel in shell 2) — and the turtle stops moving.
+  - The app starts in under 2 s and the ☰ list fills with the demo graph; tab cycles the chips.
+  - / filters as you type and stays responsive; enter opens the match in a tab.
+  - /counter (~50 Hz) opens in Echo: space echoes it, the count and Hz rise, the UI stays smooth;
+    enter freezes the values, esc goes live again.
+  - /add_two_ints: enter enter, type 19, tab, 23, esc, space: the response says sum: 42.
+  - /fibonacci: send a goal (order 20) with space, watch the feedback grow, s cancels it (CANCELED).
+    /turtle1/rotate_absolute (theta: 1.57) turns the turtle.
+  - /turtle1/cmd_vel (geometry_msgs/Twist) opens in Publish with its fields unfolded; f on a
+    field with a helper opens it.
+  - r repeats /turtle1/cmd_vel at 10 Hz (linear.x: 1.0): the turtle drives. :q quits, and the
+    repeat stops (ros2 topic hz /turtle1/cmd_vel in another shell goes quiet): the turtle stops.
+  - A goal still running when you quit is canceled.
+  - A node (/ros_tui_demo_servers): its interfaces and parameters load; change publish_rate
+    and set it with space.
 """
 
 import time
 
 import pytest
 from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, FIBONACCI_ACTION, INBOX_TOPIC
-from ros_tui.ui.app import RosTuiApp
-from test_ui_pilot import (
-    click_button,
-    log_text,
-    select_entry,
-    select_topic,
-    show_tab,
-    static_text,
-    wait_until,
-)
-from textual.widgets import Button, Static, TextArea
+from harness.screens import ui_session
 
 pytestmark = pytest.mark.e2e
 
+FIXTURE_NODE = '/tui_test_fixtures'
+GRAPH_TIMEOUT_S = 10.0
 
-async def wait_for_entry(pilot, bridge, group, name, timeout=10.0):
-    """Wait until the live graph lists ``name`` and return its InterfaceEntry."""
 
-    def find():
-        return next(
-            (entry for entry in getattr(bridge.latest_graph, group) if entry.name == name), None
-        )
+async def open_entry(s, kind: str, name: str, query: str, published: bool = False) -> None:
+    """Wait until the graph lists `name` (and, if `published`, its publisher count arrived), then
+    open it with / search."""
+    def listed():
+        item = next((item for item in s.app.nav.catalog[kind] if item.name == name), None)
+        return item is not None and (item.publishers > 0 or not published)
 
-    assert await wait_until(pilot, find, timeout=timeout), f'{name} never appeared in {group}'
-    return find()
+    assert await s.wait_until(listed, timeout=GRAPH_TIMEOUT_S), f'{name} never appeared in {kind}'
+    await s.keys('slash', *query, 'enter')
+    assert s.state()['path'] == ['tabs', name], s.state()['path']
 
 
 async def test_action_round_trip_through_ui(bridge, fixture_servers):
-    app = RosTuiApp(bridge)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await show_tab(pilot, 'actions')
-        entry = await wait_for_entry(pilot, bridge, 'actions', FIBONACCI_ACTION)
-        tab = app.query_one('#actions-tab')
-        await select_entry(pilot, tab, entry)
-        tab.query_one('#editor', TextArea).load_text('order: 6')
-        tab.primary_action()
-        status = tab.query_one('#goal-status', Static)
-        assert await wait_until(pilot, lambda: 'SUCCEEDED' in static_text(status), timeout=15.0), (
-            f'goal did not succeed; status: {static_text(status)}; log: {log_text(tab)}'
-        )
-        assert 'result: SUCCEEDED' in log_text(tab)
-        assert '- 8' in log_text(tab)  # fib(6) sequence ends ... 5, 8
+    async with ui_session(bridge=bridge) as s:
+        await open_entry(s, 'actions', FIBONACCI_ACTION, 'fib')
+        await s.keys('enter', 'enter', '6', 'escape', 'space')
+        assert await s.wait_until(lambda: 'SUCCEEDED' in s.text(), timeout=15.0), s.text()
+        assert 'sequence: [0, 1, 1, 2, 3, 5, 8]' in s.text()
+        await s.shot('goal-succeeded', expect='RESULT ✓ SUCCEEDED with sequence: [0, 1, 1, 2, 3, 5, 8]')
 
 
 async def test_service_round_trip_through_ui(bridge, fixture_servers):
-    app = RosTuiApp(bridge)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await show_tab(pilot, 'services')
-        entry = await wait_for_entry(pilot, bridge, 'services', ADD_TWO_INTS_SERVICE)
-        tab = app.query_one('#services-tab')
-        await select_entry(pilot, tab, entry)
-        tab.query_one('#editor', TextArea).load_text('a: 19\nb: 23')
-        tab.primary_action()
-        assert await wait_until(
-            pilot,
-            lambda: not tab.query_one('#call-button', Button).disabled,
-            timeout=10.0,
-        )
-        assert 'sum: 42' in log_text(tab)
+    async with ui_session(bridge=bridge) as s:
+        await open_entry(s, 'services', ADD_TWO_INTS_SERVICE, 'add')
+        await s.keys('enter', 'enter', '1', '9', 'tab', '2', '3', 'escape', 'space')
+        assert await s.wait_until(lambda: '✓ OK' in s.text(), timeout=10.0), s.text()
+        assert 'sum: 42' in s.text()
+        await s.shot('called', expect='RESPONSE ✓ OK with sum: 42')
 
 
 async def test_topic_echo_and_publish_through_ui(bridge, fixture_servers):
-    app = RosTuiApp(bridge)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await show_tab(pilot, 'topics')
-        tab = app.query_one('#topics-tab')
+    async with ui_session(bridge=bridge) as s:
+        await open_entry(s, 'topics', CHATTER_TOPIC, 'chatter', published=True)
+        assert s.app.nav.entry_mode() == 'echo'
+        await s.keys('space')
+        assert await s.wait_until(lambda: "'chatter " in s.text() and ' Hz' in s.text(), timeout=10.0), s.text()
+        await s.shot('echo-live', expect="the echo of the 100 Hz chatter: N received · ~100 Hz, data 'chatter N'")
+        await s.keys('space')  # Stop the echo.
 
-        chatter = await wait_for_entry(pilot, bridge, 'topics', CHATTER_TOPIC)
-        await select_topic(pilot, tab, chatter, 'subscribe')
-        await click_button(pilot, '#echo-button')
-        status = tab.query_one('#topics-status', Static)
-        assert await wait_until(
-            pilot,
-            lambda: 'Hz' in static_text(status) and 'chatter' in log_text(tab),
-            timeout=10.0,
-        )
-        await click_button(pilot, '#echo-button')  # Stop so the log quiets down.
-
-        inbox = await wait_for_entry(pilot, bridge, 'topics', INBOX_TOPIC)
-        await select_topic(pilot, tab, inbox, 'publish')
-        tab.query_one('#editor', TextArea).load_text('data: from_the_tui')
+        await open_entry(s, 'topics', INBOX_TOPIC, 'inbox')
+        assert s.app.nav.entry_mode() == 'publish'
+        await s.keys('enter', 'enter', *'fromtui', 'escape')
         deadline = time.monotonic() + 10.0
-        while 'from_the_tui' not in fixture_servers.inbox_messages:
-            tab.primary_action()  # Re-publish until DDS discovery lets one through.
-            await pilot.pause(0.2)
-            assert time.monotonic() < deadline, 'published message never arrived'
+        while 'fromtui' not in fixture_servers.inbox_messages:
+            await s.keys('space')  # Publish again until DDS discovery lets one through.
+            await s.pilot.pause(0.2)
+            assert time.monotonic() < deadline, 'the published message never arrived'
+
+
+async def test_node_parameter_set_through_ui(bridge, fixture_servers):
+    async with ui_session(bridge=bridge) as s:
+        await open_entry(s, 'nodes', FIXTURE_NODE, 'fixtures')
+        entry = s.app.nav.entry(s.app.nav.tab)
+
+        def params():
+            return entry.params
+
+        assert await s.wait_until(params, timeout=GRAPH_TIMEOUT_S), 'the parameters never loaded'
+        row = [param.name for param in params()].index('test_param')
+        await s.keys('l', 'enter', *['j'] * row, 'c', '7', 'enter', 'space')
+        node = fixture_servers.node
+        assert await s.wait_until(lambda: node.get_parameter('test_param').value == 7, timeout=10.0)
+        await s.shot('param-set', expect='PARAMETERS: test_param int 7, set on the node')

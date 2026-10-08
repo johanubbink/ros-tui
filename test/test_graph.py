@@ -19,6 +19,7 @@ from ros_tui.ros.graph import (
     EMPTY_GRAPH,
     GraphSnapshot,
     InterfaceEntry,
+    TopicInfo,
     build_node_info,
     build_snapshot,
     is_builtin_service,
@@ -63,10 +64,12 @@ def test_empty_graph_sentinel():
 class _StubNode:
     """Minimal node exposing only the graph-query methods build_snapshot calls."""
 
-    def __init__(self, node_names_and_namespaces, name='ros_tui', namespace='/'):
+    def __init__(self, node_names_and_namespaces, name='ros_tui', namespace='/', topics=(), own=((), ())):
         self._nodes = node_names_and_namespaces
         self._name = name
         self._namespace = namespace
+        self._topics = topics  # (name, type, publishers, subscribers), our own endpoints included.
+        self._own = own  # (topics we publish, topics we subscribe to)
 
     def get_name(self):
         return self._name
@@ -81,7 +84,21 @@ class _StubNode:
         return []
 
     def get_topic_names_and_types(self):
-        return []
+        return [(name, [type_name]) for name, type_name, _, _ in self._topics]
+
+    def count_publishers(self, topic):
+        return next(pubs for name, _, pubs, _ in self._topics if name == topic)
+
+    def count_subscribers(self, topic):
+        return next(subs for name, _, _, subs in self._topics if name == topic)
+
+    def get_publisher_names_and_types_by_node(self, name, namespace):
+        assert (name, namespace) == (self._name, self._namespace)
+        return [(topic, []) for topic in self._own[0]]
+
+    def get_subscriber_names_and_types_by_node(self, name, namespace):
+        assert (name, namespace) == (self._name, self._namespace)
+        return [(topic, []) for topic in self._own[1]]
 
 
 def test_duplicate_node_names_are_deduped(monkeypatch):
@@ -102,6 +119,15 @@ def test_own_bridge_node_is_excluded(monkeypatch):
     snapshot = build_snapshot(node, 1)
     names = [entry.name for entry in snapshot.nodes]
     assert names == ['/talker']
+
+
+def test_topics_carry_counts_without_our_own_endpoints(monkeypatch):
+    monkeypatch.setattr('ros_tui.ros.graph.get_action_names_and_types', lambda node: [])
+    node = _StubNode([], topics=[('/chatter', 'std_msgs/msg/String', 2, 1), ('/inbox', 'std_msgs/msg/String', 1, 0)],
+                     own=(['/inbox'], ['/chatter']))
+    snapshot = build_snapshot(node, 1)
+    assert snapshot.topics == (TopicInfo('/chatter', ('std_msgs/msg/String',), 2, 0),
+                               TopicInfo('/inbox', ('std_msgs/msg/String',), 0, 0))
 
 
 def test_split_node_name():

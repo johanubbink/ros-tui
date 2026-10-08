@@ -19,14 +19,16 @@ docs/testing.md, "Demo GIF".
     docker compose run --rm ros_tui src/ros_tui/scripts/make_gif.py
 
 Starts the demo servers on a private ROS_DOMAIN_ID, runs the real app (real bridge) headless
-under textual's Pilot, and drives it with key presses: echo /chatter, call /add_two_ints,
-send a /fibonacci goal, open the demo node. A background task saves an SVG screenshot every
-1/FPS s with the time it was taken; rsvg-convert turns them into PNGs and ffmpeg lays them out
-at their real pace (one GIF frame per change, each held for as long as it lasted) and quantises
-with one palette for the whole GIF (no dithering, so no flicker).
+under the test harness's UiSession (test/harness/screens.py), and drives it with key presses at a
+pace a viewer can follow: echo /chatter (and freeze it), call
+/add_two_ints, send a /fibonacci goal, change and set a parameter of the demo node. A background
+task saves an SVG screenshot every 1/FPS s with the time it was taken; rsvg-convert turns them into
+PNGs (on BACKGROUND, so the window's rounded corners are opaque) and ffmpeg lays them out at their
+real pace (one GIF frame per change, each held for as long as it lasted) and quantises with one
+palette for the whole GIF (no dithering, so no flicker).
 
-Needs ``rsvg-convert`` and ``ffmpeg`` (in the playground:
-``sudo apt-get update && sudo apt-get install -y librsvg2-bin ffmpeg fonts-firacode``).
+Needs ``rsvg-convert`` and ``ffmpeg`` (the playground has the first; for the second:
+``sudo apt-get update && sudo apt-get install -y ffmpeg``).
 """
 
 import argparse
@@ -43,18 +45,24 @@ from pathlib import Path
 # Before rclpy loads: keep the demo servers and the app away from any other ROS graph.
 os.environ['ROS_DOMAIN_ID'] = os.environ.get('ROS_TUI_GIF_DOMAIN_ID', '87')
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / 'test'))  # The harness's session and its SVG fix for rsvg.
+
+from harness.screens import UiSession, rsvg_ready  # noqa: E402
 from ros_tui.ros.bridge import RosBridge  # noqa: E402
 from ros_tui.ui.app import RosTuiApp  # noqa: E402
-from ros_tui.ui.topic_mode_popup import TopicModePopup  # noqa: E402
-from textual.widgets import DataTable, RichLog, Static, TextArea  # noqa: E402
+from ros_tui.ui.nav import Tab  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = REPO_ROOT / 'assets' / 'ros-tui-demo.gif'
 
-COLUMNS, ROWS = 124, 32
+COLUMNS, ROWS = 124, 34
 FPS = 10
 GIF_WIDTH = 1000          # px; ffmpeg scales the rendered frames down to this
+# Behind the window's rounded corners. With any transparency, ffmpeg (6.x) can't store only what
+# changed in a GIF frame, so every frame would be a full one (4 MB instead of under 1 MB).
+BACKGROUND = '#121212'
 TYPE_DELAY_S = 0.11       # between key presses while "typing"
+KEY_DELAY_S = 0.5         # between the other key presses, so each step can be followed
 
 
 class Recorder:
@@ -82,107 +90,84 @@ class Recorder:
             await asyncio.sleep(1 / FPS)
 
 
-async def wait_until(pilot, predicate, timeout=10.0, what='condition'):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        await pilot.pause(0.05)
-    raise TimeoutError(f'timed out waiting for {what}')
+class GifSession(UiSession):
+    """A UiSession that pauses after each key (in real time), so each step can be followed."""
+
+    async def keys(self, *keys, pause=KEY_DELAY_S):
+        for key in keys:
+            await super().keys(key)
+            await asyncio.sleep(pause)
+
+    async def type_text(self, text):
+        for char in text:
+            await self.keys('space' if char == ' ' else char, pause=TYPE_DELAY_S)
+
+    async def need(self, predicate, timeout=10.0, what='condition'):
+        """Wait until ``predicate`` holds, or fail saying ``what`` never happened."""
+        if not await self.wait_until(predicate, timeout):
+            raise TimeoutError(f'timed out waiting for {what}')
+
+    async def open_entry(self, query):
+        """/ search for ``query`` and open the first match in a tab."""
+        await self.keys('slash')
+        await self.type_text(query)
+        await asyncio.sleep(0.4)
+        await self.keys('enter')
 
 
-async def type_text(pilot, text):
-    for char in text:
-        await pilot.press('space' if char == ' ' else char)
-        await asyncio.sleep(TYPE_DELAY_S)
+def activity(app, text):
+    """True once an activity line contains ``text``."""
+    return any(text in line.text for line in app.nav.feedback.activity)
 
 
-def static_text(widget):
-    return str(widget.render())
+async def demo(s: GifSession):
+    app = s.app
+    nav = app.nav
 
+    def published(name):
+        return any(item.name == name and item.publishers for item in nav.catalog['topics'])
 
-async def filter_and_open(pilot, filter_text):
-    """Type into the focused filter box (the first match is highlighted), then press enter."""
-    await type_text(pilot, filter_text)
-    await asyncio.sleep(0.5)
-    await pilot.press('enter')
-
-
-async def open_editor_entry(pilot, tab, filter_text, name):
-    """Open ``name`` on a Services/Actions tab and put the cursor in its editor."""
-    await filter_and_open(pilot, filter_text)
-    await wait_until(pilot, lambda: name in tab._seed_cache, what=f'{name} to load')
-    tab.query_one('#editor', TextArea).focus()
-    await asyncio.sleep(0.6)
-
-
-async def fill_value(pilot, value):
-    """Replace the value under the editor's cursor (to end of line) with ``value``."""
-    await pilot.press('shift+end')
-    await asyncio.sleep(0.2)
-    await type_text(pilot, value)
-
-
-async def demo(pilot):
-    app = pilot.app
-    topics = app.query_one('#topics-tab')
-    services = app.query_one('#services-tab')
-    actions = app.query_one('#actions-tab')
-    nodes = app.query_one('#nodes-tab')
-
-    bridge = app._bridge
-    await wait_until(pilot, lambda: any(e.name == '/fibonacci' for e in bridge.latest_graph.actions),
-                     timeout=20.0, what='the demo servers')
+    await s.need(lambda: published('/chatter') and nav.catalog['actions'], timeout=20.0, what='the demo servers')
     await asyncio.sleep(1.5)
 
-    # Topics: echo /chatter.
-    await filter_and_open(pilot, 'chat')
-    await wait_until(pilot, lambda: isinstance(app.screen, TopicModePopup), what='mode popup')
-    await asyncio.sleep(1.2)
-    await pilot.press('s')
-    await wait_until(pilot, lambda: '/chatter' in topics._seed_cache, what='/chatter to load')
-    await asyncio.sleep(0.6)
-    await pilot.press('ctrl+s')
-    await asyncio.sleep(4.5)
-    await pilot.press('ctrl+s')
-    await asyncio.sleep(0.6)
+    # A topic: /chatter opens in Echo; space echoes it, enter freezes it, esc goes live.
+    await s.open_entry('chat')
+    await s.keys('space', pause=4.0)
+    await s.keys('enter', pause=2.5)
+    await s.keys('escape', pause=1.5)
+    await s.keys('space')
 
-    # Services: call /add_two_ints with 19 + 23.
-    await pilot.press('ctrl+t')
-    await asyncio.sleep(0.6)
-    await open_editor_entry(pilot, services, 'add', '/add_two_ints')
-    await fill_value(pilot, '19')
-    await pilot.press('tab')
-    await asyncio.sleep(0.3)
-    await fill_value(pilot, '23')
-    await asyncio.sleep(0.6)
-    await pilot.press('ctrl+s')
-    await wait_until(pilot, lambda: 'sum' in _log_text(services), what='the service response')
+    # A service: /add_two_ints with 19 + 23.
+    await s.open_entry('add')
+    await s.keys('enter', 'enter')
+    await s.type_text('19')
+    await s.keys('tab')
+    await s.type_text('23')
+    await s.keys('escape', 'space')
+    await s.need(lambda: activity(app, '✓ response'), what='the service response')
     await asyncio.sleep(2.0)
 
-    # Actions: send a /fibonacci goal and watch the feedback until it succeeds.
-    await pilot.press('ctrl+t')
-    await asyncio.sleep(0.6)
-    await open_editor_entry(pilot, actions, 'fib', '/fibonacci')
-    await fill_value(pilot, '10')
-    await asyncio.sleep(0.6)
-    await pilot.press('ctrl+s')
-    status = actions.query_one('#goal-status', Static)
-    await wait_until(pilot, lambda: 'SUCCEEDED' in static_text(status), timeout=20.0,
-                     what='the goal to succeed')
+    # An action: send a /fibonacci goal and watch the feedback until it succeeds.
+    await s.open_entry('fib')
+    await s.keys('enter', 'enter')
+    await s.type_text('10')
+    await s.keys('escape', 'space')
+    await s.need(lambda: activity(app, '✓ goal succeeded'), timeout=20.0, what='the goal to succeed')
     await asyncio.sleep(2.0)
 
-    # Nodes: the demo node's interfaces and parameters.
-    await pilot.press('ctrl+t')
-    await asyncio.sleep(0.6)
-    await filter_and_open(pilot, 'demo')
-    table = nodes.query_one('#node-params', DataTable)
-    await wait_until(pilot, lambda: table.row_count > 0, what='the node parameters')
+    # A node: change the demo node's publish_rate, then set it.
+    await s.open_entry('demo_servers')
+    node = Tab('nodes', '/ros_tui_demo_servers')
+    data = nav.entry(node)
+    await s.need(lambda: data.params, what='the node parameters')
+    await asyncio.sleep(1.5)
+    row = [param.name for param in data.params].index('publish_rate')
+    await s.keys('l', 'enter', *['j'] * row, 'c')
+    await s.type_text('5')
+    await s.keys('enter', pause=1.5)
+    await s.keys('space')
+    await s.need(lambda: activity(app, '✓ set publish_rate'), what='the parameter to be set')
     await asyncio.sleep(3.0)
-
-
-def _log_text(tab):
-    return '\n'.join(strip.text for strip in tab.query_one('#output-log', RichLog).lines)
 
 
 async def record() -> list[tuple[float, str]]:
@@ -193,7 +178,7 @@ async def record() -> list[tuple[float, str]]:
         async with app.run_test(size=(COLUMNS, ROWS)) as pilot:
             recorder = Recorder(app)
             recorder.start()
-            await demo(pilot)
+            await demo(GifSession(app, pilot, bridge, 'make_gif'))
             await recorder.stop()
             return recorder.frames
     finally:
@@ -212,9 +197,8 @@ def encode(frames: list[tuple[float, str]], output: Path) -> None:
         lines = []
         for index, (stamp, svg) in enumerate(kept):
             svg_path, png_path = tmp / f'{index:05d}.svg', tmp / f'{index:05d}.png'
-            # Textual pads with leading spaces inside spans; keep rsvg from collapsing them.
-            svg_path.write_text(svg.replace("<svg ", "<svg xml:space=\"preserve\" ", 1))
-            subprocess.run(['rsvg-convert', '-o', str(png_path), str(svg_path)], check=True)
+            svg_path.write_text(rsvg_ready(svg))
+            subprocess.run(['rsvg-convert', '-b', BACKGROUND, '-o', str(png_path), str(svg_path)], check=True)
             following = kept[index + 1][0] if index + 1 < len(kept) else end
             lines += [f"file '{png_path}'", f'duration {following - stamp:.3f}']
         lines.append(f"file '{tmp / f'{len(kept) - 1:05d}.png'}'")  # concat needs the last twice
@@ -223,7 +207,8 @@ def encode(frames: list[tuple[float, str]], output: Path) -> None:
         subprocess.run([
             'ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', str(tmp / 'frames.txt'),
             '-vf', (f'scale={GIF_WIDTH}:-1:flags=lanczos,split[a][b];'
-                    '[a]palettegen=max_colors=64:stats_mode=full[p];[b][p]paletteuse=dither=none'),
+                    '[a]palettegen=max_colors=64:stats_mode=full:reserve_transparent=0[p];'
+                    '[b][p]paletteuse=dither=none'),
             '-fps_mode', 'vfr', '-loop', '0', str(output),
         ], check=True)
         print(f'wrote {output} ({len(kept)} distinct frames, {output.stat().st_size // 1024} KiB)')

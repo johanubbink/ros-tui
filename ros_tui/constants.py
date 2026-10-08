@@ -13,36 +13,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every tunable number of the TUI in one place. Nothing here is configurable at runtime."""
+"""Every tunable number of the TUI in one place, and the stamp-at-send words. Nothing here is
+configurable at runtime."""
 
 # ROS bridge thread.
 GRAPH_POLL_PERIOD_S = 1.0
 HOUSEKEEPING_PERIOD_S = 0.25
 READY_TIMEOUT_S = 5.0  # Action-server discovery (5 sub-entities) can exceed 2 s under load.
 RESPONSE_TIMEOUT_S = 30.0
+SHUTDOWN_CANCEL_TIMEOUT_S = 1.0  # On quit, how long the bridge waits for servers to accept canceling running goals.
 CLIENT_CACHE_SIZE = 8
 DEFAULT_QOS_DEPTH = 10
 
 # Type introspection.
 TYPE_CACHE_SIZE = 256
-MAX_CONSTANTS_IN_COMMENT = 16
 
 # Display truncation.
 TRUNCATE_ARRAY_ELEMENTS = 16
 TRUNCATE_STRING_CHARS = 256
-TRUNCATE_RENDER_LINES = 60
 
-# UI rendering.
+# Echo and feedback buffers.
 ECHO_BUFFER_MAXLEN = 200
 ECHO_HZ_WINDOW = 64
-ECHO_RENDER_PERIOD_S = 0.1
-ECHO_MAX_RENDER_PER_TICK = 3
+ECHO_DISPLAY_DIGITS = 6  # Significant digits of an echoed float on screen (the value keeps them all).
 FEEDBACK_BUFFER_MAXLEN = 200
-FEEDBACK_MAX_RENDER_PER_TICK = 3
-OUTPUT_LOG_MAX_LINES = 1000
-FILTER_DEBOUNCE_S = 0.15
-EDITOR_PARSE_DEBOUNCE_S = 0.3
+
+# Stamp-at-send words: a field holding one is stamped with the time the message is sent
+# (message_yaml.build_message). An editor seeds a nested header with HEADER_AUTO.
+HEADER_AUTO = 'auto'  # A std_msgs/Header: stamped, with an empty frame_id.
+TIME_NOW = 'now'  # A builtin_interfaces/Time, such as a header's stamp.
 
 # Topic publishing.
 PUBLISH_RATE_MIN_HZ = 0.1
 PUBLISH_RATE_MAX_HZ = 100.0
+PUBLISH_DEFAULT_RATE_HZ = 10.0  # The repeat rate of a topic nobody publishes yet.
+
+# Navigation model (ros_tui/ui/nav.py).
+NAV_LOG_LINES = 8  # Key log lines kept.
+NAV_ACTIVITY_MAX = 200  # Activity lines kept for :log.
+NAV_TOAST_S = 1.6  # How long a toast shows.
+NAV_FLASH_S = 0.5  # How long the primary button flashes after a send.
+NAV_ACTIVITY_FRESH_S = 1.6  # How long a new activity line stays highlighted.
+NAV_ERRLINE_S = 6.0  # How long an errline shows under a panel.
+SEND_HISTORY_MAX = 20  # Sends kept per entry for [ and ].
+SUMMARY_MAX_CHARS = 60  # A message summarised in an activity line ('a: 19, b: 23') is cut here.
+ACTION_SPINNER_HZ = 4.0  # Frames per second of the ◐◓◑◒ spinner of an executing goal.
+UI_TICK_PERIOD_S = 0.1  # The UI's clock tick: drains the echoes and expires toasts.

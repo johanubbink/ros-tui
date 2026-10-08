@@ -22,10 +22,12 @@ def test_push_then_drain_delivers_in_order():
     buffer = EchoBuffer(maxlen=10)
     for value in range(5):
         buffer.push(value)
+    assert buffer.pending() == 5
     messages, received, dropped, _ = buffer.drain()
     assert messages == [0, 1, 2, 3, 4]
     assert received == 5
     assert dropped == 0
+    assert buffer.pending() == 0
 
 
 def test_overflow_drops_oldest_and_counts():

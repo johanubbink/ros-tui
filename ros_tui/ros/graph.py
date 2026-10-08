@@ -32,11 +32,19 @@ class InterfaceEntry:
 
 
 @dataclass(frozen=True)
+class TopicInfo(InterfaceEntry):
+    """A topic with how many publish and subscribe to it, not counting our own bridge node."""
+
+    publishers: int = 0
+    subscribers: int = 0
+
+
+@dataclass(frozen=True)
 class GraphSnapshot:
-    version: int  # Bumps only on real change; 0 is the empty pre-discovery sentinel.
+    version: int  # Bumps only on real change (a count changing included); 0 is the empty pre-discovery sentinel.
     actions: tuple[InterfaceEntry, ...]
     services: tuple[InterfaceEntry, ...]
-    topics: tuple[InterfaceEntry, ...]
+    topics: tuple[TopicInfo, ...]
     nodes: tuple[InterfaceEntry, ...]
 
 
@@ -56,8 +64,8 @@ class NodeInfo:
 EMPTY_GRAPH = GraphSnapshot(version=0, actions=(), services=(), topics=(), nodes=())
 
 # Services rclpy auto-creates on every node for parameter handling and type
-# introspection. The Nodes tab already exposes these, so the Services tab
-# hides them to cut noise. Matched by type (package/srv/TypeName) so node
+# introspection. A node entry already exposes the parameters, so the ☰ list
+# hides these to cut noise. Matched by type (package/srv/TypeName) so node
 # naming is irrelevant.
 BUILTIN_SERVICE_TYPES = frozenset({
     'rcl_interfaces/srv/DescribeParameters',
@@ -111,11 +119,23 @@ def build_snapshot(node: Any, version: int) -> GraphSnapshot:
             result.append(InterfaceEntry(full, (namespace,)))
         return tuple(result)
 
+    def topics() -> tuple[TopicInfo, ...]:
+        # Our own endpoints (an echo's subscription, a publish's publisher) are left out of the
+        # counts, as the bridge node is of the node list, so using a topic does not change its count.
+        name, namespace = node.get_name(), node.get_namespace()
+        own_pubs = {n for n, _ in node.get_publisher_names_and_types_by_node(name, namespace)}
+        own_subs = {n for n, _ in node.get_subscriber_names_and_types_by_node(name, namespace)}
+        return tuple(
+            TopicInfo(entry.name, entry.types,
+                      max(0, node.count_publishers(entry.name) - (entry.name in own_pubs)),
+                      max(0, node.count_subscribers(entry.name) - (entry.name in own_subs)))
+            for entry in _entries(node.get_topic_names_and_types()))
+
     return GraphSnapshot(
         version=version,
         actions=_entries(get_action_names_and_types(node)),
         services=_entries(node.get_service_names_and_types(), skip=is_builtin_service),
-        topics=_entries(node.get_topic_names_and_types()),
+        topics=topics(),
         nodes=node_entries(),
     )
 
@@ -130,8 +150,8 @@ def build_node_info(node: Any, full_name: str) -> NodeInfo:
     """Introspect ``full_name``'s endpoints via ``node``. Call on the node's spin thread.
 
     Hidden names (the action's internal ``/foo/_action/*`` topics & services) and the node's
-    auto-created parameter services are dropped, matching what the Services/Nodes tabs show —
-    so a jump from here always lands on an entity the destination tab actually lists.
+    auto-created parameter services are dropped, matching what the ☰ list shows, so opening an
+    interface from a node entry always lands on an entry the list has.
     """
     name, namespace = split_node_name(full_name)
     return NodeInfo(

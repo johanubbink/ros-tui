@@ -23,6 +23,10 @@ services:
     environment:
       ROS_DISTRO: ${ROS_DISTRO:-jazzy}
       ROS_DOMAIN_ID: "0"
+      # docker exec gives TERM=xterm and no COLORTERM, so Textual drops to 16 ANSI colours and
+      # every dark surface in the theme becomes plain black. Ask for truecolor instead.
+      TERM: xterm-256color
+      COLORTERM: truecolor
     entrypoint: ["/ros_tui_ws/src/ros_tui/docker/entrypoint.sh"]
     # Default: build, then launch the example servers. The TUI itself is run
     # interactively in a second terminal via `docker compose exec`.

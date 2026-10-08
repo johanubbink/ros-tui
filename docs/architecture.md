@@ -4,18 +4,21 @@ ros_tui is two layers joined by one rule: **only the ROS thread touches rclpy,
 and only the UI thread touches textual.**
 
 ```
-  UI thread (textual)                              ros-bridge thread (rclpy)
-  ───────────────────                              ─────────────────────────
-  RosTuiApp                                        private Context + Node
-   ├─ TopicsTab ─┐                                  + SingleThreadedExecutor
-   ├─ ServicesTab├─ bridge.call_service(...) ──>   command queue ──> guard condition
-   ├─ ActionsTab ┘   returns a Future              (runs the command on this thread)
-   └─ NodesTab                                      │
-         ▲                                          ├─ clients / publishers (LRU cache)
-         │  post_message(ServiceCompleted, ...)     ├─ subscriptions ──> EchoBuffer ──┐
-         └──────────────────────────────────────────┤  housekeeping timer (4 Hz)    │
-         │  drain() at 10 Hz                        └─ graph poll (1 Hz) ──> GraphSnapshot
+  UI thread (textual)                          ros-bridge thread (rclpy)
+  ───────────────────                          ─────────────────────────
+  RosTuiApp.on_key                             private Context + Node
+   └─ NavState.handle_key (keymap.py)           + SingleThreadedExecutor
+       └─ nav.entry(tab): one Entry per tab      │
+           ├─ TopicEntry  ─┐                     │
+           ├─ ServiceEntry ├─ bridge.call_service(...) ──> command queue ──> guard condition
+           ├─ ActionEntry  │  returns a Future   │         (runs the command on this thread)
+           └─ NodeEntry   ─┘                     ├─ clients / publishers (LRU cache)
+         ▲                                       ├─ subscriptions ──> EchoBuffer ──┐
+         │  post(fn): a UiCall message           ├─ housekeeping timer (4 Hz)      │
+         └───────────────────────────────────────┘  graph poll (1 Hz) ──> GraphSnapshot
+         │  tick() every 0.1 s drains the echoes                                    │
          └──────────────────────────────────────────────────────────────────────────┘
+  widgets/: views that redraw from the NavState after every key, answer and tick
 ```
 
 [`ros_tui/main.py`](../ros_tui/main.py) starts the bridge, runs the app, and
@@ -31,28 +34,30 @@ The code:
     topics, services, actions and nodes, and `NodeInfo` (a node's endpoints,
     like `ros2 node info`).
   - [`message_yaml.py`](../ros_tui/ros/message_yaml.py): loading interface
-    types, and checked YAML ↔ message conversion
-    ([Messages and YAML](#messages-and-yaml)).
+    types, the structure of a message, and checked plain data ↔ message
+    conversion ([Messages](#messages)).
   - [`echo.py`](../ros_tui/ros/echo.py): `EchoBuffer`, the bounded hand-off of
     received messages to the UI.
   - [`events.py`](../ros_tui/ros/events.py): the action lifecycle events the
     bridge emits.
-- [`ros_tui/ui/`](../ros_tui/ui/): the textual app. Nothing in here touches
-  rclpy; it only calls `RosBridge` methods.
-  - [`app.py`](../ros_tui/ui/app.py): `RosTuiApp`, the four tabs, the global
-    key bindings and the help screen.
-  - [`entity_tab.py`](../ros_tui/ui/entity_tab.py),
-    [`interface_tab.py`](../ros_tui/ui/interface_tab.py): the tab base classes
-    ([Tabs](#tabs)).
-  - `topics_tab.py`, `services_tab.py`, `actions_tab.py`, `nodes_tab.py`: one
-    module per tab.
-  - [`messages.py`](../ros_tui/ui/messages.py): the textual messages that
-    carry results from the ROS thread to the UI thread.
-  - [`filterable_list.py`](../ros_tui/ui/filterable_list.py),
-    [`message_editor.py`](../ros_tui/ui/message_editor.py),
-    [`topic_mode_popup.py`](../ros_tui/ui/topic_mode_popup.py): shared widgets.
-  - [`wizards/`](../ros_tui/ui/wizards/): the field helpers behind `ctrl+w`
-    ([Field wizards](#field-wizards)).
+- [`ros_tui/ui/`](../ros_tui/ui/): the textual app ([The UI](#the-ui)). Nothing
+  in here touches rclpy; it only calls `RosBridge` methods.
+  - [`app.py`](../ros_tui/ui/app.py): `RosTuiApp`, one screen of views over the
+    nav model, the one key router, the clock tick and the graph updates.
+  - [`nav.py`](../ros_tui/ui/nav.py): `NavState`, the pure model of what is on
+    screen: the ☰ list, the open tabs, the layer, the cursors, the overlays,
+    undo, the toast and the activity lines.
+  - [`keymap.py`](../ros_tui/ui/keymap.py): the one table of keys.
+  - [`entries/`](../ros_tui/ui/entries/): the `Entry` contract
+    (`base.py`), one `Entry` subclass per entry kind (topic, service, action,
+    node) and `kinds.py`, which maps a kind to its class.
+  - [`fields.py`](../ros_tui/ui/fields.py): `FieldRows`, the model of a message
+    as editable field rows.
+  - [`helpers/`](../ros_tui/ui/helpers/): the field helpers (Quaternion,
+    Header, Time, Enum) and their maths.
+  - [`register.py`](../ros_tui/ui/register.py): the typed copy / paste register.
+  - [`widgets/`](../ros_tui/ui/widgets/): the views, each drawing part of the
+    `NavState`, and [`theme.py`](../ros_tui/ui/theme.py), the colours.
 - [`ros_tui/constants.py`](../ros_tui/constants.py): every rate, timeout and
   buffer size in one place.
 - [`ros_tui/demo/demo_servers.py`](../ros_tui/demo/demo_servers.py) and
@@ -78,9 +83,9 @@ Results come back in one of two ways:
 - a `concurrent.futures.Future` the UI can watch, or
 - a callback run on the ROS thread. Callbacks must be cheap and thread-safe;
   the UI's callbacks only call textual's `post_message`, which is safe from
-  any thread. [`ui/messages.py`](../ros_tui/ui/messages.py) lists those
-  messages (`ServiceCompleted`, `ActionEventMessage`, `NodeParametersReady`,
-  …).
+  any thread. [`ui/app.py`](../ros_tui/ui/app.py) defines those
+  messages: `GraphUpdated` and `UiCall`, which carries any
+  entry's bridge answer as a function to run on the UI thread.
 
 **Nothing blocks the ROS thread.** The bridge never waits for a server with
 `wait_for_service`. A request whose server isn't up yet is parked, and a
@@ -102,7 +107,9 @@ tick.
 `GraphSnapshot`. The UI is only told when the snapshot differs from the last
 one, so an idle system costs no redraws. Names ROS treats as hidden (any
 `_`-prefixed part) and the services every node creates for itself
-(parameters, type description) are left out.
+(parameters, type description) are left out. Each topic carries its publisher
+and subscriber counts (our own node's endpoints not counted), which decide
+whether it opens in Echo and fill its header.
 
 ## Fast data: echo and feedback
 
@@ -112,17 +119,20 @@ never go straight to the UI:
 - The subscription callback (ROS thread) pushes each message into an
   `EchoBuffer`: a lock-protected deque of 200. When it's full, the oldest
   message is dropped and counted.
-- The Topics tab drains the buffer every 0.1 s (UI thread), draws at most 3
-  messages per drain, and counts the rest as dropped. The status line shows
-  the message count, the rate (over the last 64 messages) and the drop count.
+- The app's clock tick (`UI_TICK_PERIOD_S`, 0.1 s, UI thread) drains the
+  buffer and keeps only the newest message; it is converted for display only
+  when it is shown. The count, the rate (over the last 64 messages) and the
+  drops still add up, and a 1 kHz topic costs at most one conversion per tick.
+  The tick redraws only when the tab on screen shows something new, so an idle
+  app never redraws.
 
-Action feedback works the same way, with its own buffer and limits.
+Action feedback works the same way, with a buffer per goal.
 
 Echo picks its QoS from the publishers that exist when it starts
 (`adapted_qos`): best-effort if any publisher is best-effort, so it can hear
 all of them.
 
-## Messages and YAML
+## Messages
 
 [`message_yaml.py`](../ros_tui/ros/message_yaml.py) does the conversions in
 both directions:
@@ -130,63 +140,99 @@ both directions:
 - **Loading types** is lazy: a message, service or action class is imported
   the first time it's opened, in a worker thread, and cached. That keeps
   startup fast on systems with thousands of interfaces.
-- **Seeding the editor** (`default_yaml`): the default message as YAML, with
-  the message's integer constants in a comment.
+- **Message structure** (`message_structure`): a tree of `FieldNode`s (name,
+  type, enum constants, children) read from the class. The field rows and the
+  field helpers are built from it.
+- **Plain data** (`message_to_plain`): a message as dicts, lists and scalars.
+  It seeds an editor with the defaults (a nested Header as `auto`) and is what
+  `y` copies. `message_to_display` is the same with long arrays and strings
+  cut, for an echo or a goal's feedback.
 - **Building a message** (`build_message`): it re-implements
   `rosidl_runtime_py.set_message_fields`, because the Jazzy version neither
   says which field was wrong nor checks ranges and sizes (it would send
   `UInt8(data=300)` silently corrupted). Every (sub)message is built with
   `check_fields=True`, and every failure becomes a `FieldError` with the field
-  path (`pose.position.x`, `points[1].x`). `stamp: now` and `header: auto` turn
-  into time setters the bridge applies right before sending.
-- **Showing a message** (`to_truncated_yaml`, `to_filtered_yaml`): YAML with
-  long arrays and strings shortened and a line cap, optionally showing only
-  the fields picked in the Topics tab's tree.
-- **Message structure** (`message_structure`): a tree of `FieldNode`s (name,
-  type, constants, children) read from the class. The Topics field tree and
-  the field wizards use it.
+  path (`pose.position.x`, `points[1].x`), which the UI maps to a row and an
+  error line. `stamp: now` and `header: auto` turn into time setters the bridge
+  applies right before sending.
 
-## Tabs
+## The UI
 
-Every tab is an `EntityTab`: a `FilterableList` on the left, a detail pane on
-the right, and the hooks the app's key bindings call (`primary_action`,
-`secondary_action`, `reset_editor`, `wizard_action`, `clear_log`,
-`select_entity`). The app routes each global key to the active tab, so a tab
-only has to fill in the hooks it supports.
+The UI is a pure model with thin views. The rules behind it, the keymap
+rules, the look and the copy are in
+[design-principles.md](design-principles.md); this is how the code fits
+together.
 
-`InterfaceTab` extends that for the three tabs with an editor (Topics,
-Services, Actions): the type line, the `MessageEditor`, the controls row, a
-status line and the output log. Subclasses add their own controls and verbs
-through `compose_controls`, `compose_status` and the hooks above. Selecting an
-entry loads its type in a worker thread and posts `PrototypeReady`; edits are
-kept per entry, and `ctrl+r` restores the seed.
-
-`NodesTab` is an `EntityTab` without an editor: an interfaces tree over a
-parameter table. Selecting an interface posts `NavigateToEntity`, and the app
-switches tab and selects that entity there.
-
-The app polls nothing itself. The bridge's graph listener posts
-`GraphUpdated`, and the app hands the new entries to each tab.
-
-## Field wizards
-
-`ctrl+w` finds the field under the editor's cursor (pure text helpers in
-[`wizards/editing.py`](../ros_tui/ui/wizards/editing.py)), looks its type up
-in the message structure, and opens the innermost matching wizard
-([`wizards/registry.py`](../ros_tui/ui/wizards/registry.py)). A wizard is a
-modal `WizardScreen` that returns the field's new value; the tab renders it
-back into the editor in place of the old block.
-
-Wizards register themselves with `@register('pkg/Type')` (Header, Time,
-Quaternion). Integer fields with constants get the enum picker. Adding one is
-described in [`wizards/__init__.py`](../ros_tui/ui/wizards/__init__.py).
+- **The nav model.** [`nav.py`](../ros_tui/ui/nav.py)'s `NavState` holds
+  everything on screen as plain Python (no textual, no rclpy): the open
+  tabs, the layer (tab row › inside a tab › inside an area › insert), the
+  cursors, the one `overlay` that has the keys (`Search`, `CommandLine`,
+  `LogView`, a field `Helper` or `WhichKey`), the undo stack (each change owned
+  by the tab it was made in) and the register. It is driven by `handle_key`,
+  `click`, `tick` and `set_catalog`; the rest of its public surface is
+  read-only queries for the views (`footer()`, `summary()` for the test
+  harness, `shown(Overlay type)`, …) and a few calls for entries. Three
+  self-contained pieces sit beside it: the `Catalog`
+  ([`catalog.py`](../ros_tui/ui/catalog.py)), what the ☰ list and search show,
+  filled from each `GraphSnapshot`; the `Feedback`
+  ([`feedback.py`](../ros_tui/ui/feedback.py)), the key log, toast, errlines,
+  activity lines and send flash, each timed on its clock (the bridge's `now()`,
+  so tests run it on a manual clock); and the `CommandLine`
+  ([`command_line.py`](../ros_tui/ui/command_line.py)), the `:` line and its
+  suggestions, whose commands NavState runs from its `COMMANDS` table.
+- **The keymap.** [`keymap.py`](../ros_tui/ui/keymap.py)'s `KEYMAP` is one
+  table of `Binding`s: an input mode, the context predicates it applies in, the
+  keys and the `NavState` action they run (with an optional argument: a step
+  of ±1, or the name of the entry verb for the generic `verb` action), and the
+  label the footer, `?` and [usage.md](usage.md) show. `NavState.handle_key`
+  looks a key up there and runs its action from `nav.ACTIONS`.
+- **One key router.** [`app.py`](../ros_tui/ui/app.py)'s `RosTuiApp` has a
+  single `on_key` that hands every key to `NavState.handle_key`, then redraws.
+  Nothing takes focus, and textual's own bindings (focus cycling, the command
+  palette) are off, so what a key does depends only on the model. Only
+  `ctrl+q` and `ctrl+c` are bound, to quit. Clicks take the same road: every view
+  hands a left click to `RosTuiApp.click`, which passes the target drawn under
+  the mouse (a Rich style `meta`) to `NavState.click`.
+- **Entries.** Each tab has an `Entry` object
+  ([`entries/base.py`](../ros_tui/ui/entries/base.py)) that holds its state
+  and says what it shows and does: its areas (per mode for a topic's Echo /
+  Publish), rows, edits, a table of verbs (space, `s`, `r`, `y`, `p`, …),
+  running markers and tick. `NavState.entry(tab)` makes it the first time
+  (through the factory it is given) and keeps it after the tab closes. An
+  entry talks back through `nav.feedback` (`refuse`, `report_error` /
+  `clear_error`, `add_activity`, …) and a few NavState calls (`push_undo` /
+  `drop_undo`, `begin_edit`, `set_row`, `open_entity`); an undo step is a closure the entry pushes, and an `Area`
+  says what its rows allow (`editable`, `folds`, `helpers`), so NavState
+  holds no kind's areas, state or verbs. [`entries/kinds.py`](../ros_tui/ui/entries/kinds.py) maps
+  each kind to its class: `TopicEntry` (Echo / Publish, the echo, the
+  repeat), `ServiceEntry`, `ActionEntry` (one goal at a time, through a
+  `LastGoal` the action entries share) and `NodeEntry` (interfaces and
+  parameters). The three with a message to fill in share
+  `MessageEntry` (the field-row editor, `[ ]` history, copy and paste, the
+  helpers). An entry calls the bridge itself and wraps each answer in
+  `post(fn)`, which the app turns into a `UiCall` message, so the answer is
+  applied on the UI thread; a slow import runs through `work(fn)` in a textual
+  thread worker. Entries are plain Python too.
+- **Widgets.** [`widgets/`](../ros_tui/ui/widgets/) holds the views. Each is a
+  `NavView` that draws part of the `NavState` as lines of Rich text and decides
+  nothing: the top bar, the tab row, the ☰ list, the entry body (a header, a
+  toolbar and one `Panel` per area, by an `EntryView` per kind), the activity strip
+  and the footer. Popups (search, `:log`, the command suggestions, which-key,
+  the field helper, the toast) are `Overlay`s that say where they go. After
+  each key, bridge answer or tick that changed something, the app's
+  `refresh_views()` places the overlays and redraws every view (a tick that
+  only changed what the entries show just repaints them).
 
 ## Shutdown
 
-`ctrl+q` exits the app, and `main()` then calls `bridge.shutdown()`. That
-clears the bridge's running flag (so `submit()` refuses new work) and wakes
-the executor. The ROS thread leaves its spin loop and tears down: queued
-commands are cancelled, parked and in-flight requests fail with "ROS bridge
-shut down", and every timer (including periodic publishers), subscription,
-publisher and client is destroyed, then the node and the context.
+`:q` (or `ctrl+q`) exits the app, and `main()` then calls `bridge.shutdown()`.
+That clears the bridge's running flag (so `submit()` refuses new work) and
+wakes the executor. The ROS thread leaves its spin loop and tears down: queued
+commands are cancelled, and parked and in-flight requests fail with "ROS
+bridge shut down". Then every running goal is canceled, as `ros2 action
+send_goal` does on ctrl+c, so nothing keeps acting on the robot after you quit:
+the thread spins for at most `SHUTDOWN_CANCEL_TIMEOUT_S` (1 s) until each
+server answered the cancel (a goal still waiting for acceptance is canceled
+when it is accepted). Then every timer (including periodic publishers),
+subscription, publisher and client is destroyed, then the node and the context.
 `shutdown()` waits up to 3 s for the thread to finish.

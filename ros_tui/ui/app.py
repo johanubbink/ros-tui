@@ -13,265 +13,210 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The textual application: four tabs over one shared RosBridge."""
+"""The textual application: one screen over the nav model (`NavState`) and a shared bridge.
 
-from textual.app import App
-from textual.binding import Binding
-from textual.containers import Center, Middle
-from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
+One `on_key` hands every key to `NavState.handle_key`, then redraws the views from the model.
+Nothing takes focus and textual's own bindings (focus cycling, the ctrl+p palette) are off, so
+every key reaches the keymap. ctrl+q and ctrl+c quit, as `:q` does. One `on_click` hands every
+left click to `NavState.click`, with the target the view drew under the mouse.
 
-from ros_tui.ui.actions_tab import ActionsTab
-from ros_tui.ui.entity_tab import EntityTab
-from ros_tui.ui.messages import GraphUpdated, NavigateToEntity
-from ros_tui.ui.nodes_tab import NodesTab
-from ros_tui.ui.services_tab import ServicesTab
-from ros_tui.ui.topics_tab import TopicsTab
+Graph updates feed the ☰ list; a GraphSnapshot carries each topic's publisher and subscriber counts.
 
-HELP_TEXT = """\
-ros_tui — ROS 2 interface workbench
+The entries are made by `entries.kinds.entry_factory` over the bridge. An entry's bridge answers
+arrive on the bridge's thread; its `post` wraps each in a `UiCall` message, so it is applied on the
+UI thread, and the views redraw after it. Its `work` (importing a message type) runs in a textual
+thread worker and posts its result the same way.
 
-  ctrl+t                     cycle tabs: Topics → Services → Actions → Nodes
-  ctrl+f                     back to the list (filter box focused) from the detail view
-                             (↑/↓ move through matches, enter selects the highlighted one)
-  ctrl+s                     primary action: Send goal / Call / Publish once / Set param
-  ctrl+k                     Cancel goal / Stop periodic publish / Refresh node
-  ctrl+r                     reset the editor to the message defaults
-  ctrl+w                     open a fill-in wizard for the field on the cursor line
-                             (Topics publish mode; e.g. a Header stamp/frame_id helper)
-  ctrl+l                     clear the output log of the current tab
-  f2                         this help · esc closes it
-  ctrl+q                     quit
-
-On the Nodes tab, select an interface in the tree to jump to its
-Topics / Services / Actions tab with that entity pre-selected.
-
-Editor tips (the YAML dialect of `ros2 action send_goal` / `ros2 topic pub`):
-
-  stamp: now                 builtin_interfaces/Time stamped at send time
-  header: auto               empty Header with the stamp set at send time
-  .nan / .inf / -.inf        float specials
-  Values are validated against field types, ranges and array sizes before
-  anything is sent; errors show the exact field path below the editor.
+The overlays (search, :log, the command suggestions, which-key, the field helper, the toast) are
+`Overlay` views on the `overlay` layer; each says where it goes and `refresh_views` places it.
+Search and :log veil what is under them by dimming it. The model's clock is the bridge's `now()`;
+a UI_TICK_PERIOD_S timer calls `tick()`, which lets the entries take in their echoes and the model
+expire the toast.
 """
 
+from typing import Callable
 
-class HelpScreen(ModalScreen):
-    BINDINGS = [
-        Binding('escape', 'dismiss_help', 'Close', priority=True),
-        Binding('f2', 'dismiss_help', 'Close', show=False, priority=True),
-    ]
+from textual import events
+from textual.app import App
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.message import Message
+from textual.screen import Screen
 
-    DEFAULT_CSS = """
-    HelpScreen { align: center middle; }
-    HelpScreen Static { width: 100; max-width: 95%; border: round $primary; padding: 1 2; }
-    """
-
-    def compose(self):
-        with Middle(), Center():
-            yield Static(HELP_TEXT)
-
-    def action_dismiss_help(self) -> None:
-        self.dismiss()
+from ros_tui.constants import UI_TICK_PERIOD_S
+from ros_tui.ros.graph import GraphSnapshot
+from ros_tui.ui import theme
+from ros_tui.ui.entries.kinds import entry_factory
+from ros_tui.ui.feedback import Feedback
+from ros_tui.ui.nav import LogView, NavState, Search
+from ros_tui.ui.widgets import (ActivityStrip, CommandSuggestions, EntryBody, EntryTabRow, Footer, HelperPopup,
+                                HomeList, LogPopup, SearchPopup, ToastView, TopBar, WhichKeyPopup)
+from ros_tui.ui.widgets.base import NavView, Overlay
 
 
-class RosTuiApp(App):
+# Textual messages from the ROS thread to the UI thread: `post_message` is the only channel the
+# bridge's callbacks may use.
+class GraphUpdated(Message):
+    def __init__(self, snapshot: GraphSnapshot):
+        super().__init__()
+        self.snapshot = snapshot
+
+
+class UiCall(Message):
+    """A bridge answer for an entry: `fn` runs on the UI thread, then the views redraw."""
+
+    def __init__(self, fn: Callable[[], None]):
+        super().__init__()
+        self.fn = fn
+
+
+class KeylessScreen(Screen, inherit_bindings=False):
+    """The default screen without textual's tab / shift+tab focus cycling and ctrl+c copy."""
+
+
+class Body(Vertical):
+    """The body, which the toast and the helper popup are placed in: when it changes size (the
+    activity strip grows a line), they are placed again, or the toast would sit below its bottom."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.app.refresh_views()
+
+
+class RosTuiApp(App, inherit_bindings=False):
     TITLE = 'ros_tui'
-    SUB_TITLE = 'ROS 2 interface workbench'
-
-    CSS = """
-    .entity-list { width: 1fr; min-width: 28; border: round $primary; }
-    .entity-list #filter-input { border: none; height: 1; padding: 0 1; }
-    .entity-list #entity-list { height: 1fr; border: none; }
-    /* Keep the highlighted row a dark gray in both focus states. Textual otherwise
-       paints the focused option with the cyan block cursor, which collides with the
-       cyan message-type text and makes it unreadable. */
-    .entity-list #entity-list > .option-list--option-highlighted,
-    .entity-list #entity-list:focus > .option-list--option-highlighted {
-        background: $surface-lighten-2;
-        color: $text;
-    }
-    /* Tabs start maximized (list only); selecting an entry reveals the right pane. */
-    .right-pane { width: 1fr; padding: 0 1; display: none; }
-    #detail-title, #node-title { height: 1; color: $primary; text-style: bold; }
-    #detail-line, #node-header { height: 1; color: $text-muted; }
-    #editor { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
-    #editor-error { display: none; height: auto; max-height: 3; }
-    .controls { height: 3; }
-    .controls Button { margin-right: 1; min-width: 8; }
-    /* Pushes the view toggle to the right, apart from the topic-action buttons. */
-    .controls-spacer { width: 1fr; }
-    #mode-toggle-button { margin-right: 0; border: round $primary; }
-    #rate-input { width: 9; }
-    #goal-status, #topics-status { height: 1; }
-    #output-log { height: 2fr; min-height: 5; border: round $surface-lighten-2; }
-    /* Topics: publish mode favours the editor; subscribe mode favours the echo console. */
-    #topic-structure-tree { height: 3fr; min-height: 5; border: round $surface-lighten-2; }
-    .right-pane.mode-publish #editor { height: 4fr; }
-    .right-pane.mode-publish #output-log { height: 1fr; }
-    .right-pane.mode-subscribe #output-log { height: 4fr; }
-    /* Split the available height ~60/40 between the interfaces tree and the
-       parameters block. Each fills its share and scrolls when its content
-       overflows (3fr:2fr -> parameters get 40% of the space below the header). */
-    #node-interfaces { height: 3fr; min-height: 6; border: round $surface-lighten-2; }
-    #node-params-group { height: 2fr; min-height: 10; border: round $surface-lighten-2; }
-    #node-params { height: 1fr; min-height: 5; border: none; }
-    #node-param-value { width: 1fr; }
-    #node-param-status { height: 1; }
-    /* The result log takes no space until a Set writes to it, then grows (capped)
-       to show the ✓/✗ history; the parameter table absorbs the room until then. */
-    #node-param-log { height: auto; max-height: 6; }
-    """
-
+    ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
-        Binding('ctrl+t', 'cycle_tab', 'Next tab', priority=True),
-        Binding('ctrl+f', 'focus_filter', 'Back to list', priority=True),
-        Binding('ctrl+s', 'primary_action', 'Send/Call/Pub', priority=True),
-        Binding('ctrl+k', 'secondary_action', 'Cancel/Stop', priority=True),
-        Binding('ctrl+r', 'reset_editor', 'Reset msg', priority=True),
-        Binding('ctrl+w', 'wizard', 'Fill field', priority=True),
-        Binding('ctrl+l', 'clear_log', 'Clear log', priority=True),
-        Binding('f2', 'help', 'Help'),
+        Binding('ctrl+q', 'quit', show=False, priority=True),
+        Binding('ctrl+c', 'quit', show=False, priority=True),
     ]
+    CSS = """
+    Screen { background: $rt-term; color: $rt-text; layers: default overlay; }
+    #body { height: 1fr; padding: 0 1; layers: default overlay; }
+    /* The veil under search and :log: dim all but the footer. */
+    Screen.-veiled TopBar, Screen.-veiled EntryTabRow, Screen.-veiled #body, Screen.-veiled ActivityStrip {
+        opacity: 50%;
+    }
+    """
 
     def __init__(self, bridge):
         super().__init__()
         self._bridge = bridge
-        self._jumping = False  # True while a cross-tab jump owns the next tab switch.
-        self._activated_once = False  # Guards the mount-time TabActivated (see handler).
+        self.nav = NavState(entry_factory(bridge, lambda fn: self.post_message(UiCall(fn)), self._work),
+                            Feedback(bridge.now, bridge.time_of_day))
+
+    def get_css_variables(self) -> dict[str, str]:
+        return {**super().get_css_variables(), **theme.css_variables()}
+
+    def get_default_screen(self) -> Screen:
+        return KeylessScreen(id='_default')
 
     def compose(self):
-        yield Header()
-        with TabbedContent(initial='topics'):
-            with TabPane('Topics', id='topics'):
-                yield TopicsTab(self._bridge, id='topics-tab')
-            with TabPane('Services', id='services'):
-                yield ServicesTab(self._bridge, id='services-tab')
-            with TabPane('Actions', id='actions'):
-                yield ActionsTab(self._bridge, id='actions-tab')
-            with TabPane('Nodes', id='nodes'):
-                yield NodesTab(self._bridge, id='nodes-tab')
-        yield Footer()
+        nav = self.nav
+        yield TopBar(nav)
+        yield EntryTabRow(nav)
+        with Body(id='body'):
+            yield HomeList(nav)
+            yield EntryBody(nav)
+            yield HelperPopup(nav)
+            yield ToastView(nav)
+        yield ActivityStrip(nav)
+        yield Footer(nav)
+        # Overlays, bottom to top.
+        yield SearchPopup(nav)
+        yield LogPopup(nav)
+        yield CommandSuggestions(nav)
+        yield WhichKeyPopup(nav)
 
     def on_mount(self) -> None:
         self._bridge.set_graph_listener(lambda snapshot: self.post_message(GraphUpdated(snapshot)))
         self._apply_graph(self._bridge.latest_graph)
-        self.action_focus_filter()
+        self.ticker = self.set_interval(UI_TICK_PERIOD_S, self.tick)  # The harness pauses it on a simulated clock.
 
     def on_unmount(self) -> None:
         self._bridge.set_graph_listener(None)
 
+    # ---------- keys ----------
+    def on_key(self, event: events.Key) -> None:
+        event.stop()
+        event.prevent_default()
+        # A symbol goes in as the character it types: textual names some after their unicode name
+        # ('question_mark') but renames others ('slash'), and the character is the same for all.
+        symbol = len(event.key) > 1 and '+' not in event.key and event.is_printable
+        self.nav.handle_key(event.character if symbol else event.key)
+        if self.nav.quit:
+            self.exit()
+            return
+        self.refresh_views()
+
+    # ---------- the mouse ----------
+    def on_click(self, event: events.Click) -> None:
+        """A click on no view (the body's padding): it only closes a popup."""
+        event.stop()
+        self.click(event)
+
+    def click(self, event: events.Click, on_popup: bool = False) -> None:
+        """A left click, from the view under the mouse (NavView.on_click): the views tag what they
+        draw with what a click on it does (the `click` meta of `widgets.base.clickable`); the model
+        does it (NavState.click), then the views redraw."""
+        if event.button != 1:
+            return
+        self.nav.click(event.style.meta.get('click'), on_popup)
+        self.refresh_views()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.refresh_views()
+
+    def tick(self) -> None:
+        """The clock tick: redraw when the model expired something. The harness calls it after
+        each `advance()`, so a toast's expiry follows the simulated clock."""
+        changed = self.nav.tick()
+        if changed == 'all':
+            self.refresh_views()
+        elif changed:  # Only what the entries show (an echo, a goal's spinner): nothing moves or resizes.
+            for view in self.query(NavView):
+                if view.display:
+                    view.refresh()
+
+    def refresh_views(self) -> None:
+        nav = self.nav
+        home = nav.tab is None
+        shows = {self.query_one(HomeList): home, self.query_one(EntryBody): not home}
+        self.screen.set_class(isinstance(nav.overlay, (Search, LogView)), '-veiled')
+        for overlay in self.query(Overlay):
+            spot = overlay.place(*overlay.parent.content_size)
+            shows[overlay] = spot is not None
+            if spot:
+                x, y, width, height = spot
+                overlay.styles.offset = (x, y)
+                overlay.styles.width = width
+                overlay.styles.height = height
+        # Lay the screen out again only when a view shows or hides, a popup shows (it may have moved
+        # or grown) or the activity strip's height follows its lines; else just redraw what shows.
+        strip = self.query_one(ActivityStrip)
+        layout = (any(view.display != on for view, on in shows.items())
+                  or any(on for view, on in shows.items() if isinstance(view, Overlay))
+                  or strip.size.height != strip.wanted_height())
+        for view, on in shows.items():
+            view.display = on
+        for view in self.query(NavView):
+            if view.display:
+                view.refresh(layout=layout)
+
+    def _work(self, fn) -> None:
+        """Run an entry's slow work (importing a message type) in a worker thread; it posts its result."""
+        self.run_worker(fn, thread=True, group='entries', exit_on_error=False)
+
+    def on_ui_call(self, message: UiCall) -> None:
+        """A bridge answer for an entry (posted from the bridge's thread): apply it, then redraw."""
+        message.stop()
+        message.fn()
+        self.refresh_views()
+
+    # ---------- the graph ----------
     def on_graph_updated(self, message: GraphUpdated) -> None:
         message.stop()
         self._apply_graph(message.snapshot)
 
-    def _apply_graph(self, snapshot) -> None:
-        self.query_one('#topics-tab', TopicsTab).set_entries(snapshot.topics)
-        self.query_one('#services-tab', ServicesTab).set_entries(snapshot.services)
-        self.query_one('#actions-tab', ActionsTab).set_entries(snapshot.actions)
-        self.query_one('#nodes-tab', NodesTab).set_entries(snapshot.nodes)
-
-    def on_navigate_to_entity(self, message: NavigateToEntity) -> None:
-        message.stop()
-        tabbed = self.query_one(TabbedContent)
-        # Drop focus first, same as action_cycle_tab: TabbedContent silently reverts an
-        # `active` change while a descendant widget holds focus.
-        self.set_focus(None)
-        # Suppress the activation-driven maximize: a jump opens the destination minimized,
-        # showing the jumped-to entity. The flag is consumed by the TabActivated handler
-        # below, whichever order it and the Selected (minimize) end up running in.
-        self._jumping = True
-        tabbed.active = message.tab_id
-        # Resolve the destination through the shared EntityTab contract; a tab_id that does
-        # not map to an EntityTab (a typo, or a non-jumpable tab) is a no-op, not a crash.
-        destinations = list(self.query(f'#{message.tab_id}-tab'))
-        tab = destinations[0] if destinations else None
-        if isinstance(tab, EntityTab):
-            tab.select_entity(message.entry)
-
-    def on_tabbed_content_tab_activated(self, message: TabbedContent.TabActivated) -> None:
-        # Every way of switching tabs (click, ctrl+t, programmatic) lands here. A tab with
-        # no selection opens maximized with the filter box focused, ready to type; a tab
-        # that already has a selected item restores that item's detail view instead (an
-        # extra ctrl+f returns to the list). A cross-tab jump is handled separately below.
-        if self._jumping:
-            self._jumping = False
-            return
-        tab = self._active_tab()
-        if tab is None:
-            return
-        # The first activation is the mount-time one for the initial tab; just maximize it.
-        # Focusing the filter here would schedule a deferred focus that a very fast first
-        # ctrl+t could race (landing focus in the old pane, reverting the switch), and the
-        # user did not switch to this tab — it is simply the startup tab.
-        if not self._activated_once:
-            self._activated_once = True
-            tab.maximize_list()
-        elif tab.has_selection():
-            tab.minimize_list()
-            tab.focus_content()
-        else:
-            tab.focus_filter()
-
-    def _active_tab(self) -> EntityTab | None:
-        tabbed = self.query_one(TabbedContent)
-        if not tabbed.active:
-            return None
-        matches = list(tabbed.get_pane(tabbed.active).query(EntityTab))
-        return matches[0] if matches else None
-
-    def action_cycle_tab(self) -> None:
-        tabbed = self.query_one(TabbedContent)
-        pane_ids = [pane.id for pane in tabbed.query(TabPane)]
-        if not pane_ids:
-            return
-        try:
-            index = pane_ids.index(tabbed.active)
-        except ValueError:
-            index = -1
-        # Drop focus first: while a widget inside the active pane holds focus,
-        # TabbedContent silently reverts an `active` change, so the switch only
-        # worked when the tab bar itself was focused (e.g. just after clicking).
-        self.set_focus(None)
-        tabbed.active = pane_ids[(index + 1) % len(pane_ids)]
-
-    def action_focus_filter(self) -> None:
-        tab = self._active_tab()
-        if tab is not None:
-            tab.focus_filter()
-
-    def action_primary_action(self) -> None:
-        tab = self._active_tab()
-        if tab is not None:
-            tab.primary_action()
-
-    def action_secondary_action(self) -> None:
-        tab = self._active_tab()
-        if tab is not None:
-            tab.secondary_action()
-
-    def action_reset_editor(self) -> None:
-        tab = self._active_tab()
-        if tab is not None:
-            tab.reset_editor()
-
-    def action_wizard(self) -> None:
-        # A wizard popup may host its own nested sub-wizard (e.g. Header → Time); route ctrl+w to
-        # it while it's on top, and never fall through to a tab underneath an open modal.
-        screen = self.screen
-        if isinstance(screen, ModalScreen):
-            action = getattr(screen, 'wizard_action', None)
-            if callable(action):
-                action()
-            return
-        tab = self._active_tab()
-        if tab is not None:
-            tab.wizard_action()
-
-    def action_clear_log(self) -> None:
-        tab = self._active_tab()
-        if tab is not None:
-            tab.clear_log()
-
-    def action_help(self) -> None:
-        self.push_screen(HelpScreen())
+    def _apply_graph(self, snapshot: GraphSnapshot) -> None:
+        self.nav.set_catalog(snapshot)
+        self.refresh_views()

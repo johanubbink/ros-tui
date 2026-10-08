@@ -4,126 +4,296 @@
 ros2 run ros_tui ros_tui
 ```
 
-ros_tui has four tabs: **Topics**, **Services**, **Actions** and **Nodes**.
-`ctrl+t` moves to the next one. The lists follow the live ROS graph, checked
-once a second, and only redraw when something changed.
+ros_tui opens on the **☰ list**: every topic, service, action and node in the
+live ROS graph, checked once a second. `enter` opens the entry under the
+cursor in a tab of its own, and `/` finds anything by name or type. Keys don't
+depend on focus: what a key does depends only on the layer you're on, and the
+footer always says where you are and what `esc` and `enter` will do. `?` lists
+every key that works right now.
 
-## Lists and detail views
+## The layers
 
-Each tab opens on a full-width list with a filter box. Type to filter; `↑`/`↓`
-move through the matches (the first one is highlighted for you) and `enter`
-opens it. The list then shrinks to the left and the detail view opens on the
-right: the type, the YAML editor, the buttons, and an output log at the
-bottom. `ctrl+f` goes back to the list with the filter box focused.
+The screen is a stack of layers. **`esc` always goes up one layer and `enter`
+always goes down one.**
 
-Switching tabs keeps what you had open. Edits you make in the editor are kept
-for each topic, service or action until you quit; `ctrl+r` puts the defaults
-back.
+1. **The tab row**: the ☰ list (tab 0) and the open entries (1…9). `h` `l`
+   (or ← →, tab) move along it, `enter` goes into the tab.
+2. **Inside a tab**: on the ☰ list, `j` `k` (↑ ↓) pick an entry and tab filters
+   by kind (topics, services, actions, nodes); `enter` opens it. In an entry,
+   `h` `j` `k` `l` pick an **area** (a panel such as REQUEST or RESPONSE) and
+   `enter` goes into it.
+3. **Inside an area**: `j` `k` pick a row (a field, a parameter, an
+   interface); `enter` does the row's thing: edit it, fold or unfold it, or
+   open an interface in its own tab.
+4. **Insert**: typing a value. `enter` or `esc` keeps it; `tab` keeps it and
+   edits the next field. A value that doesn't fit the field stays in insert
+   with an error line under the panel (`esc` drops it instead).
+
+From anywhere outside insert: `0`…`9` go to a tab, `H` `L` to the previous or
+next one, `x` closes the tab, `u` undoes, `/` searches, `:` opens the command
+line and `?` shows the keys. `:q`, `ctrl+q` or `ctrl+c` quit.
+
+## Only space sends
+
+Nothing reaches the robot by accident. **Space** (or `^s`) is an entry's one
+sending key: publish once, call, send the goal, set the changed parameters, or
+start and stop an echo. In insert, `^s` keeps the value and sends it. The only
+other key that sends is `r`, which starts repeating a publish; `s` only ever
+stops a repeat or cancels a goal. Moving and editing keys never send. A send
+flashes its button and adds a line to the activity strip above the footer;
+`:log` shows all of them, and `enter` there jumps to that entry's tab.
 
 ## Topics
 
-Opening a topic asks whether you want to **Publish** or **Subscribe** (`p` or
-`s`, or the arrow keys and `enter`), and shows how many publishers and
-subscribers it has. The **→ Subscribe** / **→ Publish** button switches later.
+A topic opens in **Echo** when someone publishes it and in **Publish** when
+nobody does. `e` (or `:echo`, `:pub`) switches; the message you were writing
+stays.
 
-**Publish mode**
+**Echo**
 
-- **Publish** (`ctrl+s`) sends the message once.
-- **Start rate** publishes it repeatedly at the rate in the box next to it
-  (0.1 to 100 Hz). It keeps going while you look at other topics; the status
-  line lists every topic being published. Press the button again, or `ctrl+k`,
-  to stop. Everything stops when you quit.
-
-**Subscribe mode**
-
-- **Echo** (`ctrl+s`) subscribes and prints each message, with the message
-  count, rate and dropped messages in the status line. **Pause** (`ctrl+k`)
-  pauses it.
-- The tree above the log lists the message's fields. Untick fields to hide
-  them from the echo; `ctrl+r` shows every field again.
+- Space starts the echo and stops it again. LATEST MESSAGE shows the newest
+  message, one row per field, with the count, the rate and the dropped
+  messages at the right of its title.
+- `enter` goes into LATEST MESSAGE and **freezes** it, so you can read it
+  while `+N new since` counts what arrives; `esc` goes live again. Inside,
+  `enter` on a field hides or shows it.
 - Echo picks a QoS that can hear every current publisher (best-effort if any
   publisher is best-effort). The QoS is fixed when the echo starts, so if a
   publisher with a different QoS appears later, restart the echo.
-- Long arrays and strings are shortened, and at a high rate only the newest
-  few messages per frame are drawn; the rest are counted as dropped.
+- Long arrays and strings are shortened and floats are shown to 6 significant
+  digits; `y` copies the message exactly as it arrived.
+
+**Publish**
+
+- Space publishes the message once.
+- `r` repeats it at the rate in the Repeat button (the rate the echo measured,
+  your own, or 10 Hz) until `s` stops it. `R` (or `:rate 5`) changes the rate,
+  0.1 to 100 Hz; a repeat that's running restarts at the new rate.
+- `[` and `]` step through what you sent before.
+
+An echo or a repeat keeps running when you switch to another tab: the top bar
+and the ☰ list show it (`◉` echoing, `↻` repeating) until you stop it.
+**Closing its tab stops it** (`closed /chatter — echo stopped`), and `u`
+reopens the tab without starting it again. Quitting stops everything.
 
 ## Services
 
-Edit the request and press **Call** (`ctrl+s`). The response and the
-round-trip time go into the log. If no server answers within 5 s, or no
-response comes back within 30 s, you get an error.
+Edit the REQUEST and press space. RESPONSE shows `calling…`, then `✓ OK` with
+the round-trip time and the response, or `✗ FAILED` and why. If no server
+appears within 5 s, or no response comes back within 30 s, the call fails.
+`[` `]` step through earlier requests.
 
 ## Actions
 
-Edit the goal and press **Send goal** (`ctrl+s`). The status line goes
-SENDING → EXECUTING → SUCCEEDED, ABORTED or CANCELED. Feedback streams into
-the log (at a high rate, only some of it is drawn) and the result is printed
-at the end. **Cancel** (`ctrl+k`) cancels the goal.
+Edit the GOAL and press space. RESULT goes EXECUTING (with the newest
+feedback) and then SUCCEEDED, ABORTED, CANCELED or REJECTED, with the time it
+took and the result. `s` cancels the goal. One goal runs at a time; a goal
+keeps running when you close its tab, and **every running goal is canceled
+when you quit**.
 
 ## Nodes
 
-Opening a node shows two panes:
+A node shows two areas:
 
-- **Interfaces**: its publishers, subscribers, service servers and clients,
-  and action servers and clients, like `ros2 node info`. Select one to jump
-  to it in the Topics, Services or Actions tab.
-- **Parameters**: every parameter with its type and value. Highlight one,
-  edit the value (as YAML) in the box below, and press **Set** (`ctrl+s`).
-  **Refresh** (`ctrl+k`) reloads the node.
+- **INTERFACES**: what it publishes, subscribes to, serves and calls, like
+  `ros2 node info`. `enter` on one opens it in its own tab.
+- **PARAMETERS**: every parameter with its type and value. `enter` (or `i`)
+  edits one, `c` clears it first. A change shows as `5.0 was 10.0` until space
+  sets every changed parameter on the node; one the node rejects stays changed,
+  with its reason in the activity strip. `u` undoes a change.
 
-## The editor
+## Editing a message
 
-The editor speaks the same YAML as `ros2 topic pub` and
-`ros2 action send_goal`, prefilled with the message's defaults. Integer
-constants defined in the message are listed in a comment above it. `tab` and
-`shift+tab` jump between values.
+A request, a goal or a message to publish is edited as **field rows**, one per
+field, prefilled with the message's defaults:
 
-- `stamp: now` fills a `builtin_interfaces/Time` with the current time when
-  you send. `header: auto` sends a Header stamped with the current time. When
-  publishing at a rate, both are filled in again for every message.
-- `.nan`, `.inf` and `-.inf` work for floats, and strings can be any unicode.
+- `j` `k` move, `enter` (or `i`) edits a value, `c` clears it and edits, and
+  `tab` in insert moves on to the next field.
+- A nested message is folded (`▸ pose {…}`) or unfolded (`▾ pose`): `enter`
+  toggles it, `h` folds or goes up to the parent, `l` unfolds. Small messages
+  like a Point, a Quaternion or a Header are one row, typed as
+  `{x: 1.0, y: 2.0, z: 0.0}`.
+- On a list, `o` adds an element and `d` deletes one. A list of numbers can
+  also be typed whole: `[1, 2.5]`.
+- `header: auto` sends a Header stamped at send time, and `stamp: now` fills a
+  `builtin_interfaces/Time` with the current time. When repeating, both are
+  filled in again for every message. `.nan`, `.inf` and `-.inf` work for
+  floats.
 - Everything is checked before it's sent: types, integer and float ranges,
-  fixed array sizes and bounded sequence lengths. The error names the field,
-  e.g. `pose.pose.position.x: could not convert string to float: 'oops'`. The
-  stock ROS CLI is less strict: it silently sends `UInt8(data=300)` as a
-  different number, for example.
-- Message types are only loaded when you first open something that uses them,
+  fixed array sizes and bounded list lengths. An error names the field, e.g.
+  `a needs a whole number, got "abc"`, and nothing is sent. (The stock ROS CLI
+  silently sends `UInt8(data=300)` as a different number.)
+- `y` copies the message and `p` pastes it into another entry of the same type
+  (a topic's message, a service's request or an action's goal). `u` undoes
+  edits, pastes and helpers, one tab at a time.
+- Message types are loaded the first time you open something that uses them,
   so ros_tui starts quickly even with thousands of interfaces installed.
 
 ### Field helpers
 
-Put the cursor on a field and press `ctrl+w` (or the **Fill…** button) to fill
-it in with a small form instead of typing YAML:
+A field with a helper shows `[f …]` after its value. `f` opens a small form
+under the row; `tab` picks how to enter the value, `enter` applies it (`u`
+undoes) and `esc` closes it without changing anything.
 
-| Field                      | Helper                                                       |
-| -------------------------- | ------------------------------------------------------------ |
-| `std_msgs/Header`          | auto, now, or a manual stamp and `frame_id`                  |
-| `builtin_interfaces/Time`  | seconds, a wall-clock date and time, or relative to now      |
-| `geometry_msgs/Quaternion` | raw x/y/z/w, roll/pitch/yaw, yaw only, or axis and angle     |
-| an integer with constants  | pick one of the message's constants (e.g. `level: OK/WARN/ERROR/STALE`) |
+| Field                      | Helper                                                              |
+| -------------------------- | ------------------------------------------------------------------- |
+| `std_msgs/Header`          | auto, now (with a `frame_id`), or a manual stamp and `frame_id`     |
+| `builtin_interfaces/Time`  | now, seconds, or seconds and nanoseconds                            |
+| `geometry_msgs/Quaternion` | x y z w (normalised), roll pitch yaw, yaw only, or axis and angle (degrees) |
+| an integer with constants  | pick one of the message's constants (e.g. `level`: OK, WARN, ERROR, STALE) |
 
-The innermost field with a helper wins: on `header.stamp` you get the Time
-helper, on `header` the Header helper. Helpers work in the Services and
-Actions editors, and in the Topics editor in publish mode.
+An enum field can also be typed by name: `err` is ERROR.
 
-## Key bindings
+## The mouse
 
-| Key                 | Does                                                                |
-| ------------------- | ------------------------------------------------------------------- |
-| `ctrl+t`            | next tab (Topics → Services → Actions → Nodes)                      |
-| `ctrl+f`            | back to the list, with the filter box focused                       |
-| `↑` / `↓`           | move through the matches while the filter box is focused            |
-| `enter`             | open the highlighted match                                          |
-| `ctrl+s`            | Publish or Echo / Call / Send goal / Set parameter                  |
-| `ctrl+k`            | stop the rate publisher or pause the echo / Cancel goal / Refresh node |
-| `ctrl+r`            | reset the editor to the defaults (Subscribe: show every field)      |
-| `ctrl+w`            | open a helper for the field under the cursor                        |
-| `tab` / `shift+tab` | next / previous value in the editor                                 |
-| `ctrl+l`            | clear the log of the current tab                                    |
-| `f2`                | help (`esc` closes it)                                              |
-| `ctrl+q`            | quit                                                                |
+The keys do everything, but a click does what its keys would (and reads
+`click` in the log):
 
-The mouse works too: click tabs, list entries, buttons and tree nodes.
+| Click on | Does |
+| -------- | ---- |
+| a tab (☰ too) | go to it, as `0`…`9` |
+| a tab's `×` | close it, as `x` (`u` reopens it) |
+| a kind chip on the ☰ list | filter the list, as tab |
+| a row of the ☰ list | open it, as `enter` |
+| a panel | go inside that area, as `enter`; a value you were typing is kept first, as `esc` keeps it |
+| Echo / Publish | switch the topic to it, as `e` |
+| a button | what its key does: space, `s` or `r` (a greyed-out one does nothing) |
+| the rate in the Repeat button | type a new rate, as `R` |
+| `/ search everything` | search, as `/` |
+| a search match | open it, as `enter` |
+| an activity line, or a line in `:log` | go to that entry's tab |
+
+While a popup has the keys (search, `:log`, the command line, a field helper,
+`?`), a click outside it closes it, as `esc` does, and does nothing else.
+
+## Commands
+
+`:` opens the command line; `tab` completes and `↑` `↓` pick a suggestion.
+
+| Command              | Does                               |
+| -------------------- | ---------------------------------- |
+| `:log`               | show all activity                  |
+| `:topics` `:services` `:actions` `:nodes` `:all` | filter the ☰ list by kind |
+| `:rate 5`            | set a topic's repeat rate          |
+| `:echo` `:pub`       | switch a topic to Echo or Publish  |
+| `:close`             | close this tab                     |
+| `:help`              | show the keys                      |
+| `:q`                 | quit                               |
+
+## Every key
+
+These tables are the keymap in
+[`ros_tui/ui/keymap.py`](../ros_tui/ui/keymap.py), which also drives the footer
+and `?` (`test/test_keymap.py` checks that they match). "Also" is the familiar
+alternative to a vim key; "Where" is when the key applies.
+
+### Normal
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `enter` | down one layer / do it |  |  |
+| `esc` | up one layer |  |  |
+| `h l` | previous / next tab | `← → tab` | tab row |
+| `j k` | pick an entry | `↑ ↓` | ☰ list |
+| `gg G` | top / bottom |  | ☰ list |
+| `tab` | filter by kind |  | ☰ list |
+| `h j k l` | pick an area | `arrows tab` | an entry |
+| `i` | edit the field under the cursor | `enter enter` | an entry, editable area |
+| `c` | clear it and edit |  | an entry, editable area |
+| `j k` | pick a field or row | `↑ ↓` | inside an area |
+| `gg G` | first / last |  | inside an area |
+| `h l` | fold / unfold (h on a field: up to its parent) | `← →` | inside an area, field rows |
+| `i  enter` | edit the value |  | inside an area |
+| `c` | clear it and edit |  | inside an area |
+| `enter` | unfold / fold a nested message or list |  | inside an area, field rows |
+| `o` | add a list element after this one |  | inside an area, field rows, editable area |
+| `d` | delete this list element (u undoes) |  | inside an area, field rows, editable area |
+| `enter` | open it in a tab |  | inside a node's INTERFACES |
+| `enter` | show / hide the field |  | inside a topic's LATEST MESSAGE |
+| `f` | fill it with the matching helper |  | inside an area, a field with a helper |
+| `/` | search everything | `^f` |  |
+| `:log` | all activity |  |  |
+| `:` | command line |  |  |
+| `0 1…9` | ☰ list / tab N |  |  |
+| `H L` | previous / next tab | `gT gt` |  |
+| `x` | close the tab |  |  |
+| `u` | undo in this tab (or reopen a closed tab) |  |  |
+| `space` | start / stop echo | `^s` | an entry, topic, Echo |
+| `space` | publish once | `^s` | an entry, topic, Publish |
+| `space` | call | `^s` | an entry, service |
+| `space` | send goal | `^s` | an entry, action |
+| `space` | set changed parameters | `^s` | an entry, node |
+| `r` | repeat at N Hz |  | an entry, topic, Publish |
+| `R` | change the repeat rate | `:rate 5` | an entry, topic, Publish |
+| `s` | stop repeating |  | an entry, topic, Publish |
+| `e` | echo ⇄ publish |  | an entry, topic |
+| `enter` | into the latest message: values freeze |  | topic, Echo |
+| `esc` | out again: values go live |  | inside an area, topic, Echo |
+| `s` | cancel goal |  | an entry, action |
+| `y  p` | copy / paste a message |  | an entry, not a node |
+| `[ ]` | older / newer sends |  | an entry, not a node, not Echo |
+| `u` | undo a parameter change |  | an entry, node |
+| `?` | all keys right now |  |  |
+
+### After `g`
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `gg` | to the top |  |  |
+| `gt` | next tab |  |  |
+| `gT` | previous tab |  |  |
+
+### Insert (typing a value)
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `type` | a rate in Hz (0.1–100) |  | typing a rate |
+| `enter / esc` | keep it (u undoes later) |  | typing a rate |
+| `^s` | keep it and publish once |  | typing a rate |
+| `type` | change the value |  |  |
+| `esc / enter` | keep it, back to normal |  |  |
+| `tab` | keep it, edit the next field |  | typing a field |
+| `^s` | keep it and set it |  | typing a parameter |
+| `^s` | keep it and send |  |  |
+
+### Search (`/`)
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `type` | find by name or type |  |  |
+| `↑ ↓` | pick |  |  |
+| `enter` | open in a tab |  |  |
+| `esc` | close |  |  |
+
+### Command line (`:`)
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `type` | a command, e.g. rate 5 |  |  |
+| `tab` | complete |  |  |
+| `enter` | run |  |  |
+| `esc` | cancel |  |  |
+
+### Activity log (`:log`)
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `j k` | move | `↑ ↓` |  |
+| `gg G` | newest / oldest |  |  |
+| `enter` | go to that entry's tab |  |  |
+| `esc` | close |  |  |
+
+### Field helper (`f`)
+
+| Key | Does | Also | Where |
+| --- | ---- | ---- | ----- |
+| `j k ↑ ↓` | next option / way to enter it |  | Enum |
+| `tab` | next option / way to enter it |  | other helpers |
+| `0–9` | jump / next field |  | Enum |
+| `↑ ↓` | jump / next field |  | other helpers |
+| `type` | change the value |  | other helpers |
+| `enter` | apply (u undoes) |  |  |
+| `esc` | cancel, nothing changes |  |  |
 
 ## Noisy RMW output
 

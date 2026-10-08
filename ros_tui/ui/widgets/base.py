@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+# Copyright 2026 Johan Ubbink
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""What every widget shares: `NavView` (render the NavState as lines) and text helpers."""
+
+from typing import Any, Iterable
+
+from rich.cells import cell_len
+from rich.style import Style
+from rich.text import Text
+from textual import events
+from textual.widget import Widget
+
+from ros_tui.ui.entries.base import Running, Tab
+from ros_tui.ui.nav import NavState
+from ros_tui.ui.theme import KINDS, TOKENS
+
+BODY_TOP = 3  # Screen rows above the body: the top bar and the two-line tab row.
+
+
+class NavView(Widget):
+    """A widget that draws part of a NavState. It never takes focus and has no bindings: the app
+    hands every key to the NavState and then refreshes the views (RosTuiApp.refresh_views)."""
+
+    can_focus = False
+    modal = False  # A popup that has the keys while it shows (Overlay).
+
+    def __init__(self, nav: NavState, **kwargs):
+        super().__init__(**kwargs)
+        self.nav = nav
+
+    def on_click(self, event: events.Click) -> None:
+        """Hand a click to the app, saying whether it landed on a popup that has the keys."""
+        event.stop()
+        self.app.click(event, on_popup=self.modal)
+
+    def lines(self, width: int, height: int) -> list[Text]:
+        raise NotImplementedError
+
+    def render(self) -> Text:
+        width, height = self.size
+        text = Text('\n').join(fit(line, width) for line in self.lines(width, height))
+        text.no_wrap = True
+        text.overflow = 'crop'
+        return text
+
+
+class Overlay(NavView):
+    """A NavView drawn on top of the others: on the `overlay` layer, placed absolutely in its
+    parent. After each key the app asks `place` where it goes (RosTuiApp.refresh_views). A `modal`
+    one is a popup that has the keys while it shows: a click outside it closes it (NavState.click)."""
+
+    modal = True
+
+    DEFAULT_CSS = """
+    Overlay { layer: overlay; position: absolute; }
+    """
+
+    def place(self, width: int, height: int) -> tuple[int, int, int, int] | None:
+        """(x, y, width, height) in a parent of `width` x `height` cells, or None to hide it."""
+        raise NotImplementedError
+
+
+def style(color: str = '', bg: str = '', bold: bool = False) -> Style:
+    """A Style from theme token names or hex values: style('key', bold=True)."""
+    return Style(color=TOKENS.get(color, color) or None, bgcolor=TOKENS.get(bg, bg) or None, bold=bold)
+
+
+def clickable(text: Text, target: tuple[str, Any] | None, start: int = 0, end: int | None = None,
+              before: bool = False) -> Text:
+    """`text` (or its characters [start, end)) tagged with what a click on it does, a nav.CLICKS
+    target such as ('tab', 2); the app reads it from the style under the mouse (RosTuiApp.on_click).
+    Tagging `before` the text's own spans lets a part of it keep a target of its own (the rate inside
+    the Repeat button). Returns `text`."""
+    if target is not None:
+        meta = Style(meta={'click': target})
+        (text.stylize_before if before else text.stylize)(meta, start, end)
+    return text
+
+
+def fit(line: Text, width: int, bg: str = '') -> Text:
+    """`line` cropped or padded with spaces to exactly `width` cells (the padding on `bg`)."""
+    line = line.copy()
+    line.truncate(width, overflow='crop', pad=False)
+    if line.cell_len < width:
+        line.append(' ' * (width - line.cell_len), style(bg=bg) if bg else '')
+    return line
+
+
+def band(line: Text, width: int, bg: str) -> Text:
+    """`line` fitted to `width` on the background `bg` (a cursor row, the picked suggestion)."""
+    line = fit(line, width)
+    line.stylize(style(bg=bg))
+    return line
+
+
+def spread(left: Text, right: Text, width: int, bg: str = '', optional: bool = False) -> Text:
+    """`left`, then `right` pushed to the right edge; the left part is cropped if they don't fit,
+    or, when the right part is `optional` (a hint), the right part is dropped."""
+    if optional and left.cell_len + 1 + right.cell_len > width:
+        right = Text()
+    room = max(0, width - right.cell_len)
+    line = fit(left, room, bg) if left.cell_len < room else fit(left, max(0, room - 1), bg) + Text(' ')
+    return fit(line + right, width, bg)
+
+
+def switch(*parts: tuple[Text | str, bool, tuple[str, Any] | None]) -> Text:
+    """A pill of (label, on, click target) parts (a kind chip; the Echo / Publish switch): each label
+    on its fill, `chip-on` and bright bold when it is on, else `chip` and grey, with a half-cell end
+    in the fill of the part next to it."""
+    fills = ['chip-on' if on else 'chip' for _, on, _ in parts]
+    text = Text('▐', style(fills[0]))
+    for (label, on, target), fill in zip(parts, fills):
+        part = Text.assemble(' ', label, ' ')
+        part.stylize_before(style('bright' if on else 'grey', fill, bold=on))
+        text.append_text(clickable(part, target))
+    text.append('▌', style(fills[-1]))
+    return text
+
+
+def glyph(kind: str) -> Text:
+    """The kind's glyph in its tint, with the space after it ("≋ ")."""
+    return Text(KINDS[kind].glyph + ' ', style(KINDS[kind].color))
+
+
+def markers(running: tuple[Running, ...], labels: bool = False) -> Text:
+    """What an entry has running, in each marker's tone: " ◉ ↻" after a tab's name, or with
+    `labels` "◉ echoing ↻ 10 Hz" (the Here column, search rows)."""
+    if labels:
+        return Text(' ').join(Text(f'{m.glyph} {m.label}', style(m.tone)) for m in running)
+    return Text.assemble(*((' ' + m.glyph, style(m.tone)) for m in running))
+
+
+def here(nav: NavState, kind: str, name: str, opened: str) -> Text:
+    """What an entry has running, with its labels, then `opened` (dim) when it has a tab: the ☰
+    list's Here column ("◉ echoing open"), a search match's right side."""
+    text = markers(nav.running(kind, name), labels=True)
+    if nav.is_open(kind, name):
+        text.append((' ' if text else '') + opened, style('dim'))
+    return text
+
+
+def column_width(cells: Iterable[str], least: int, pad: int = 1) -> int:
+    """The width of a column: its widest cell (in cells, so wide characters count twice) plus `pad`,
+    and at least `least`."""
+    return max([least] + [cell_len(cell) + pad for cell in cells])
+
+
+def scroll_top(top: int, first: int, last: int, room: int, count: int) -> int:
+    """The first of `count` lines to show in `room` lines: `top` (the first one shown last time)
+    moved as little as keeps lines [first, last] in view, and no further down than fills the room."""
+    top = max(min(top, first), last - room + 1)
+    return max(0, min(top, count - room))
+
+
+def cursor_bar(on: bool) -> Text:
+    """The first cell of a row: the cursor's `▍` bar in the key colour when `on`, else a space."""
+    return Text('▍' if on else ' ', style('key'))
+
+
+def rule(width: int) -> Text:
+    """A rule across a popup."""
+    return Text('─' * width, style('pop-line'))
+
+
+def cursor_cell() -> Text:
+    """The text cursor at the end of a typed value."""
+    return Text(' ', style('term', 'text'))
+
+
+def keyed(key: str, label: str, label_color: str = 'grey') -> Text:
+    """A key in the key colour followed by what it does: "esc tab row"."""
+    return Text.assemble((key, style('key', bold=True)), (' ' + label if label else '', style(label_color)))
+
+
+def edit_value(value: str, fresh: bool = False) -> Text:
+    """A value being typed, underlined, with the text cursor at its end."""
+    return Text.assemble((value, style('bright', 'edit-fresh' if fresh else 'edit') + Style(underline=True)),
+                         cursor_cell())
+
+
+BUTTON_LOOKS = {  # A button's look -> (text colour, background, its key's colour).
+    '': ('btn-text', 'btn', 'key'),
+    'pri': ('bright', 'accent-fill', 'pri-key'),
+    'stop': ('warn', 'stop-bg', 'warn'),
+    'off': ('btn-off', 'btn-off-bg', 'btn-off'),  # Disabled: say why next to it.
+    'flash': ('bright', 'accent', 'bright'),  # A send just went out: a lighter blue.
+}
+
+
+def primary_look(nav: NavState, tab: Tab, look: str) -> str:
+    """The look of an entry's primary (space) button: lighter for NAV_FLASH_S after a send goes out."""
+    return 'flash' if nav.feedback.flashing(tab) else look
+
+
+BUTTON_VERBS = {'space': 'primary', 's': 'secondary', 'r': 'repeat'}  # A button's key -> the verb a click runs.
+
+
+def button(label: Text | str, key: str, look: str = '') -> Text:
+    """A button with its key ("▶ Call space"): the label (a Text may style parts of itself) and the
+    key on the look's background. A click on it does what its key does (`BUTTON_VERBS`), unless it is disabled ('off')."""
+    color, bg, key_color = BUTTON_LOOKS[look]
+    text = Text.assemble(' ', label, ' ')
+    text.stylize_before(style(color, bg, bold=look in ('pri', 'stop', 'flash')))
+    text.append(key, style(key_color, bg, bold=look != 'off'))  # Keys are bold.
+    text.append(' ', style(bg=bg))
+    verb = BUTTON_VERBS.get(key) if look != 'off' else None
+    return clickable(text, ('verb', verb) if verb else None, before=True)
