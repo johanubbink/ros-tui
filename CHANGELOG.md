@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
 A new keyboard-first UI: one list of everything, a tab per entry, and layers
 instead of focus. Rules: [docs/design-principles.md](docs/design-principles.md);
 every key: [docs/usage.md](docs/usage.md).
@@ -96,5 +98,6 @@ Initial release.
 - **A Docker playground** with demo servers and optional turtlesim
   (`compose.yaml`, `launch/demo.launch.py`).
 
-[Unreleased]: https://github.com/johanubbink/ros-tui/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/johanubbink/ros-tui/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/johanubbink/ros-tui/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/johanubbink/ros-tui/releases/tag/v0.1.0
