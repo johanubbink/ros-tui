@@ -1,0 +1,68 @@
+# The test job for one ROS distro, called by jazzy.yml, lyrical.yml and rolling.yml (one workflow
+# per distro, so each has its own status badge in the README).
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      distro:
+        required: true
+        type: string
+
+jobs:
+  test:
+    name: ${{ inputs.distro }}
+    runs-on: ubuntu-latest
+    container:
+      image: ros:${{ inputs.distro }}-ros-base
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: src/ros_tui
+
+    # Everything comes from package.xml through rosdep (textual is bundled, so no pip), plus
+    # the screenshot tooling and flake8.
+    - name: Install dependencies
+      run: |
+        apt-get update -qq
+        rosdep update --rosdistro ${{ inputs.distro }}
+        rosdep install --from-paths src --ignore-src -y --rosdistro ${{ inputs.distro }}
+        apt-get install -y --no-install-recommends python3-flake8 librsvg2-bin fonts-jetbrains-mono
+
+    - name: Lint with flake8
+      working-directory: src/ros_tui
+      run: |
+        python3 -m flake8 ros_tui test --count --select=E9,F63,F7,F82 --show-source --statistics
+        python3 -m flake8 ros_tui test --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Build
+      shell: bash
+      run: |
+        . /opt/ros/${{ inputs.distro }}/setup.bash
+        colcon build --packages-select ros_tui
+
+    # The installed copy must carry textual itself.
+    - name: Check the install uses the bundled textual
+      shell: bash
+      run: |
+        . install/setup.bash
+        cd /tmp && python3 -c "import ros_tui, textual; assert '/install/' in textual.__file__ and '_vendor' in textual.__file__, textual.__file__"
+
+    - name: Test with pytest
+      working-directory: src/ros_tui
+      shell: bash
+      env:
+        # On pull requests the screenshot scenarios also write their shots (see docs/agentic-dev.md).
+        ROS_TUI_SHOTS: ${{ github.event_name == 'pull_request' && inputs.distro == 'jazzy' && '1' || '0' }}
+      run: |
+        . /opt/ros/${{ inputs.distro }}/setup.bash
+        python3 -m pytest
+
+    - name: Upload UI screenshots
+      if: always() && github.event_name == 'pull_request' && inputs.distro == 'jazzy'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ui-screenshots
+        path: src/ros_tui/test/artifacts/
+        if-no-files-found: ignore

@@ -39,9 +39,15 @@ docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh -m ui  # one kin
 Extra arguments go straight to pytest. The whole suite takes under a
 minute.
 
-CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs flake8
-and the whole suite in an `osrf/ros:jazzy-desktop` container on every push and
-pull request to `main`.
+CI runs flake8, a colcon build and the whole suite on every push and pull
+request to `main`, once per distro: [`jazzy.yml`](../.github/workflows/jazzy.yml),
+[`lyrical.yml`](../.github/workflows/lyrical.yml) and
+[`rolling.yml`](../.github/workflows/rolling.yml) each call
+[`test.yml`](../.github/workflows/test.yml) in a `ros:<distro>-ros-base`
+container, with the dependencies from `package.xml` through rosdep. One
+workflow per distro gives each its own badge in the README.
+[`release.yml`](../.github/workflows/release.yml) builds `ros_tui.pyz`, and on a
+`v*` tag attaches it to the GitHub release.
 
 ## Screenshot harness
 
