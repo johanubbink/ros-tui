@@ -223,7 +223,7 @@ def main():
     if missing:
         sys.exit(f'missing {", ".join(missing)}; see this script\'s docstring')
 
-    servers = subprocess.Popen(['ros2', 'run', 'ros_tui', 'demo_servers'],
+    servers = subprocess.Popen([sys.executable, str(REPO_ROOT / 'docker' / 'demo_servers.py')],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                start_new_session=True)
     try:

@@ -60,9 +60,14 @@ The code:
     `NavState`, and [`theme.py`](../ros_tui/ui/theme.py), the colours.
 - [`ros_tui/constants.py`](../ros_tui/constants.py): every rate, timeout and
   buffer size in one place.
-- [`ros_tui/demo/demo_servers.py`](../ros_tui/demo/demo_servers.py) and
-  [`launch/demo.launch.py`](../launch/demo.launch.py): the example servers used
-  by the Docker playground and the GIF.
+- [`ros_tui/output.py`](../ros_tui/output.py): sends what ROS prints (fds 1
+  and 2) to a log file while the UI runs, so RMW warnings never land on screen.
+- [`ros_tui/_vendor/`](../ros_tui/_vendor/): ros_tui's own copy of textual and
+  its dependencies, pinned in `vendor.lock` and rebuilt by
+  [`scripts/vendor.py`](../scripts/vendor.py). Importing `ros_tui` puts it first
+  on `sys.path`, so neither apt nor colcon users need pip.
+- [`docker/demo_servers.py`](../docker/demo_servers.py): the example servers used
+  by the Docker playground and the GIF. Not part of the installed package.
 
 ## The bridge
 

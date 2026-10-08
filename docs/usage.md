@@ -295,11 +295,9 @@ alternative to a vim key; "Where" is when the key applies.
 | `enter` | apply (u undoes) |  |  |
 | `esc` | cancel, nothing changes |  |  |
 
-## Noisy RMW output
+## ROS output
 
-Some RMW implementations print warnings straight to the terminal, over the
-UI. Send stderr to a file to keep the screen clean:
-
-```bash
-ros2 run ros_tui ros_tui 2>>/tmp/ros_tui.stderr
-```
+Whatever ROS prints while ros_tui runs (RMW and DDS warnings, log lines) goes
+to a log file instead of over the UI: `ros_tui_<time>_<pid>.log` in `$ROS_LOG_DIR`,
+else `$ROS_HOME/log`, else `~/.ros/log`. On quit, ros_tui names the file if
+anything was written to it; a quiet run leaves no file.

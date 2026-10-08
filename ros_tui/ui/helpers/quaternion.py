@@ -16,9 +16,8 @@
 """Quaternion maths for the Quaternion helper: from roll / pitch / yaw, from an axis and an angle,
 normalised, and rounded for display.
 
-The rotations are delegated to tf_transformations (the ROS wrapper over transforms3d), so the
-conventions match the rest of the ROS ecosystem. It is imported lazily inside each function, so this
-module imports without a ROS environment.
+Conventions match ROS (tf2 / tf_transformations): roll, pitch and yaw rotate about the fixed X, Y
+and Z axes in that order ('sxyz'), angles are in radians, and quaternions are (x, y, z, w).
 """
 
 import math
@@ -26,20 +25,22 @@ import math
 
 def quat_from_euler(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
     """(x, y, z, w) from ROS RPY: roll=X, pitch=Y, yaw=Z, intrinsic ZYX ('sxyz'), radians."""
-    from tf_transformations import quaternion_from_euler
-
-    x, y, z, w = quaternion_from_euler(roll, pitch, yaw)  # default axes='sxyz'
-    return float(x), float(y), float(z), float(w)
+    cr, sr = math.cos(roll / 2.0), math.sin(roll / 2.0)
+    cp, sp = math.cos(pitch / 2.0), math.sin(pitch / 2.0)
+    cy, sy = math.cos(yaw / 2.0), math.sin(yaw / 2.0)
+    return (sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy)
 
 
 def quat_about_axis(ax: float, ay: float, az: float, angle: float) -> tuple[float, float, float, float]:
     """(x, y, z, w) for a rotation of ``angle`` rad about axis (ax, ay, az); zero axis -> identity."""
-    if ax == 0.0 and ay == 0.0 and az == 0.0:
+    norm = math.sqrt(ax * ax + ay * ay + az * az)
+    if norm == 0.0:
         return 0.0, 0.0, 0.0, 1.0
-    from tf_transformations import quaternion_about_axis
-
-    x, y, z, w = quaternion_about_axis(angle, (ax, ay, az))
-    return float(x), float(y), float(z), float(w)
+    scale = math.sin(angle / 2.0) / norm
+    return ax * scale, ay * scale, az * scale, math.cos(angle / 2.0)
 
 
 def normalize_quat(x: float, y: float, z: float, w: float) -> tuple[float, float, float, float]:

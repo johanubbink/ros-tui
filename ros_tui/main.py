@@ -13,19 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Entry point: start the ROS bridge thread, run the TUI, tear down in order."""
+"""Entry point: start the ROS bridge thread, run the TUI, tear down in order.
 
+What ROS prints while the TUI runs goes to a log file (see ros_tui/output.py), not over the UI.
+"""
+
+from ros_tui.output import ros_output_to_log
 from ros_tui.ros.bridge import RosBridge
 from ros_tui.ui.app import RosTuiApp
 
 
 def main(args=None):
-    bridge = RosBridge()
-    bridge.start()
-    try:
-        RosTuiApp(bridge).run()
-    finally:
-        bridge.shutdown()
+    with ros_output_to_log():
+        bridge = RosBridge()
+        bridge.start()
+        try:
+            RosTuiApp(bridge).run()
+        finally:
+            bridge.shutdown()
 
 
 if __name__ == '__main__':

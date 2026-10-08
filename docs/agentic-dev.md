@@ -86,7 +86,7 @@ upgrade may need fixes here.**
 - `FakeBridge()` is canned: nothing happens on its own; node requests answer at
   once and a test sends action events by hand.
 - `FakeBridge.demo()` is live over `DEMO_GRAPH`, the world of
-  `ros_tui/demo/demo_servers.py`: six topics, `/add_two_ints`, `/set_pose`,
+  `docker/demo_servers.py`: six topics, `/add_two_ints`, `/set_pose`,
   `/fibonacci`, and the nodes `/ros_tui_demo_servers` and `/talker`.
   - Services and node requests answer 0.05 s after the call. Names in
     `bridge.failing_services`, `bridge.rejected_params` or

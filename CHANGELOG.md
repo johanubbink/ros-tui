@@ -11,6 +11,12 @@ instead of focus. Rules: [docs/design-principles.md](docs/design-principles.md);
 every key: [docs/usage.md](docs/usage.md).
 
 ### Changed
+- **Lighter dependencies.** The installed package needs only `rclpy`,
+  `rosidl_runtime_py`, `rosidl_parser`, `action_msgs`, `python3-yaml` and
+  `python3-numpy`. The Quaternion helper's maths no longer needs
+  `tf_transformations`.
+- The demo servers are a script in `docker/` run by the playground, not an
+  installed node; the launch file and the turtlesim overlay are gone.
 - **One ☰ list and a tab per entry** instead of the Topics, Services, Actions
   and Nodes tabs with their list panes. The list mixes every kind, with chips
   (`tab`, `:topics` …) to filter it; `/` searches everything; an opened entry
@@ -35,6 +41,15 @@ every key: [docs/usage.md](docs/usage.md).
   `ctrl+q` quits (as does `:q`).
 
 ### Added
+- **Install without pip.** textual and its dependencies are bundled in
+  `ros_tui/_vendor` (pinned in `vendor.lock`, rebuilt by `scripts/vendor.py`),
+  so `rosdep install` + `colcon build` is all a source build needs, and the
+  package can go to the ROS buildfarm.
+- **A single-file release**, `ros_tui.pyz`, attached to each GitHub release:
+  download it, make it executable, run it in any sourced ROS 2 environment.
+- **ROS output goes to a log file** (`ros_tui_<time>_<pid>.log` in the ROS log
+  directory) instead of over the UI; ros_tui names the file on quit.
+- CI runs on Jazzy, Lyrical and Rolling.
 - **Only space and `^s` send.** Space publishes once, calls, sends the goal,
   sets the changed parameters, or starts and stops an echo. **`r` repeats** a
   publish at the shown rate (`R` or `:rate 5` changes it) and **`s` stops**: it

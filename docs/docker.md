@@ -21,8 +21,7 @@ ros2 run ros_tui ros_tui         # inside the container
 
 ## What to try
 
-The demo node ([`launch/demo.launch.py`](../launch/demo.launch.py) →
-[`ros_tui/demo/demo_servers.py`](../ros_tui/demo/demo_servers.py)) gives every
+The demo node ([`docker/demo_servers.py`](../docker/demo_servers.py)) gives every
 kind something to do. Open each with `/` and its name, then `enter`:
 
 | Kind    | Entry                    | Try                                                         |
@@ -38,40 +37,12 @@ kind something to do. Open each with `/` and its name, then `enter`:
 | topic   | `/diagnostic_status`     | `e` for Publish, then `f` on `level` picks OK / WARN / ERROR / STALE. |
 | node    | `/ros_tui_demo_servers`  | Browse its interfaces (`enter` opens one); change `publish_rate` and set it with space (only the demo parameter changes; nothing reads it). |
 
-## With turtlesim
-
-For something you can see move, add turtlesim. Its window is shown on your
-desktop, so this needs an X11 display (Linux):
-
-```bash
-xhost +local:                    # once per login: let the container reach your X server
-docker compose -f compose.yaml -f docker/compose.gui.yaml up --build
-# second terminal:
-docker compose exec ros_tui bash
-ros2 run ros_tui ros_tui
-# when you're done:
-xhost -local:
-```
-
-This runs the demo servers **and** turtlesim, so you also get:
-
-| Kind    | Entry                      | Try                                                           |
-| ------- | -------------------------- | ------------------------------------------------------------- |
-| action  | `/turtle1/rotate_absolute` | Send `theta: 1.57`; the turtle turns.                         |
-| service | `/spawn`                   | `x: 5.0`, `y: 5.0`, `name: t2` → a second turtle appears.     |
-| service | `/clear`                   | Wipes the trail.                                              |
-| topic   | `/turtle1/cmd_vel`         | Set `linear` to `{x: 1.0}`, then `r` repeats it → it drives; `s` stops it. |
-| topic   | `/turtle1/pose`            | Echo it to watch x, y and theta change.                       |
-
-The plain `docker compose up` stays headless and needs none of this.
-
 ## How it's put together
 
 | File                                                     | What it does |
 | -------------------------------------------------------- | ------------ |
-| [`compose.yaml`](../compose.yaml)                        | The `ros_tui` service. Mounts the repo at `/ros_tui_ws/src/ros_tui` and runs the demo launch file. |
-| [`docker/Dockerfile`](../docker/Dockerfile)              | `ros:jazzy-ros-base` plus colcon, the message packages the demo and tests need, turtlesim, pytest, and textual/rich from pip. Adds a non-root user matching your UID/GID. |
-| [`docker/compose.gui.yaml`](../docker/compose.gui.yaml)  | The turtlesim overlay: X11 socket, `DISPLAY`, software rendering. |
+| [`compose.yaml`](../compose.yaml)                        | The `ros_tui` service. Mounts the repo at `/ros_tui_ws/src/ros_tui` and runs the demo servers. |
+| [`docker/Dockerfile`](../docker/Dockerfile)              | `ros:jazzy-ros-base` plus colcon, the message packages the demo and tests need (turtlesim among them), and pytest. textual comes bundled with ros_tui. Adds a non-root user matching your UID/GID. |
 | [`docker/entrypoint.sh`](../docker/entrypoint.sh)        | Sources ROS, runs `colcon build --symlink-install`, sources the overlay, then runs the command. |
 | [`docker/create_dot_env`](../docker/create_dot_env)      | Writes `.env` with `USER_ID`, `GROUP_ID` and `ROS_DISTRO`. |
 | [`docker/run_tests.sh`](../docker/run_tests.sh)          | Runs pytest in the container (see [testing.md](testing.md)). |
@@ -86,4 +57,5 @@ Notes:
   writes into the mounted repo (caches, the GIF) belong to you. Without `.env`,
   Compose uses `1000:1000`.
 - **Another distro.** Set `ROS_DISTRO` in `.env` (or the environment) to build
-  on a different `ros:<distro>-ros-base` image. Only Jazzy is tested.
+  on a different `ros:<distro>-ros-base` image. CI tests Jazzy, Lyrical and
+  Rolling.

@@ -52,8 +52,14 @@ from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo, TopicInfo
 from ros_tui.ros.message_yaml import import_type
 from sensor_msgs.srv import SetCameraInfo
 from std_msgs.msg import Int32, String
-from turtlesim.action import RotateAbsolute
 import yaml
+
+try:  # turtlesim's interfaces have their own package from Kilted on.
+    from turtlesim_msgs.action import RotateAbsolute
+    TURTLESIM = 'turtlesim_msgs'
+except ImportError:
+    from turtlesim.action import RotateAbsolute
+    TURTLESIM = 'turtlesim'
 
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
@@ -74,7 +80,7 @@ DEMO_TOPICS = {
 }
 DEMO_SERVICES = {
     'add_two_ints': InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',)),
-    'set_pose': InterfaceEntry('/set_pose', ('turtlesim/srv/TeleportAbsolute',)),
+    'set_pose': InterfaceEntry('/set_pose', (f'{TURTLESIM}/srv/TeleportAbsolute',)),
 }
 DEMO_ACTIONS = {
     'fibonacci': InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibonacci',)),
@@ -87,7 +93,7 @@ DEMO_NODES = {
 # The demo servers publish these topics (one publisher each) and subscribe to the others.
 DEMO_PUBLISHED = ('/chatter', '/counter', '/diagnostic_status', '/localisation_pose')
 
-# Mirrors ros_tui/demo/demo_servers.py (plus /talker).
+# Mirrors docker/demo_servers.py (plus /talker).
 DEMO_GRAPH = GraphSnapshot(
     version=1,
     actions=tuple(DEMO_ACTIONS.values()),
@@ -231,7 +237,7 @@ def camera_demo() -> 'FakeBridge':
 
 # A second action, for the single-running-goal rule: turtlesim's own, with a float goal and feedback.
 # Not in DEMO_GRAPH: the demo servers don't have it.
-ROTATE_ACTION = InterfaceEntry('/turtle1/rotate_absolute', ('turtlesim/action/RotateAbsolute',))
+ROTATE_ACTION = InterfaceEntry('/turtle1/rotate_absolute', (f'{TURTLESIM}/action/RotateAbsolute',))
 ROTATE_STEPS = 5
 
 

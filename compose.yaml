@@ -28,6 +28,6 @@ services:
       TERM: xterm-256color
       COLORTERM: truecolor
     entrypoint: ["/ros_tui_ws/src/ros_tui/docker/entrypoint.sh"]
-    # Default: build, then launch the example servers. The TUI itself is run
+    # Default: build, then run the example servers. The TUI itself is run
     # interactively in a second terminal via `docker compose exec`.
-    command: ["ros2", "launch", "ros_tui", "demo.launch.py"]
+    command: ["python3", "src/ros_tui/docker/demo_servers.py"]
