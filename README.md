@@ -19,7 +19,15 @@ familiar alternatives, and a click does what its keys would.
 ros_tui needs a sourced ROS 2 environment (Jazzy, Lyrical or Rolling) and
 nothing else: it carries its own copy of textual, so there is no pip step.
 
-**One file.** Download the release and run it:
+**One file.** Download the release onto your `PATH`:
+
+```bash
+sudo curl -fsSL -o /usr/local/bin/ros_tui https://github.com/johanubbink/ros-tui/releases/latest/download/ros_tui.pyz && sudo chmod +x /usr/local/bin/ros_tui
+```
+
+Without sudo, put it in `~/.local/bin` instead. That directory is only on
+`PATH` if it existed when you logged in, so if `ros_tui` isn't found, run
+`~/.local/bin/ros_tui` or add the directory to your `PATH`:
 
 ```bash
 mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/ros_tui https://github.com/johanubbink/ros-tui/releases/latest/download/ros_tui.pyz && chmod +x ~/.local/bin/ros_tui
@@ -40,7 +48,7 @@ source install/setup.bash
 
 ```bash
 ros_tui                          # the one-file install
-ros2 run ros_tui ros_tui         # a colcon install
+ros2 run ros_tui ros_tui         # a colcon (or apt) install
 ```
 
 The ☰ list fills in from the live ROS graph and stays up to date. What ROS
