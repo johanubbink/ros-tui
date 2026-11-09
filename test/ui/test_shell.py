@@ -23,6 +23,7 @@ import pytest
 from harness.fake_bridge import FakeBridge
 from harness.screens import ui_session
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry
+from ros_tui.ui.app import UiCall
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
@@ -181,3 +182,14 @@ async def test_narrow_terminal():
         await s.shot('narrow-publish', expect='/chatter repeating at 83x35: both buttons and "default · R changes '
                      'it" show (the sent count is cut at the edge) and "[ ] earlier messages" is dropped; the '
                      'activity head keeps "other tabs dimmed" and shortens its right side to ":log for everything"')
+
+
+async def test_answer_after_the_views_are_gone_is_applied_without_a_redraw():
+    # A bridge answer can land while the app shuts down, after its views are removed: it still
+    # reaches the model, and the redraw it would trigger must not raise.
+    applied = []
+    async with ui_session() as s:
+        await s.app.screen.remove_children()
+        s.app.post_message(UiCall(lambda: applied.append(True)))
+        await s.pilot.pause()
+    assert applied == [True]

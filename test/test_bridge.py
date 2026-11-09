@@ -398,7 +398,9 @@ def test_subscribe_receives_chatter(bridge, fixture_servers):
     bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=2.0)
     assert wait_for(lambda: buffer.drain()[1] >= 50, timeout=5.0)
     _, _, _, rate_hz = buffer.drain()
-    assert 50.0 <= rate_hz <= 150.0
+    # About 100 Hz. The rate is taken over the last arrivals, which bunch up on a loaded machine,
+    # so the band is wide: it catches a rate that is missing or off by an order of magnitude.
+    assert 30.0 <= rate_hz <= 300.0
 
 
 def test_unsubscribe_stops_delivery(bridge, fixture_servers):
