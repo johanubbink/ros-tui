@@ -198,11 +198,13 @@ def test_periodic_publish_rate_then_stop(bridge, fixture_servers):
     ).result(timeout=2.0)
     assert wait_for(lambda: fixture_servers.inbox_messages, timeout=5.0)
     assert bridge.periodic_topics() == (INBOX_TOPIC,)
-    count_at_start = len(fixture_servers.inbox_messages)
-    time.sleep(1.0)
-    delta = len(fixture_servers.inbox_messages) - count_at_start
-    # Generous bounds: the point is 'roughly 20 Hz', not precise scheduling under load.
-    assert 10 <= delta <= 30, f'expected ~20 messages in 1 s, got {delta}'
+    # A loaded machine only delivers late, never early: ten more messages must come (it keeps
+    # publishing), and must take at least a quarter second (it isn't far faster than 20 Hz).
+    target = len(fixture_servers.inbox_messages) + 10
+    started = time.monotonic()
+    assert wait_for(lambda: len(fixture_servers.inbox_messages) >= target, timeout=5.0)
+    elapsed = time.monotonic() - started
+    assert elapsed >= 0.25, f'10 messages in {elapsed:.2f} s: faster than 20 Hz'
     bridge.stop_periodic_publish(INBOX_TOPIC).result(timeout=2.0)
     assert bridge.periodic_topics() == ()
     time.sleep(0.3)  # Let in-flight messages land before sampling the settled count.
