@@ -28,10 +28,9 @@ from typing import Any
 
 from ros_tui.constants import SUMMARY_MAX_CHARS
 from ros_tui.ros.message_yaml import class_structure, message_to_plain
-from ros_tui.ui.entries.base import Area, Context, Tab, Verb
+from ros_tui.ui.entries.base import Area, Context, Host, Tab, Verb
 from ros_tui.ui.entries.message import EDITOR, MessageEntry
 from ros_tui.ui.fields import FieldRows, summary
-from ros_tui.ui.nav import NavState
 
 
 @dataclass
@@ -69,7 +68,7 @@ class ServiceEntry(MessageEntry):
     def verbs(self) -> dict[str, Verb]:
         return {**super().verbs(), 'primary': lambda nav, how, _: self._call(nav, how)}
 
-    def _call(self, nav: NavState, how: str) -> None:
+    def _call(self, nav: Host, how: str) -> None:
         """space / ^s: check the request, then call the service with it."""
         tab = self.tab
         if self.call is not None and not self.call.done:
@@ -84,7 +83,7 @@ class ServiceEntry(MessageEntry):
         future = self._bridge.call_service(tab.name, self.type, request, time_setters)
         future.add_done_callback(lambda done: self._answered(nav, call, done))
 
-    def _answered(self, nav: NavState, call: Call, future: Any) -> None:
+    def _answered(self, nav: Host, call: Call, future: Any) -> None:
         """On the bridge's thread: time the answer, make it plain data, then apply it on the UI thread."""
         elapsed_ms = (nav.feedback.clock() - call.at) * 1000.0
         try:
@@ -93,7 +92,7 @@ class ServiceEntry(MessageEntry):
             plain, error = None, str(failure) or type(failure).__name__
         self._post(lambda: self._call_done(nav, call, elapsed_ms, plain, error))
 
-    def _call_done(self, nav: NavState, call: Call, elapsed_ms: float, plain: dict | None, error: str) -> None:
+    def _call_done(self, nav: Host, call: Call, elapsed_ms: float, plain: dict | None, error: str) -> None:
         call.done, call.elapsed_ms, call.error = True, elapsed_ms, error
         timing = f'{elapsed_ms:.1f} ms'
         if error:

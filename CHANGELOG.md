@@ -12,6 +12,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bumped by Dependabot); `scripts/vendor.py` unpacks it before a build. From
   source: run `scripts/vendor.py` before `colcon build`.
 
+### Fixed
+- **Setting an array parameter** sends it as the type the node declared: whole
+  numbers for a `double[]` (`[1, 2]`) and an empty list `[]` are no longer
+  refused.
+- **A node that never answers** listing or setting its parameters now gives an
+  error after 30 s, instead of loading forever or never saying the set failed.
+- **A parameter value that doesn't fit its declared type** (a word in an
+  `int[]`, an `int` past 64 bits) is refused while typing, with an errline
+  naming the parameter, instead of failing only when it is set.
+
 ## [0.2.0] - 2026-10-08
 
 A new keyboard-first UI: one list of everything, a tab per entry, and layers

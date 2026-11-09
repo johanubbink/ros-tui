@@ -29,12 +29,13 @@ import functools
 import queue
 import threading
 import time
-from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import rclpy
+from rcl_interfaces.msg import Parameter
+from rcl_interfaces.srv import GetParameters, ListParameters, SetParameters
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -45,83 +46,36 @@ from ros_tui.constants import (
     DEFAULT_QOS_DEPTH,
     GRAPH_POLL_PERIOD_S,
     HOUSEKEEPING_PERIOD_S,
-    READY_TIMEOUT_S,
-    RESPONSE_TIMEOUT_S,
     SHUTDOWN_CANCEL_TIMEOUT_S,
 )
-from ros_tui.ros.contract import ActionEventCallback, GraphListener
+from ros_tui.ros.contract import (
+    ActionEventCallback,
+    GraphListener,
+    NodeInfoDone,
+    ParametersDone,
+    SetParameterDone,
+)
 from ros_tui.ros.echo import EchoBuffer
+from ros_tui.ros.entity_cache import EntityCache
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, build_node_info, build_snapshot
+from ros_tui.ros.inflight import Inflight
 from ros_tui.ros.message_yaml import TimeSetter, import_type
+from ros_tui.ros.parameters import parameter_value, read_parameters
 
 
-@functools.lru_cache(maxsize=1)
-def _parameter_type_readers() -> dict:
-    """Map each rcl_interfaces ParameterType to its (type_label, ParameterValue attribute)."""
-    from rcl_interfaces.msg import ParameterType  # noqa: PLC0415
-    return {
-        ParameterType.PARAMETER_BOOL: ('bool', 'bool_value'),
-        ParameterType.PARAMETER_INTEGER: ('int', 'integer_value'),
-        ParameterType.PARAMETER_DOUBLE: ('double', 'double_value'),
-        ParameterType.PARAMETER_STRING: ('string', 'string_value'),
-        ParameterType.PARAMETER_BYTE_ARRAY: ('byte[]', 'byte_array_value'),
-        ParameterType.PARAMETER_BOOL_ARRAY: ('bool[]', 'bool_array_value'),
-        ParameterType.PARAMETER_INTEGER_ARRAY: ('int[]', 'integer_array_value'),
-        ParameterType.PARAMETER_DOUBLE_ARRAY: ('double[]', 'double_array_value'),
-        ParameterType.PARAMETER_STRING_ARRAY: ('string[]', 'string_array_value'),
-    }
+def _once(on_done: Callable[..., None]) -> Callable[..., None]:
+    """``on_done`` run at most once: a later call is ignored. A request whose on_done raised then
+    fails with that error, and its caller must not hear about the same request twice."""
+    called = False
 
+    def call(*answer: Any) -> None:
+        nonlocal called
+        if not called:
+            called = True
+            on_done(*answer)
 
-def _extract_parameters(names: list, values: list) -> list:
-    """Convert rcl_interfaces ParameterValue list into [(name, type_label, value)] tuples."""
-    readers = _parameter_type_readers()
-    result = []
-    for name, pv in zip(names, values):
-        type_label, attr = readers.get(pv.type, ('?', None))
-        value = getattr(pv, attr) if attr else None
-        if hasattr(value, 'tolist'):
-            value = value.tolist()
-        result.append((name, type_label, value))
-    return result
-
-
-def _python_to_parameter_value(py_value: Any) -> Any:
-    from rcl_interfaces.msg import ParameterType, ParameterValue  # noqa: PLC0415
-    pv = ParameterValue()
-    if isinstance(py_value, bool):
-        pv.type = ParameterType.PARAMETER_BOOL
-        pv.bool_value = py_value
-    elif isinstance(py_value, int):
-        pv.type = ParameterType.PARAMETER_INTEGER
-        pv.integer_value = py_value
-    elif isinstance(py_value, float):
-        pv.type = ParameterType.PARAMETER_DOUBLE
-        pv.double_value = py_value
-    elif isinstance(py_value, str):
-        pv.type = ParameterType.PARAMETER_STRING
-        pv.string_value = py_value
-    elif isinstance(py_value, list) and py_value:
-        first = py_value[0]
-        if isinstance(first, bool):
-            pv.type = ParameterType.PARAMETER_BOOL_ARRAY
-            pv.bool_array_value = py_value
-        elif isinstance(first, int):
-            pv.type = ParameterType.PARAMETER_INTEGER_ARRAY
-            pv.integer_array_value = py_value
-        elif isinstance(first, float):
-            pv.type = ParameterType.PARAMETER_DOUBLE_ARRAY
-            pv.double_array_value = py_value
-        elif isinstance(first, str):
-            pv.type = ParameterType.PARAMETER_STRING_ARRAY
-            pv.string_array_value = py_value
-        else:
-            raise ValueError(f'unsupported list element type: {type(first).__name__}')
-    elif isinstance(py_value, list):
-        raise ValueError('cannot infer type of empty list')
-    else:
-        raise ValueError(f'unsupported parameter type: {type(py_value).__name__}')
-    return pv
+    return call
 
 
 def adapted_qos(endpoint_infos: list[Any]) -> QoSProfile:
@@ -143,60 +97,21 @@ def adapted_qos(endpoint_infos: list[Any]) -> QoSProfile:
 
 
 @dataclass
-class _PendingReady:
-    """A client waiting for its server to appear, checked by the housekeeping timer."""
-
-    entity: Any
-    is_ready: Callable[[], bool]
-    dispatch: Callable[[], None]
-    fail: Callable[[Exception], None]
-    deadline: float
-    label: str
-
-
-@dataclass
-class _AwaitingResponse:
-    """An in-flight service request with a response deadline.
-
-    ``outer`` is the caller's Future for request/response calls; parameter calls
-    (dispatched via ``_call_then``) track the client only — to keep it out of LRU
-    eviction while in flight — and leave ``outer`` ``None``.
-    """
-
-    client: Any
-    rclpy_future: Any
-    deadline: float
-    label: str
-    outer: Future | None = None
-
-
-@dataclass
-class _ActiveGoal:
-    handle: Any
-    on_event: ActionEventCallback
-    client: Any
-    server_lost_since: float | None = None  # When server_is_ready first turned false.
-
-
-@dataclass
 class _PeriodicPublish:
     timer: Any
-    publisher_key: tuple[str, str]
+    publisher: Any
 
 
 @dataclass
 class _Entities:
     """All ROS-thread-only mutable state, grouped so the ownership rule is visible."""
 
-    clients: OrderedDict = field(default_factory=OrderedDict)
-    action_clients: OrderedDict = field(default_factory=OrderedDict)
-    publishers: OrderedDict = field(default_factory=OrderedDict)
+    inflight: Inflight
+    clients: EntityCache
+    action_clients: EntityCache
+    publishers: EntityCache
     subscriptions: dict = field(default_factory=dict)
     periodic: dict = field(default_factory=dict)
-    pending_ready: list = field(default_factory=list)
-    awaiting_response: list = field(default_factory=list)
-    active_goals: dict = field(default_factory=dict)
-    inflight_actions: set = field(default_factory=set)
 
 
 class RosBridge:
@@ -216,7 +131,21 @@ class RosBridge:
         self._guard = None
         self._latest_graph: GraphSnapshot = EMPTY_GRAPH
         self._graph_listener: GraphListener | None = None
-        self._entities = _Entities()
+        inflight = Inflight()
+        self._entities = _Entities(
+            inflight=inflight,
+            clients=EntityCache(
+                CLIENT_CACHE_SIZE, inflight.busy, lambda client: self._node.destroy_client(client)
+            ),
+            action_clients=EntityCache(
+                CLIENT_CACHE_SIZE, inflight.busy, lambda client: client.destroy()
+            ),
+            publishers=EntityCache(
+                CLIENT_CACHE_SIZE,
+                self._publisher_in_use,
+                lambda publisher: self._node.destroy_publisher(publisher),
+            ),
+        )
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -305,7 +234,9 @@ class RosBridge:
         dispatch = functools.partial(
             self._dispatch_service, client, request, outer, name, time_setters
         )
-        self._dispatch_or_wait(client, client.service_is_ready, dispatch, outer.set_exception, name)
+        self._entities.inflight.wait_for_server(
+            client, client.service_is_ready, dispatch, outer.set_exception, name
+        )
 
     def _dispatch_service(
         self,
@@ -317,18 +248,8 @@ class RosBridge:
     ) -> None:
         self._apply_time_setters(time_setters)
         rclpy_future = client.call_async(request)
-        record = _AwaitingResponse(
-            client=client,
-            rclpy_future=rclpy_future,
-            outer=outer,
-            deadline=time.monotonic() + RESPONSE_TIMEOUT_S,
-            label=name,
-        )
-        self._entities.awaiting_response.append(record)
 
-        def on_done(done_future: Any) -> None:
-            with contextlib.suppress(ValueError):
-                self._entities.awaiting_response.remove(record)
+        def on_response(done_future: Any) -> None:
             if outer.done():
                 return
             error = done_future.exception()
@@ -337,7 +258,11 @@ class RosBridge:
             else:
                 outer.set_result(done_future.result())
 
-        rclpy_future.add_done_callback(on_done)
+        def on_fail(error: Exception) -> None:
+            if not outer.done():
+                outer.set_exception(error)
+
+        self._entities.inflight.track_response(client, rclpy_future, name, on_response, on_fail)
 
     # ---------------------------------------------------------------- actions
 
@@ -363,8 +288,8 @@ class RosBridge:
         """Request cancellation of the active goal on ``name``; no-op if there is none."""
 
         def command() -> None:
-            active = self._entities.active_goals.get(name)
-            if active is None:
+            active = self._entities.inflight.goals().get(name)
+            if active is None or active.handle is None:
                 return
             cancel_future = active.handle.cancel_goal_async()
 
@@ -393,20 +318,21 @@ class RosBridge:
         on_event: ActionEventCallback,
         time_setters: tuple[TimeSetter, ...],
     ) -> None:
-        if name in self._entities.inflight_actions:
+        inflight = self._entities.inflight
+        if name in inflight.goals():
             on_event(ActionEvent(name, ActionEventKind.ERROR, payload='goal already in flight'))
             return
         client = self._get_action_client(name, type_name)
-        self._entities.inflight_actions.add(name)
+        inflight.begin_goal(name, client, on_event)
         dispatch = functools.partial(
             self._dispatch_goal, client, name, goal, on_event, time_setters
         )
 
         def fail(error: Exception) -> None:
-            self._entities.inflight_actions.discard(name)
+            inflight.end_goal(name)
             on_event(ActionEvent(name, ActionEventKind.ERROR, payload=str(error)))
 
-        self._dispatch_or_wait(client, client.server_is_ready, dispatch, fail, name)
+        inflight.wait_for_server(client, client.server_is_ready, dispatch, fail, name)
 
     def _dispatch_goal(
         self,
@@ -416,6 +342,8 @@ class RosBridge:
         on_event: ActionEventCallback,
         time_setters: tuple[TimeSetter, ...],
     ) -> None:
+        inflight = self._entities.inflight
+
         def feedback_callback(message: Any) -> None:
             on_event(ActionEvent(name, ActionEventKind.FEEDBACK, payload=message.feedback))
 
@@ -426,20 +354,19 @@ class RosBridge:
             try:
                 handle = done_future.result()
             except Exception as error:
-                self._entities.inflight_actions.discard(name)
+                inflight.end_goal(name)
                 on_event(ActionEvent(name, ActionEventKind.ERROR, payload=str(error)))
                 return
             if not handle.accepted:
-                self._entities.inflight_actions.discard(name)
+                inflight.end_goal(name)
                 on_event(ActionEvent(name, ActionEventKind.REJECTED))
                 return
-            self._entities.active_goals[name] = _ActiveGoal(handle, on_event, client)
+            inflight.goal_accepted(name, handle)
             on_event(ActionEvent(name, ActionEventKind.ACCEPTED))
             result_future = handle.get_result_async()
 
             def on_result(result_done: Any) -> None:
-                self._entities.active_goals.pop(name, None)
-                self._entities.inflight_actions.discard(name)
+                inflight.end_goal(name)
                 try:
                     wrapped = result_done.result()
                 except Exception as error:
@@ -489,7 +416,7 @@ class RosBridge:
                 publisher.publish(message)
 
             timer = self._node.create_timer(1.0 / rate_hz, tick)
-            self._entities.periodic[name] = _PeriodicPublish(timer, (name, type_name))
+            self._entities.periodic[name] = _PeriodicPublish(timer, publisher)
 
         return self.submit(command)
 
@@ -521,107 +448,63 @@ class RosBridge:
 
     # ---------------------------------------------------------------- parameters
 
-    def list_node_parameters(self, node_name: str, on_done: Callable) -> None:
-        """Fetch all parameter names+values for ``node_name``; result via ``on_done(params, err)``."""
+    def list_node_parameters(self, node_name: str, on_done: ParametersDone) -> None:
+        on_done = _once(on_done)
 
+        def fail(error: Exception) -> None:
+            on_done(None, str(error))
+
+        def listed(response: Any) -> None:
+            names = list(response.result.names)
+            if not names:
+                on_done([], None)
+                return
+            self._parameter_request(
+                f'{node_name}/get_parameters',
+                GetParameters,
+                lambda: GetParameters.Request(names=names),
+                lambda got: on_done(read_parameters(names, got.values), None),
+                fail,
+            )
+
+        self.submit(lambda: self._parameter_request(
+            f'{node_name}/list_parameters',
+            ListParameters,
+            lambda: ListParameters.Request(depth=ListParameters.Request.DEPTH_RECURSIVE),
+            listed,
+            fail,
+        ))
+
+    def set_node_parameter(
+        self, node_name: str, name: str, value: Any, type_label: str, on_done: SetParameterDone
+    ) -> None:
+        on_done = _once(on_done)
+
+        def answered(response: Any) -> None:
+            results = response.results
+            if results and not results[0].successful:
+                on_done(results[0].reason or 'rejected by node')
+            else:
+                on_done(None)
+
+        self.submit(lambda: self._parameter_request(
+            f'{node_name}/set_parameters',
+            SetParameters,
+            lambda: SetParameters.Request(
+                parameters=[Parameter(name=name, value=parameter_value(value, type_label))]
+            ),
+            answered,
+            lambda error: on_done(str(error)),
+        ))
+
+    def get_node_info(self, node_name: str, on_done: NodeInfoDone) -> None:
         def command() -> None:
             try:
-                self._start_list_node_params(node_name, on_done)
+                info = build_node_info(self._node, node_name)
             except Exception as error:
                 on_done(None, str(error))
-
-        self.submit(command)
-
-    def _start_list_node_params(self, node_name: str, on_done: Callable) -> None:
-        from rcl_interfaces.srv import ListParameters  # noqa: PLC0415
-        list_srv = f'{node_name}/list_parameters'
-        client = self._get_client(list_srv, 'rcl_interfaces/srv/ListParameters')
-        request = ListParameters.Request()
-        request.depth = ListParameters.Request.DEPTH_RECURSIVE
-
-        def handle(done_future: Any) -> None:
-            try:
-                names = list(done_future.result().result.names)
-                self._start_get_node_params(node_name, names, on_done)
-            except Exception as error:
-                on_done(None, str(error))
-
-        self._dispatch_or_wait(
-            client,
-            client.service_is_ready,
-            lambda: self._call_then(client, request, handle),
-            lambda e: on_done(None, str(e)),
-            list_srv,
-        )
-
-    def _start_get_node_params(self, node_name: str, names: list, on_done: Callable) -> None:
-        if not names:
-            on_done([], None)
-            return
-        get_srv = f'{node_name}/get_parameters'
-        client = self._get_client(get_srv, 'rcl_interfaces/srv/GetParameters')
-
-        from rcl_interfaces.srv import GetParameters  # noqa: PLC0415
-        request = GetParameters.Request()
-        request.names = names
-
-        def handle(done_future: Any) -> None:
-            try:
-                on_done(_extract_parameters(names, done_future.result().values), None)
-            except Exception as error:
-                on_done(None, str(error))
-
-        self._dispatch_or_wait(
-            client,
-            client.service_is_ready,
-            lambda: self._call_then(client, request, handle),
-            lambda e: on_done(None, str(e)),
-            get_srv,
-        )
-
-    def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done: Callable) -> None:
-        """Set a single parameter on ``node_name``; result via ``on_done(error_str_or_none)``."""
-
-        def command() -> None:
-            try:
-                import yaml  # noqa: PLC0415
-                from rcl_interfaces.msg import Parameter  # noqa: PLC0415
-                from rcl_interfaces.srv import SetParameters  # noqa: PLC0415
-                value = _python_to_parameter_value(yaml.safe_load(value_yaml))
-                set_srv = f'{node_name}/set_parameters'
-                client = self._get_client(set_srv, 'rcl_interfaces/srv/SetParameters')
-                request = SetParameters.Request(parameters=[Parameter(name=name, value=value)])
-
-                def handle(done_future: Any) -> None:
-                    try:
-                        results = done_future.result().results
-                        if results and not results[0].successful:
-                            on_done(results[0].reason or 'rejected by node')
-                        else:
-                            on_done(None)
-                    except Exception as error:
-                        on_done(str(error))
-
-                self._dispatch_or_wait(
-                    client,
-                    client.service_is_ready,
-                    lambda: self._call_then(client, request, handle),
-                    lambda e: on_done(str(e)),
-                    set_srv,
-                )
-            except Exception as error:
-                on_done(str(error))
-
-        self.submit(command)
-
-    def get_node_info(self, node_name: str, on_done: Callable) -> None:
-        """Introspect ``node_name``'s endpoints; result via ``on_done(info, error)``."""
-
-        def command() -> None:
-            try:
-                on_done(build_node_info(self._node, node_name), None)
-            except Exception as error:
-                on_done(None, str(error))
+                return
+            on_done(info, None)
 
         self.submit(command)
 
@@ -634,7 +517,7 @@ class RosBridge:
             self._node = rclpy.create_node(self._node_name, context=self._context)
             self._guard = self._node.create_guard_condition(self._drain_commands)
             self._node.create_timer(GRAPH_POLL_PERIOD_S, self._poll_graph)
-            self._node.create_timer(HOUSEKEEPING_PERIOD_S, self._tick_pending)
+            self._node.create_timer(HOUSEKEEPING_PERIOD_S, self._entities.inflight.housekeep)
             self._executor = SingleThreadedExecutor(context=self._context)
             self._executor.add_node(self._node)
         except BaseException as error:  # noqa: BLE001 - reported to start() via _startup_error
@@ -689,50 +572,42 @@ class RosBridge:
 
         return command
 
-    def _dispatch_or_wait(
+    def _parameter_request(
         self,
-        entity: Any,
-        is_ready: Callable[[], bool],
-        dispatch: Callable[[], None],
+        service_name: str,
+        service_type: Any,
+        make_request: Callable[[], Any],
+        on_response: Callable[[Any], None],
         fail: Callable[[Exception], None],
-        label: str,
     ) -> None:
-        """Dispatch now if the server is ready, else queue until it is (or the deadline). ROS thread."""
-        if is_ready():
-            dispatch()
-        else:
-            self._entities.pending_ready.append(
-                _PendingReady(
-                    entity=entity,
-                    is_ready=is_ready,
-                    dispatch=dispatch,
-                    fail=fail,
-                    deadline=time.monotonic() + READY_TIMEOUT_S,
-                    label=label,
-                )
+        """Call the rcl_interfaces parameter service ``service_name`` (ROS thread).
+
+        ``on_response(response)`` runs on the ROS thread when it answers, straight from the reply,
+        never through the command queue, so a reply that lands while shutdown is under way is
+        handled like any other. Otherwise ``fail(error)`` runs, once: building the request or
+        sending it raised, no server within READY_TIMEOUT_S, no response within
+        RESPONSE_TIMEOUT_S, shutdown, or ``on_response`` raised. As ``on_response`` may have
+        answered the caller before it raised, the caller's on_done is wrapped in ``_once``. An
+        exception from ``fail`` on the reply is dropped, so it can't stop the spin loop."""
+
+        def reply(done: Any) -> None:
+            try:
+                on_response(done.result())
+            except Exception as error:
+                with contextlib.suppress(Exception):
+                    fail(error)
+
+        def dispatch() -> None:
+            future = client.call_async(make_request())
+            self._entities.inflight.track_response(client, future, service_name, reply, fail)
+
+        try:
+            client = self._get_client(service_name, f'rcl_interfaces/srv/{service_type.__name__}')
+            self._entities.inflight.wait_for_server(
+                client, client.service_is_ready, dispatch, fail, service_name
             )
-
-    def _call_then(self, client: Any, request: Any, handle: Callable[[Any], None]) -> None:
-        """Call ``client`` async; when the response lands, run ``handle(future)`` on the ROS thread.
-
-        Tracks ``client`` in ``awaiting_response`` for the call's lifetime so the LRU cache in
-        ``_get_or_create`` cannot pick it as an eviction victim and ``destroy_client`` it mid-flight.
-        """
-        rclpy_future = client.call_async(request)
-        record = _AwaitingResponse(
-            client=client,
-            rclpy_future=rclpy_future,
-            deadline=time.monotonic() + RESPONSE_TIMEOUT_S,
-            label=getattr(client, 'srv_name', 'parameter call'),
-        )
-        self._entities.awaiting_response.append(record)
-
-        def on_done(done: Any) -> None:
-            with contextlib.suppress(ValueError):
-                self._entities.awaiting_response.remove(record)
-            self.submit(lambda: handle(done))
-
-        rclpy_future.add_done_callback(on_done)
+        except Exception as error:
+            fail(error)
 
     def _poll_graph(self) -> None:
         previous = self._latest_graph
@@ -751,67 +626,6 @@ class RosBridge:
             with contextlib.suppress(Exception):
                 listener(snapshot)
 
-    def _tick_pending(self) -> None:
-        """Housekeeping, on the ROS thread: settle the waits for a server, the goals whose server
-        vanished and the requests past their response deadline."""
-        now = time.monotonic()
-        self._settle_pending_ready(now)
-        self._watch_active_goals(now)
-        self._expire_awaiting_response(now)
-
-    def _settle_pending_ready(self, now: float) -> None:
-        """Dispatch each wait whose server appeared, fail the ones past their deadline, keep the rest."""
-        still_pending = []
-        for pending in self._entities.pending_ready:
-            try:
-                if pending.is_ready():
-                    pending.dispatch()
-                elif now >= pending.deadline:
-                    pending.fail(TimeoutError(f'{pending.label} not available (no server found)'))
-                else:
-                    still_pending.append(pending)
-            except Exception as error:  # noqa: BLE001 - one bad entry must not kill housekeeping
-                with contextlib.suppress(Exception):
-                    pending.fail(error)
-        self._entities.pending_ready = still_pending
-
-    def _watch_active_goals(self, now: float) -> None:
-        """End a goal whose action server has been gone for READY_TIMEOUT_S with an ERROR event.
-
-        An action server dying mid-goal would otherwise leave the goal EXECUTING forever (its
-        result future never completes) and block new sends."""
-        for name, active in list(self._entities.active_goals.items()):
-            if active.client.server_is_ready():
-                active.server_lost_since = None
-            elif active.server_lost_since is None:
-                active.server_lost_since = now
-            elif now - active.server_lost_since >= READY_TIMEOUT_S:
-                self._entities.active_goals.pop(name, None)
-                self._entities.inflight_actions.discard(name)
-                with contextlib.suppress(Exception):
-                    active.on_event(
-                        ActionEvent(
-                            name,
-                            ActionEventKind.ERROR,
-                            payload='action server vanished while the goal was executing',
-                        )
-                    )
-
-    def _expire_awaiting_response(self, now: float) -> None:
-        """Drop each request past its response deadline and fail its caller's future, if any."""
-        still_awaiting = []
-        for record in self._entities.awaiting_response:
-            if now < record.deadline:
-                still_awaiting.append(record)
-                continue
-            with contextlib.suppress(Exception):
-                record.client.remove_pending_request(record.rclpy_future)
-            if record.outer is not None and not record.outer.done():
-                record.outer.set_exception(
-                    TimeoutError(f'no response from {record.label} after {RESPONSE_TIMEOUT_S:.0f} s')
-                )
-        self._entities.awaiting_response = still_awaiting
-
     def _apply_time_setters(self, time_setters: tuple[TimeSetter, ...]) -> None:
         if not time_setters:
             return
@@ -822,74 +636,27 @@ class RosBridge:
     # ---------------------------------------------------------------- entity caches
 
     def _get_client(self, name: str, type_name: str) -> Any:
-        return self._get_or_create(
-            self._entities.clients,
+        return self._entities.clients.get(
             (name, type_name),
             lambda: self._node.create_client(import_type('srv', type_name), name),
-            self._client_in_use,
-            self._node.destroy_client,
         )
 
     def _get_action_client(self, name: str, type_name: str) -> Any:
-        return self._get_or_create(
-            self._entities.action_clients,
+        return self._entities.action_clients.get(
             (name, type_name),
             lambda: ActionClient(self._node, import_type('action', type_name), name),
-            self._action_client_in_use,
-            lambda client: client.destroy(),
         )
 
     def _get_publisher(self, name: str, type_name: str) -> Any:
-        return self._get_or_create(
-            self._entities.publishers,
+        return self._entities.publishers.get(
             (name, type_name),
             lambda: self._node.create_publisher(
                 import_type('msg', type_name), name, QoSProfile(depth=DEFAULT_QOS_DEPTH)
             ),
-            self._publisher_in_use,
-            self._node.destroy_publisher,
         )
 
-    def _get_or_create(
-        self,
-        cache: OrderedDict,
-        key: tuple[str, str],
-        factory: Callable[[], Any],
-        in_use: Callable[[tuple[str, str], Any], bool],
-        destroy: Callable[[Any], None],
-    ) -> Any:
-        if key in cache:
-            cache.move_to_end(key)
-            return cache[key]
-        entity = factory()
-        cache[key] = entity
-        while len(cache) > CLIENT_CACHE_SIZE:
-            victim_key = next(
-                (candidate for candidate in cache if not in_use(candidate, cache[candidate])),
-                None,
-            )
-            if victim_key is None:
-                break  # Everything is busy; tolerate the overflow rather than break a call.
-            with contextlib.suppress(Exception):
-                destroy(cache.pop(victim_key))
-        return entity
-
-    def _client_in_use(self, key: tuple[str, str], client: Any) -> bool:
-        return any(record.client is client for record in self._entities.awaiting_response) or any(
-            pending.entity is client for pending in self._entities.pending_ready
-        )
-
-    def _action_client_in_use(self, key: tuple[str, str], client: Any) -> bool:
-        # inflight_actions also covers the window between send_goal_async and goal response,
-        # where the client is in neither pending_ready nor active_goals.
-        return (
-            any(active.client is client for active in self._entities.active_goals.values())
-            or any(pending.entity is client for pending in self._entities.pending_ready)
-            or key[0] in self._entities.inflight_actions
-        )
-
-    def _publisher_in_use(self, key: tuple[str, str], publisher: Any) -> bool:
-        return any(periodic.publisher_key == key for periodic in self._entities.periodic.values())
+    def _publisher_in_use(self, publisher: Any) -> bool:
+        return any(periodic.publisher is publisher for periodic in self._entities.periodic.values())
 
     def _stop_periodic(self, name: str) -> None:
         periodic = self._entities.periodic.pop(name, None)
@@ -903,14 +670,14 @@ class RosBridge:
         acting on the robot after the app quits. A goal whose acceptance is still on its way is
         canceled once it arrives. Spins for at most SHUTDOWN_CANCEL_TIMEOUT_S, until every server
         answered (queued commands and parked requests are already gone, so only replies run)."""
-        entities = self._entities
         canceling: dict[str, Any] = {}
         deadline = time.monotonic() + SHUTDOWN_CANCEL_TIMEOUT_S
         while self._context.ok() and time.monotonic() < deadline:
-            for name, active in entities.active_goals.items():
-                if name not in canceling:
-                    canceling[name] = active.handle.cancel_goal_async()
-            if entities.inflight_actions <= canceling.keys() and all(f.done() for f in canceling.values()):
+            goals = self._entities.inflight.goals()
+            for name, goal in goals.items():
+                if goal.handle is not None and name not in canceling:
+                    canceling[name] = goal.handle.cancel_goal_async()
+            if goals.keys() <= canceling.keys() and all(f.done() for f in canceling.values()):
                 return
             self._executor.spin_once(timeout_sec=0.05)
 
@@ -922,15 +689,7 @@ class RosBridge:
                 break
             future.cancel()
         entities = self._entities
-        shutdown_error = RuntimeError('ROS bridge shut down')
-        for pending in entities.pending_ready:
-            with contextlib.suppress(Exception):
-                pending.fail(shutdown_error)
-        for record in entities.awaiting_response:
-            if record.outer is not None and not record.outer.done():
-                record.outer.set_exception(shutdown_error)
-        entities.pending_ready = []
-        entities.awaiting_response = []
+        entities.inflight.fail_all(RuntimeError('ROS bridge shut down'))
         with contextlib.suppress(Exception):
             self._cancel_goals()
         with contextlib.suppress(Exception):
@@ -938,12 +697,9 @@ class RosBridge:
                 self._node.destroy_timer(periodic.timer)
             for subscription in entities.subscriptions.values():
                 self._node.destroy_subscription(subscription)
-            for publisher in entities.publishers.values():
-                self._node.destroy_publisher(publisher)
-            for client in entities.clients.values():
-                self._node.destroy_client(client)
-            for action_client in entities.action_clients.values():
-                action_client.destroy()
+            entities.publishers.destroy_all()
+            entities.clients.destroy_all()
+            entities.action_clients.destroy_all()
             self._node.destroy_guard_condition(self._guard)
         with contextlib.suppress(Exception):
             self._node.destroy_node()

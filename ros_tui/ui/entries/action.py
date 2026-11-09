@@ -42,10 +42,9 @@ from ros_tui.constants import ACTION_SPINNER_HZ, FEEDBACK_BUFFER_MAXLEN
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind, goal_status_name
 from ros_tui.ros.message_yaml import class_structure, message_to_display
-from ros_tui.ui.entries.base import Area, Context, Running, Tab, Verb
+from ros_tui.ui.entries.base import Area, Context, Host, Running, Tab, Verb
 from ros_tui.ui.entries.message import EDITOR, MessageEntry, Received
 from ros_tui.ui.fields import Row, flat_rows
-from ros_tui.ui.nav import NavState
 
 RESULT = 'out'  # The area id of RESULT.
 SPINNER = '◐◓◑◒'
@@ -133,7 +132,7 @@ class ActionEntry(MessageEntry):
     def running(self) -> tuple[Running, ...]:
         return (Running(spinner(self._bridge.now()), 'running', 'live'),) if self.goal and self.goal.running else ()
 
-    def tick(self, nav: NavState) -> bool:
+    def tick(self, nav: Host) -> bool:
         """Drain the running goal's feedback. True when the screen shows something new: the
         spinner's frame (in the top bar on every tab), and on the goal's own tab its time or a new
         feedback. So a running goal redraws at most ACTION_SPINNER_HZ times a second elsewhere."""
@@ -179,7 +178,7 @@ class ActionEntry(MessageEntry):
         return {**super().verbs(), 'primary': lambda nav, how, _: self._send_goal(nav, how),
                 'secondary': lambda nav, how, _: self._cancel(nav, how)}
 
-    def _send_goal(self, nav: NavState, how: str) -> None:
+    def _send_goal(self, nav: Host, how: str) -> None:
         """space / ^s: check the goal and send it, unless a goal runs already (on any action)."""
         tab = self.tab
         running = self.executing()
@@ -196,7 +195,7 @@ class ActionEntry(MessageEntry):
         self._last.tab, self._last.goal = tab, goal
         self._bridge.send_goal(tab.name, self.type, message, lambda event: self._event(nav, goal, event), time_setters)
 
-    def _cancel(self, nav: NavState, how: str) -> None:
+    def _cancel(self, nav: Host, how: str) -> None:
         """s: ask the server to cancel this entry's running goal. It never sends a goal."""
         goal = self.goal
         if goal is None or not goal.running:
@@ -216,7 +215,7 @@ class ActionEntry(MessageEntry):
         self._bridge.cancel_goal(self.tab.name)
 
     # ---------- the goal's events ----------
-    def _event(self, nav: NavState, goal: Goal, event: ActionEvent) -> None:
+    def _event(self, nav: Host, goal: Goal, event: ActionEvent) -> None:
         """On the bridge's thread: feedback goes into the goal's buffer (the tick drains it); the
         other events are timed, made plain data and applied on the UI thread."""
         if event.kind == ActionEventKind.FEEDBACK:
@@ -226,7 +225,7 @@ class ActionEntry(MessageEntry):
         result = message_to_display(event.payload) if event.kind == ActionEventKind.RESULT and event.payload else None
         self._post(lambda: self._update(nav, goal, event, now, result))
 
-    def _update(self, nav: NavState, goal: Goal, event: ActionEvent, now: float, result: dict | None) -> None:
+    def _update(self, nav: Host, goal: Goal, event: ActionEvent, now: float, result: dict | None) -> None:
         kind = event.kind
         if goal.end is not None:
             return  # It ended already; a late event changes nothing.

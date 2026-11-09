@@ -395,7 +395,7 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
     entry. Overlays and insert swallow keys they don't use.
 - **Entries own their kind.** `entries/base.py` is the contract: `Entry`,
   `Area` (with `editable`, `folds`, `helpers`, so the keymap asks the area, not
-  its id), `Editing`, `Commit`, `UndoEntry`, `Running`, `Context`.
+  its id), `Editing`, `Commit`, `UndoEntry`, `Running`, `Context`, and `Host`.
   `nav.entry(tab)` makes one per tab on first use (through `new_entry`,
   `kinds.entry_factory` in the app) and keeps it after the tab closes, so edits,
   history and echo survive a reopen.
@@ -403,9 +403,13 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
     and answers `row_count`, `start_edit` / `commit_edit`, `activate_row`, its
     labels, `running`, `tick` and `verbs()`: a table of what it offers now, by
     name. Where a verb isn't offered NavState says so itself (`NOT_HERE`).
-  - An entry talks back only through `nav.feedback` (`log_line`, `show_toast`,
-    `refuse`, `report_error` / `clear_error`, `add_activity`, `flash_send`) and
-    NavState's `push_undo` / `drop_undo`, `begin_edit`, `set_row`. An undo step
+  - An entry talks back only through the `Host` it is handed (`entries/base.py`;
+    NavState in the app): `nav.feedback` (`log_line`, `show_toast`, `refuse`,
+    `report_error` / `clear_error`, `add_activity`, `flash_send`) and intents
+    such as `push_undo` / `drop_undo`, `begin_edit`, `set_row`, `copy`, `show`.
+    It reads NavState's state but never assigns it, and asks `inside(area_id)`
+    rather than reading the layer. A new need is a new `Host` member, which
+    `test_contract.py` checks NavState has. An undo step
     is an `UndoEntry(owner, revert)`: a closure that undoes it and returns the
     log line.
   - `entries/kinds.py` maps a kind to its class; every entry gets the same
@@ -443,7 +447,9 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
 - **Validation lives in one place**: `build_message` (`message_yaml.py`)
   reports `FieldError`s with the path; the UI maps the path to a row. Typed
   scalars, field rows and node parameters alike, go through
-  `fields.parse_scalar`.
+  `fields.parse_scalar`. A node parameter's typed value is then checked
+  against its declared type by `parameters.checked`, the check the bridge
+  runs before it sends.
 - **Every tunable number lives in `ros_tui/constants.py`**, with the
   stamp-at-send words (`HEADER_AUTO`, `TIME_NOW`).
 - **Time comes from an injectable clock.** `Feedback.clock` is the bridge's
