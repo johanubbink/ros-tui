@@ -366,11 +366,17 @@ def coerce(node: Any, value: Any) -> Any:
         element = element_of(node)
         return [coerce(element, item) for item in value] if isinstance(value, list) else value
     if isinstance(value, dict):
-        children = {child.name: child for child in node.children}
-        return {key: coerce(children[key], item) if key in children else item for key, item in value.items()}
+        return _coerce_fields(node, value)
     if label in FLOAT_TYPES and isinstance(value, int) and not isinstance(value, bool):
         return float(value)
     return value
+
+
+def _coerce_fields(node: Any, values: dict) -> dict:
+    """A message's flow map, each field coerced by its own type; a key that is no field of `node` is
+    kept as typed (the send check names it)."""
+    children = {child.name: child for child in node.children}
+    return {key: coerce(children[key], item) if key in children else item for key, item in values.items()}
 
 
 def _merge(old: Any, new: Any) -> Any:
@@ -388,14 +394,7 @@ def parse(row: Row, text: str) -> Any:
     """The value typed for `row`. Raises ValueError with the message the user sees."""
     field, label, shown = row.field, row.label, text.strip()
     if row.shape == COMPACT:
-        magic = MAGIC_WORDS.get(label)
-        if magic and shown == magic:
-            return magic
-        value = _load(shown)
-        if not isinstance(value, dict):
-            needs = f'{magic} or {_template(row.node)}' if magic else _template(row.node)
-            raise ValueError(f'{field} needs {needs}, got "{shown}"')
-        return coerce(row.node, _merge(row.value, value))
+        return _parse_compact(row, shown)
     if row.shape == ARRAY:
         element = array_info(label).element
         return [parse_scalar(element, f'{field}[{index}]', flow_yaml(item) if not isinstance(item, str) else item)
@@ -403,6 +402,19 @@ def parse(row: Row, text: str) -> Any:
     if row.node.constants:
         return enum_value(row.node.constants, field, text)
     return parse_scalar(label, field, text)
+
+
+def _parse_compact(row: Row, shown: str) -> Any:
+    """A compact message typed as its magic word ('auto', 'now') or a flow map, which is laid over
+    the row's old value: {x: 1} keeps the old y and z."""
+    magic = MAGIC_WORDS.get(row.label)
+    if magic and shown == magic:
+        return magic
+    value = _load(shown)
+    if not isinstance(value, dict):
+        needs = f'{magic} or {_template(row.node)}' if magic else _template(row.node)
+        raise ValueError(f'{row.field} needs {needs}, got "{shown}"')
+    return coerce(row.node, _merge(row.value, value))
 
 
 def flat_rows(fields: tuple, values: dict | None) -> list[Row]:

@@ -54,30 +54,39 @@ def field_lines(form: FieldRows, editing: Editing | None = None, current: int | 
         if fold_slot:
             line.append(('▾ ' if row.open else '▸ ') if row.folds else '  ', style('grey'))
         line.append(row.key, style('syn-key'))
+        typing = editing if editing is not None and editing.row == index else None
         bad = bool(form.bad) and within(form.bad, row.field) and not row.open
-        typing = editing is not None and editing.row == index
-        if typing:
-            line.append(': ')
-            line.append_text(edit_value(editing.value, editing.fresh))
-            if row.node.constants:  # An enum: what the typed text could mean, instead of the type.
-                line.append('  ' + enum_matches(row.node.constants, editing.value), style('comp'))
-                lines.append(line)
-                continue
-        elif row.folds:
-            if row.text:
-                line.append(' ' + row.text, style('bad' if bad else 'dim'))
-        else:
-            line.append(': ')
-            line.append(row.text, style('bad' if bad else VALUE_COLORS[row.style]))
-            if row.enum_name:
-                line.append(' ' + row.enum_name, style('dim'))
-        name = helper_name(row) if form.editable and not typing else None
-        if name:
-            line.append('  ')
-            line.append_text(helper_badge(name, index == current))
-        line.append(f'{HINT_GAP}# {row.hint}', style('syn-hint'))
+        line.append_text(_row_value(row, typing, bad))
+        line.append_text(_row_tail(row, typing, form.editable, index == current))
         lines.append(line)
     return lines
+
+
+def _row_value(row: Row, typing: Editing | None, bad: bool) -> Text:
+    """What follows a row's name: the edit box while it is being typed, a folding row's summary, or
+    its value coloured by type and a dim enum name. A value the last send check rejected is red."""
+    if typing is not None:
+        return Text.assemble(': ', edit_value(typing.value, typing.fresh))
+    if row.folds:
+        return Text(' ' + row.text, style('bad' if bad else 'dim')) if row.text else Text()
+    value = Text.assemble(': ', (row.text, style('bad' if bad else VALUE_COLORS[row.style])))
+    if row.enum_name:
+        value.append(' ' + row.enum_name, style('dim'))
+    return value
+
+
+def _row_tail(row: Row, typing: Editing | None, editable: bool, on: bool) -> Text:
+    """What ends a row: an enum being typed shows what the typed text could mean; any other row its
+    helper badge (in an editable form, while not being typed, lit when `on`) and its type hint."""
+    if typing is not None and row.node.constants:
+        return Text('  ' + enum_matches(row.node.constants, typing.value), style('comp'))
+    tail = Text()
+    name = helper_name(row) if editable and typing is None else None
+    if name:
+        tail.append('  ')
+        tail.append_text(helper_badge(name, on))
+    tail.append(f'{HINT_GAP}# {row.hint}', style('syn-hint'))
+    return tail
 
 
 def helper_badge(name: str, on: bool) -> Text:

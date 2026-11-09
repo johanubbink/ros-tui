@@ -28,6 +28,7 @@ from rich.text import Text
 
 from ros_tui.ui.entries.base import Area
 from ros_tui.ui.entries.topic import ECHO, RATE, RATE_RANGE, TopicEntry, rate_text
+from ros_tui.ui.fields import Row
 from ros_tui.ui.nav import NavState
 from ros_tui.ui.widgets.base import button, clickable, column_width, edit_value, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
@@ -85,15 +86,7 @@ def publish_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
 
 def latest_panel(nav: NavState, entry: TopicEntry, area: Area) -> Panel:
     """LATEST MESSAGE: live, frozen while the cursor is inside it, or not echoing."""
-    panel = Panel(area.title, aside=echo_counts(entry))
-    if entry.echo is None:
-        panel.hint = hint('not echoing', ('space', 'starts'))
-    elif entry.frozen(nav):
-        panel.hint = Text.assemble(pill('❄ FROZEN', 'warn'), ' ',
-                                   (f'+{entry.new_since} new since', style('warn')), '  ',
-                                   hint(('esc', 'goes live'), ('enter', 'shows / hides a field')))
-    else:
-        panel.hint = Text.assemble(('● live', style('ok')), ' · ', hint(('enter', 'freezes it')))
+    panel = Panel(area.title, aside=echo_counts(entry), hint=_echo_hint(nav, entry))
     if entry.editor is None:
         panel.lines = waiting(entry.error)
         return panel
@@ -103,18 +96,30 @@ def latest_panel(nav: NavState, entry: TopicEntry, area: Area) -> Panel:
     for row in rows:
         shown = row.field not in entry.hidden
         line = Text.assemble('[x] ' if shown else '[ ] ', (row.field.ljust(width), style('syn-key')))
-        if not shown:
-            line.append('hidden', style('dim'))
-        elif entry.echo is None:
-            line.append('–', style('dim'))
-        elif row.value is None:
-            line.append('waiting — nobody publishes this yet' if nobody else 'waiting for the first message…',
-                        style('dim'))
-        else:
-            line.append_text(shown_value(row))
+        line.append_text(_echo_value(entry, row, nobody) if shown else Text('hidden', style('dim')))
         panel.lines.append(line)
     panel.cursor = nav.row_index(area) if rows else None
     return panel
+
+
+def _echo_hint(nav: NavState, entry: TopicEntry) -> Text:
+    """LATEST MESSAGE's title hint: not echoing, frozen (with how many came in since) or live."""
+    if entry.echo is None:
+        return hint('not echoing', ('space', 'starts'))
+    if entry.frozen(nav):
+        return Text.assemble(pill('❄ FROZEN', 'warn'), ' ', (f'+{entry.new_since} new since', style('warn')), '  ',
+                             hint(('esc', 'goes live'), ('enter', 'shows / hides a field')))
+    return Text.assemble(('● live', style('ok')), ' · ', hint(('enter', 'freezes it')))
+
+
+def _echo_value(entry: TopicEntry, row: Row, nobody: bool) -> Text:
+    """A shown field's value in LATEST MESSAGE: – while not echoing, why nothing came yet (`nobody`:
+    no publisher), else the value."""
+    if entry.echo is None:
+        return Text('–', style('dim'))
+    if row.value is None:
+        return Text('waiting — nobody publishes this yet' if nobody else 'waiting for the first message…', style('dim'))
+    return shown_value(row)
 
 
 def topic_panels(nav: NavState, entry: TopicEntry) -> list[Panel]:

@@ -78,24 +78,33 @@ def relock() -> None:
 
 
 def extract() -> None:
+    """Empty _vendor/ (but for our own files), then unpack every pinned wheel into it."""
     for path in VENDOR.iterdir():
         if path.name not in KEEP:
             shutil.rmtree(path) if path.is_dir() else path.unlink()
     for name, version, url, sha256 in read_lock():
-        with urllib.request.urlopen(url) as response:
-            data = response.read()
-        if hashlib.sha256(data).hexdigest() != sha256:
-            sys.exit(f'{name}=={version}: sha256 mismatch for {url}')
-        with zipfile.ZipFile(BytesIO(data)) as wheel:
-            for member in wheel.namelist():
-                top, _, rest = member.partition('/')
-                if top.endswith('.dist-info') and rest != 'METADATA' \
-                        and not LICENSE_FILE.search(rest):
-                    continue
-                if top.endswith('.data'):
-                    continue
+        with zipfile.ZipFile(BytesIO(download(name, version, url, sha256))) as wheel:
+            for member in filter(vendored, wheel.namelist()):
                 wheel.extract(member, VENDOR)
         print(f'vendored {name}=={version}')
+
+
+def download(name: str, version: str, url: str, sha256: str) -> bytes:
+    """The wheel at ``url``; exits when its hash is not the pinned one."""
+    with urllib.request.urlopen(url) as response:
+        data = response.read()
+    if hashlib.sha256(data).hexdigest() != sha256:
+        sys.exit(f'{name}=={version}: sha256 mismatch for {url}')
+    return data
+
+
+def vendored(member: str) -> bool:
+    """Whether a wheel's ``member`` is unpacked: the package itself, and of its ``*.dist-info`` only
+    METADATA and the license files; never ``*.data`` (scripts, headers)."""
+    top, _, rest = member.partition('/')
+    if top.endswith('.dist-info'):
+        return rest == 'METADATA' or bool(LICENSE_FILE.search(rest))
+    return not top.endswith('.data')
 
 
 def main() -> None:

@@ -127,34 +127,32 @@ def test_fixed_array_wrong_length_rejected_with_path():
     assert '36' in excinfo.value.detail
 
 
-def test_fixed_int_array_out_of_range_rejected():
-    # numpy.array() would silently wrap 300 into a uint8 on numpy < 2 — must be caught.
+@pytest.mark.parametrize(('field_name', 'item', 'detail'), [
+    ('int32_values', 'a', "expected an integer, got 'a'"),
+    ('int32_values', True, 'expected an integer, got True'),
+    ('int32_values', 1.5, 'expected an integer, got 1.5'),
+    ('uint8_values', -1, 'must be an integer in [0, 255], got -1'),
+    ('uint8_values', 300, 'must be an integer in [0, 255], got 300'),  # numpy < 2 would wrap it silently.
+    ('float32_values', 1e40, 'must be a float in [-3.4028234663852886e+38, 3.4028234663852886e+38], got 1e+40'),
+    ('float64_values', 'x', "could not convert string to float: 'x'"),
+])
+def test_numeric_array_element_rejected_with_reason(field_name, item, detail):
     arrays_class = import_type('msg', 'test_msgs/msg/Arrays')
     with pytest.raises(FieldError) as excinfo:
-        build_message(arrays_class, {'uint8_values': [300, 0, 0]})
-    assert excinfo.value.path == 'uint8_values[0]'
-    assert '[0, 255]' in excinfo.value.detail
+        build_message(arrays_class, {field_name: [0, item, 0]})
+    assert excinfo.value.path == f'{field_name}[1]'
+    assert excinfo.value.detail == detail
 
 
-def test_fixed_int_array_rejects_fractional_float():
+@pytest.mark.parametrize(('field_name', 'items', 'plain'), [
+    ('int32_values', [2.0, -1, 0], [2, -1, 0]),  # A whole float is an integer.
+    ('float64_values', [1, 2, 3], [1.0, 2.0, 3.0]),
+    ('float32_values', [float('inf'), 1, 0.5], [float('inf'), 1.0, 0.5]),  # Infinity is not out of range.
+])
+def test_numeric_array_elements_accepted(field_name, items, plain):
     arrays_class = import_type('msg', 'test_msgs/msg/Arrays')
-    with pytest.raises(FieldError) as excinfo:
-        build_message(arrays_class, {'int32_values': [1.5, 0, 0]})
-    assert excinfo.value.path == 'int32_values[0]'
-
-
-def test_fixed_float_array_accepts_ints():
-    arrays_class = import_type('msg', 'test_msgs/msg/Arrays')
-    message, _ = build_message(arrays_class, {'float64_values': [1, 2, 3]})
-    assert message_to_plain(message)['float64_values'] == [1.0, 2.0, 3.0]
-
-
-def test_fixed_float32_array_overflow_rejected():
-    arrays_class = import_type('msg', 'test_msgs/msg/Arrays')
-    with pytest.raises(FieldError) as excinfo:
-        build_message(arrays_class, {'float32_values': [1e40, 0.0, 0.0]})
-    assert excinfo.value.path == 'float32_values[0]'
-    assert 'float' in excinfo.value.detail
+    message, _ = build_message(arrays_class, {field_name: items})
+    assert message_to_plain(message)[field_name] == plain
 
 
 def test_bounded_sequence_overflow_rejected():

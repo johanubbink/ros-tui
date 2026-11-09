@@ -68,17 +68,24 @@ class HelperPopup(Overlay):
         if helper.choices:
             lines += [self.option(helper, index, width) for index in range(len(helper.choices))]
         else:
-            lines.append(Text(' ').join(Text(f' {mode.name} ', style('bright', 'cursor-on', bold=True)
-                                             if index == helper.mode else style('grey'))
-                                        for index, mode in enumerate(helper.modes())))
-            if helper.note():
-                lines.append(Text(helper.note(), style('dim')))
-            fields = helper.fields()
-            lines.append(Text('  ').join(self.field(helper, name, index == helper.cur) for index, name in
-                                         enumerate(fields)) if fields else Text('nothing to fill in', style('dim')))
+            lines += self.mode_lines(helper)
         result = helper.result()
         lines.append(Text(f'= {result.label}', style('ok')) if result else Text('= fix the values first', style('bad')))
         return lines + [rule(width), Text(helper.keys(), style('help-field'))]
+
+    @classmethod
+    def mode_lines(cls, helper: Helper) -> list[Text]:
+        """A helper with modes: the strip of modes (the one on lit), what the mode does, if it says,
+        and the mode's fields (the one being typed lit)."""
+        lines = [Text(' ').join(Text(f' {mode.name} ', style('bright', 'cursor-on', bold=True)
+                                     if index == helper.mode else style('grey'))
+                                for index, mode in enumerate(helper.modes()))]
+        if helper.note():
+            lines.append(Text(helper.note(), style('dim')))
+        fields = helper.fields()
+        lines.append(Text('  ').join(cls.field(helper, name, index == helper.cur) for index, name in
+                                     enumerate(fields)) if fields else Text('nothing to fill in', style('dim')))
+        return lines
 
     @staticmethod
     def option(helper: Helper, index: int, width: int) -> Text:

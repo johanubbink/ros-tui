@@ -754,7 +754,15 @@ class RosBridge:
                 listener(snapshot)
 
     def _tick_pending(self) -> None:
+        """Housekeeping, on the ROS thread: settle the waits for a server, the goals whose server
+        vanished and the requests past their response deadline."""
         now = time.monotonic()
+        self._settle_pending_ready(now)
+        self._watch_active_goals(now)
+        self._expire_awaiting_response(now)
+
+    def _settle_pending_ready(self, now: float) -> None:
+        """Dispatch each wait whose server appeared, fail the ones past their deadline, keep the rest."""
         still_pending = []
         for pending in self._entities.pending_ready:
             try:
@@ -769,8 +777,11 @@ class RosBridge:
                     pending.fail(error)
         self._entities.pending_ready = still_pending
 
-        # Watchdog: an action server dying mid-goal would otherwise leave the goal
-        # EXECUTING forever (its result future never completes) and block new sends.
+    def _watch_active_goals(self, now: float) -> None:
+        """End a goal whose action server has been gone for READY_TIMEOUT_S with an ERROR event.
+
+        An action server dying mid-goal would otherwise leave the goal EXECUTING forever (its
+        result future never completes) and block new sends."""
         for name, active in list(self._entities.active_goals.items()):
             if active.client.server_is_ready():
                 active.server_lost_since = None
@@ -788,19 +799,19 @@ class RosBridge:
                         )
                     )
 
+    def _expire_awaiting_response(self, now: float) -> None:
+        """Drop each request past its response deadline and fail its caller's future, if any."""
         still_awaiting = []
         for record in self._entities.awaiting_response:
-            if now >= record.deadline:
-                with contextlib.suppress(Exception):
-                    record.client.remove_pending_request(record.rclpy_future)
-                if record.outer is not None and not record.outer.done():
-                    record.outer.set_exception(
-                        TimeoutError(
-                            f'no response from {record.label} after {RESPONSE_TIMEOUT_S:.0f} s'
-                        )
-                    )
-            else:
+            if now < record.deadline:
                 still_awaiting.append(record)
+                continue
+            with contextlib.suppress(Exception):
+                record.client.remove_pending_request(record.rclpy_future)
+            if record.outer is not None and not record.outer.done():
+                record.outer.set_exception(
+                    TimeoutError(f'no response from {record.label} after {RESPONSE_TIMEOUT_S:.0f} s')
+                )
         self._entities.awaiting_response = still_awaiting
 
     def _apply_time_setters(self, time_setters: tuple[TimeSetter, ...]) -> None:
@@ -918,7 +929,7 @@ class RosBridge:
             with contextlib.suppress(Exception):
                 pending.fail(shutdown_error)
         for record in entities.awaiting_response:
-            if not record.outer.done():
+            if record.outer is not None and not record.outer.done():
                 record.outer.set_exception(shutdown_error)
         entities.pending_ready = []
         entities.awaiting_response = []

@@ -19,8 +19,8 @@ import functools
 
 import pytest
 from ros_tui.ros.message_yaml import build_message, import_type, message_structure, message_to_plain, request_class
-from ros_tui.ui.fields import (ARRAY, COMPACT, LEAF, MESSAGE, Element, FieldRows, array_info, default_value, parse,
-                               parse_path, path_text, short_type, summary)
+from ros_tui.ui.fields import (ARRAY, COMPACT, LEAF, MESSAGE, Element, FieldRows, array_info, coerce, default_value,
+                               parse, parse_path, path_text, short_type, summary)
 from test_message_yaml import ROUNDTRIP_TYPES
 
 
@@ -198,6 +198,23 @@ def test_parse_errors_name_the_field(label, text, message):
     with pytest.raises(ValueError) as error:
         parse(row, text)
     assert str(error.value) == message
+
+
+POINT = Element('p', 'geometry_msgs/Point', (Element('x', 'double'), Element('n', 'int64')))
+
+
+@pytest.mark.parametrize('node, value, want', [
+    (Element('a', 'double'), 5, 5.0),
+    (Element('a', 'float'), 2.5, 2.5),
+    (Element('a', 'double'), True, True),  # A bool is not a whole number here.
+    (Element('a', 'int64'), 5, 5),
+    (Element('a', 'double[3]'), [1, 2.5, 'x'], [1.0, 2.5, 'x']),
+    (Element('a', 'sequence<double>'), 'oops', 'oops'),  # Not a list: left for the send check.
+    (POINT, {'x': 1, 'n': 1, 'q': 2}, {'x': 1.0, 'n': 1, 'q': 2}),  # An unknown key is kept as typed.
+    (Element('a', 'sequence<geometry_msgs/Point>', POINT.children), [{'x': 3}], [{'x': 3.0}]),
+])
+def test_coerce_makes_whole_numbers_floats_where_sent_as_floats(node, value, want):
+    assert repr(coerce(node, value)) == repr(want)  # repr tells 5 from 5.0 and True from 1.
 
 
 def test_compact_rows_parse_flow_maps():

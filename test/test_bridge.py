@@ -17,6 +17,7 @@
 
 import threading
 import time
+from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +25,8 @@ from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, FIBONACCI_ACTION, INBO
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from ros_tui.ros.bridge import RosBridge, adapted_qos
+from ros_tui.constants import READY_TIMEOUT_S
+from ros_tui.ros.bridge import RosBridge, _ActiveGoal, _AwaitingResponse, _PendingReady, adapted_qos
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEventKind
 from std_msgs.msg import String
@@ -437,3 +439,83 @@ def test_call_then_marks_client_in_use_until_response(bridge):
     bridge.submit(future.fire).result(timeout=2.0)
     assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is False
     assert wait_for(lambda: bool(handled), timeout=2.0), 'handle was never invoked'
+
+
+def on_ros_thread(bridge, fn):
+    """Run `fn` on the bridge's ROS thread (the only one that may touch its entities)."""
+    return bridge.submit(fn).result(timeout=2.0)
+
+
+def test_housekeeping_dispatches_fails_or_keeps_each_wait_for_a_server(bridge):
+    seen = []
+
+    def pending(label, is_ready, deadline):
+        return _PendingReady(entity=object(), is_ready=is_ready, dispatch=lambda: seen.append((label, 'sent')),
+                             fail=lambda error: seen.append((label, str(error))), deadline=deadline, label=label)
+
+    def broken():
+        raise RuntimeError('graph gone')
+
+    now = time.monotonic()
+    waits = [pending('/ready', lambda: True, now + 60), pending('/late', lambda: False, now - 1),
+             pending('/broken', broken, now + 60), pending('/waiting', lambda: False, now + 60)]
+    on_ros_thread(bridge, lambda: bridge._entities.pending_ready.extend(waits))
+    on_ros_thread(bridge, bridge._tick_pending)
+    left = on_ros_thread(bridge, lambda: [wait.label for wait in bridge._entities.pending_ready])
+    on_ros_thread(bridge, lambda: bridge._entities.pending_ready.clear())
+    assert seen == [('/ready', 'sent'), ('/late', '/late not available (no server found)'),
+                    ('/broken', 'graph gone')]
+    assert left == ['/waiting']
+
+
+def test_housekeeping_ends_a_goal_whose_server_vanished(bridge):
+    events = []
+
+    def goal(server_up, lost_since=None):
+        return _ActiveGoal(handle=None, on_event=events.append,
+                           client=SimpleNamespace(server_is_ready=lambda: server_up), server_lost_since=lost_since)
+
+    now = time.monotonic()
+    gone, lost, back = goal(False, now - READY_TIMEOUT_S - 1), goal(False), goal(True, now)
+
+    def track():
+        bridge._entities.active_goals.update({'/gone': gone, '/lost': lost, '/back': back})
+        bridge._entities.inflight_actions.add('/gone')
+
+    on_ros_thread(bridge, track)
+    on_ros_thread(bridge, bridge._tick_pending)
+    goals = on_ros_thread(bridge, lambda: sorted(bridge._entities.active_goals))
+    inflight = on_ros_thread(bridge, lambda: set(bridge._entities.inflight_actions))
+    on_ros_thread(bridge, lambda: bridge._entities.active_goals.clear())
+    assert goals == ['/back', '/lost'] and '/gone' not in inflight
+    assert [(event.action_name, event.kind, event.payload) for event in events] == [
+        ('/gone', ActionEventKind.ERROR, 'action server vanished while the goal was executing')]
+    assert lost.server_lost_since is not None and back.server_lost_since is None
+
+
+def test_housekeeping_times_out_a_request_without_response(bridge):
+    dropped = []
+    client = SimpleNamespace(remove_pending_request=dropped.append)
+    now = time.monotonic()
+    late = _AwaitingResponse(client, 'late future', now - 1, '/slow', Future())
+    untracked = _AwaitingResponse(client, 'parameter future', now - 1, '/param')  # No caller future.
+    fine = _AwaitingResponse(client, 'fine future', now + 60, '/fine', Future())
+    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([late, untracked, fine]))
+    on_ros_thread(bridge, bridge._tick_pending)
+    left = on_ros_thread(bridge, lambda: list(bridge._entities.awaiting_response))
+    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.clear())
+    assert left == [fine] and dropped == ['late future', 'parameter future']
+    with pytest.raises(TimeoutError, match='no response from /slow after 30 s'):
+        late.outer.result(timeout=0)
+    assert not fine.outer.done()
+
+
+def test_shutdown_fails_every_request_still_awaiting_its_response(bridge):
+    client = SimpleNamespace(remove_pending_request=lambda future: None)
+    later = time.monotonic() + 60
+    untracked = _AwaitingResponse(client, 'parameter future', later, '/param')  # No caller future.
+    tracked = _AwaitingResponse(client, 'call future', later, '/call', Future())
+    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([untracked, tracked]))
+    bridge.shutdown()
+    with pytest.raises(RuntimeError, match='ROS bridge shut down'):
+        tracked.outer.result(timeout=2.0)

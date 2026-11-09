@@ -60,13 +60,16 @@ class ActivityStrip(NavView):
         head = spread(Text(title, style('feed-head')), Text(note, style('feed-head')), width, optional=True)
         if not nav.feedback.activity:
             return [head, Text(' nothing yet — what you send shows up here', style('dim'))]
-        rows = []
-        for line in nav.feedback.activity[:FEED_LINES]:
-            bad = line.cls == 'r'
-            fresh = nav.feedback.is_fresh(line)
-            row = Text.assemble(('▍' if fresh else ' ', style('bad' if bad else 'ok')), activity_row(line))
-            mine = nav.tab is None or (nav.tab.kind, nav.tab.name) == (line.kind, line.name)
-            if not mine:
-                row.stylize(style('dim'), 1)
-            rows.append(band(row, width, 'fresh-bad-bg' if bad else 'fresh-bg') if fresh else row)
-        return [head] + rows
+        return [head] + [self.feed_line(line, width) for line in nav.feedback.activity[:FEED_LINES]]
+
+    def feed_line(self, line: ActivityLine, width: int) -> Text:
+        """One activity line behind its bar cell: a fresh one on a band with a bar (red for a failure),
+        dimmed when it belongs to another tab than the open one."""
+        nav = self.nav
+        bad = line.cls == 'r'
+        fresh = nav.feedback.is_fresh(line)
+        row = Text.assemble(('▍' if fresh else ' ', style('bad' if bad else 'ok')), activity_row(line))
+        mine = nav.tab is None or (nav.tab.kind, nav.tab.name) == (line.kind, line.name)
+        if not mine:
+            row.stylize(style('dim'), 1)
+        return band(row, width, 'fresh-bad-bg' if bad else 'fresh-bg') if fresh else row
