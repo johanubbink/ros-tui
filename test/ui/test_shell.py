@@ -28,7 +28,7 @@ from ros_tui.ui.app import UiCall
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
 TEN_TABS = ['/chatter', '/counter', '/diagnostic_status', '/inbox', '/localisation_pose', '/goal_pose',
-            '/add_two_ints', '/set_pose', '/fibonacci', '/ros_tui_demo_servers']
+            '/add_two_ints', '/plan_to_pose', '/fibonacci', '/ros_tui_demo_servers']
 
 
 async def test_shell():

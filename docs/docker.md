@@ -28,7 +28,7 @@ kind something to do. Open each with `/` and its name, then `enter`:
 | ------- | ------------------------ | ----------------------------------------------------------- |
 | action  | `/fibonacci`             | `enter enter`, type `8`, `esc`, space sends the goal; watch the feedback, then `s` cancels it. |
 | service | `/add_two_ints`          | `enter enter 19 tab 23 esc`, then space → `sum: 42`.        |
-| service | `/set_pose`              | Call a `turtlesim/TeleportAbsolute`; the demo node logs the pose. |
+| service | `/plan_to_pose`          | A `nav_msgs/GetPlan`: unfold `goal` and set a position, then space; the response is a straight path from start to goal. |
 | topic   | `/chatter` (~1 Hz)       | Opens in Echo: space echoes a calm `std_msgs/String` stream; `enter` freezes it. |
 | topic   | `/counter` (~50 Hz)      | Echo it to watch the count, the Hz and the drops move.      |
 | topic   | `/localisation_pose`     | A nested message: echo it, or `e` to publish one with the Quaternion helper (`f`). |
@@ -41,8 +41,8 @@ kind something to do. Open each with `/` and its name, then `enter`:
 
 | File                                                     | What it does |
 | -------------------------------------------------------- | ------------ |
-| [`compose.yaml`](../compose.yaml)                        | The `ros_tui` service. Mounts the repo at `/ros_tui_ws/src/ros_tui` and runs the demo servers. |
-| [`docker/Dockerfile`](../docker/Dockerfile)              | `ros:jazzy-ros-base` plus colcon, the message packages the demo and tests need (turtlesim among them), and pytest. textual comes bundled with ros_tui. Adds a non-root user matching your UID/GID. |
+| [`compose.yaml`](../compose.yaml)                        | The `ros_tui` service and its image, `ros-tui-dev:<distro>-<uid>-<gid>`. Mounts the repo at `/ros_tui_ws/src/ros_tui` and runs the demo servers. |
+| [`docker/Dockerfile`](../docker/Dockerfile)              | `ros:jazzy-ros-base` plus the dependencies in `package.xml` (installed with rosdep, as CI does), flake8, and `rsvg-convert` with the JetBrains Mono font for the screenshot PNGs. textual comes bundled with ros_tui. Adds a non-root user matching your UID/GID, with sudo. |
 | [`docker/entrypoint.sh`](../docker/entrypoint.sh)        | Sources ROS, runs `colcon build --symlink-install`, sources the overlay, then runs the command. |
 | [`docker/create_dot_env`](../docker/create_dot_env)      | Writes `.env` with `USER_ID`, `GROUP_ID` and `ROS_DISTRO`. |
 | [`docker/run_tests.sh`](../docker/run_tests.sh)          | Runs pytest in the container (see [testing.md](testing.md)). |
@@ -52,10 +52,17 @@ Notes:
 - **Edits show up without a rebuild.** The source is bind-mounted and built
   with `--symlink-install`, so a change under `ros_tui/` is picked up the next
   time you start a process. Rebuild (`docker compose up --build`) only after
-  changing `package.xml`, `setup.py` or the Dockerfile.
+  changing `package.xml` or the Dockerfile.
+- **One image per distro.** The image is `ros-tui-dev:<distro>-<uid>-<gid>`
+  (for example `ros-tui-dev:jazzy-1000-1000`), whatever folder you run Compose
+  from, so every clone and git worktree with the same `.env` uses the same
+  image; each still mounts its own source. Containers stay per folder, so two
+  worktrees can run at the same time.
 - **Why `create_dot_env`?** The container user gets your UID/GID, so files it
   writes into the mounted repo (caches, the GIF) belong to you. Without `.env`,
-  Compose uses `1000:1000`.
+  Compose uses `1000:1000`. The UID/GID is baked into the image and part of
+  its tag, so give a new clone or worktree your `.env` (copy it, or run
+  `create_dot_env` there) to share your image.
 - **Another distro.** Set `ROS_DISTRO` in `.env` (or the environment) to build
   on a different `ros:<distro>-ros-base` image. CI tests Jazzy, Lyrical and
   Rolling.

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The action entry over the live demo world, plus /turtle1/rotate_absolute (rotate_demo()).
+"""The action entry over the live demo world, plus /nested (nested_demo()).
 
 /fibonacci: edit the order, space sends the goal (EXECUTING, the feedback sequence growing as the
 clock moves, the ◐◓◑◒ spinner in the tab, the top bar and the Here column), a second goal is blocked
@@ -26,17 +26,17 @@ action its header says so.
 from dataclasses import replace
 
 import pytest
-from harness.fake_bridge import ROTATE_ACTION, rotate_demo
+from harness.fake_bridge import NESTED_ACTION, nested_demo
 from harness.screens import ui_session
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
 
 FIB = '/fibonacci'
-ROTATE = ROTATE_ACTION.name
+NESTED = NESTED_ACTION.name
 
 
 async def test_action_entry():
-    async with ui_session(bridge=rotate_demo()) as s:
+    async with ui_session(bridge=nested_demo()) as s:
         await s.keys('slash', *'fib', 'enter')
         assert s.state()['path'] == ['tabs', FIB]
         for expected in ('▷ ACTION', 'example_interfaces/action/Fibonacci', '▶ Send goal space', '■ Cancel goal s',
@@ -70,18 +70,18 @@ async def test_action_entry():
         await s.shot('home-running', expect='the ☰ list: the /fibonacci row says "◓ running open" in its Here column, '
                      'and the top bar still shows "▷ ◓ /fibonacci"')
 
-        await s.keys('slash', *'rotate', 'enter', 'space')
-        assert s.state()['tabs'] == [FIB, ROTATE]
+        await s.keys('slash', *'nested', 'enter', 'space')
+        assert s.state()['tabs'] == [FIB, NESTED]
         assert s.line_with('✗ a goal is already running on /fibonacci') and '— s cancels it' not in s.text()
         assert s.line_with('▶ Send goal space', 'a goal is running on /fibonacci', '■ Cancel goal s')
-        assert s.line_with('▷ /turtle1/rotate_abso', '✗ a goal is already running on /fibonacci')  # ACTIVITY.
-        await s.shot('action-blocked', expect='on /turtle1/rotate_absolute space sent nothing: "▶ Send goal space" is '
+        assert s.line_with('▷ /nested', '✗ a goal is already running on /fibonacci')  # ACTIVITY.
+        await s.shot('action-blocked', expect='on /nested space sent nothing: "▶ Send goal space" is '
                      'dim, "a goal is running on /fibonacci" follows it, the Cancel button is dim too; the GOAL panel '
                      'ends with the red errline "✗ a goal is already running on /fibonacci", and ACTIVITY has the same '
-                     'line in red; theta: 0.0 in GOAL')
+                     'line in red; GOAL shows nested_field_no_pkg unfolded and nested_field {…} folded')
         await s.keys('u')
         assert s.state()['toast'] == ['nothing to undo here', 'info']
-        await s.shot('undo-nothing', expect='u on the rotate tab, which has no change of its own: the blue toast '
+        await s.shot('undo-nothing', expect='u on the /nested tab, which has no change of its own: the blue toast '
                      '"nothing to undo here", bottom right; nothing else changed')
 
         await s.keys('1', 'space')
@@ -117,12 +117,12 @@ async def test_action_entry():
         del s.bridge.failing_actions[FIB]
         await s.keys('space', 'x')
         await s.advance(0.3)
-        assert s.state()['tabs'] == [ROTATE]
+        assert s.state()['tabs'] == [NESTED]
         assert s.line_with('ros_tui', '▷ ◓ /fibonacci')
-        await s.shot('closed-still-running', expect='/fibonacci closed with its goal running: only the rotate tab is '
+        await s.shot('closed-still-running', expect='/fibonacci closed with its goal running: only the /nested tab is '
                      'left, but the top bar still shows "▷ ◓ /fibonacci" in cyan')
         await s.keys('u')
-        assert s.state()['tabs'] == [FIB, ROTATE] and s.state()['active'] == 0
+        assert s.state()['tabs'] == [FIB, NESTED] and s.state()['active'] == 0
         assert s.line_with('EXECUTING')
 
         await s.advance(3.6)
@@ -135,7 +135,7 @@ async def test_action_entry():
 
 
 async def test_action_gone_from_the_graph():
-    bridge = rotate_demo()
+    bridge = nested_demo()
     graph = bridge.latest_graph
     async with ui_session(bridge=bridge) as s:
         await s.keys('slash', *'fib', 'enter')

@@ -20,8 +20,10 @@ run, style issues are listed), then pytest with `ROS_TUI_SHOTS=1` and any
 arguments you give it. At the end it prints the artifact folder and the
 `manifest.md` of every test that wrote shots. Its exit status is pytest's.
 
-If the image is older than `docker/Dockerfile`, rebuild it with
-`docker compose build`. PNGs need `librsvg2-bin` and `fonts-jetbrains-mono`;
+If the image is older than `docker/Dockerfile` or `package.xml`, rebuild it
+with `docker compose build`; every clone and worktree with the same `.env`
+shares the one image (`ros-tui-dev:<distro>-<uid>-<gid>`). PNGs need
+`librsvg2-bin` and `fonts-jetbrains-mono`;
 without `rsvg-convert` the shots are still written as SVG, TXT and JSON, with a
 warning.
 
@@ -87,13 +89,13 @@ without rclpy. It records every call.
 - `FakeBridge()` is canned: nothing happens on its own; node requests answer at
   once and a test sends action events by hand.
 - `FakeBridge.demo()` is live over `DEMO_GRAPH`, the world of
-  `docker/demo_servers.py`: six topics, `/add_two_ints`, `/set_pose`,
+  `docker/demo_servers.py`: six topics, `/add_two_ints`, `/plan_to_pose`,
   `/fibonacci`, and the nodes `/ros_tui_demo_servers` and `/talker`.
   - Services and node requests answer 0.05 s after the call. Names in
     `bridge.failing_services`, `bridge.rejected_params` or
     `bridge.failing_actions` fail with the given reason.
   - Actions are accepted, send feedback every 0.3 s, then succeed; a cancel
-    gives a `CANCELED` result. `rotate_demo()` adds a second action.
+    gives a `CANCELED` result. `nested_demo()` adds a second action.
   - Echoes get messages at each topic's rate (/chatter 1 Hz, /counter 50 Hz, …),
     and what the UI publishes loops back into an echo on that topic.
   - Everything runs on `bridge.clock`, and `time_of_day()` is 09:41:00 plus the

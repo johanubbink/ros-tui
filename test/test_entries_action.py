@@ -15,13 +15,13 @@
 
 """The action entry (ros_tui/ui/entries/action.py), without textual.
 
-The nav model runs over the live demo world (FakeBridge.demo(), plus /turtle1/rotate_absolute from
-rotate_demo() for a second action). Time only moves in `advance`, which ticks the model every 0.1 s
+The nav model runs over the live demo world (FakeBridge.demo(), plus /nested from
+nested_demo() for a second action). Time only moves in `advance`, which ticks the model every 0.1 s
 as the app does; /fibonacci sends a feedback every 0.3 s (order N: N-1 of them), then its result.
 """
 
 import pytest
-from harness.fake_bridge import ROTATE_ACTION, FakeBridge, rotate_demo
+from harness.fake_bridge import NESTED_ACTION, FakeBridge, nested_demo
 from harness.live_world import advance, live_nav, press
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ui.entries.action import CANCELED, EXECUTING, FAILED, REJECTED, SENDING, SUCCEEDED, spinner
@@ -29,9 +29,9 @@ from ros_tui.ui.fields import flat_text
 from ros_tui.ui.nav import AREA, Running, Tab
 
 FIB = Tab('actions', '/fibonacci')
-ROTATE = Tab('actions', ROTATE_ACTION.name)
+NESTED = Tab('actions', NESTED_ACTION.name)
 OPEN_FIB = ['/', *'fib', 'enter']
-OPEN_ROTATE = ['/', *'rotate', 'enter']
+OPEN_NESTED = ['/', *'nested', 'enter']
 
 
 def order(n: int) -> list[str]:
@@ -126,20 +126,24 @@ def test_one_goal_at_a_time_on_the_same_action():
 
 
 def test_one_goal_at_a_time_across_actions():
-    nav, bridge = live_nav(*OPEN_FIB, *order(12), 'space', *OPEN_ROTATE, 'space', bridge=rotate_demo())
-    assert nav.tab == ROTATE and len(bridge.sent_goals) == 1
-    assert nav.feedback.errline(ROTATE) == 'a goal is already running on /fibonacci'
+    nav, bridge = live_nav(*OPEN_FIB, *order(12), 'space', *OPEN_NESTED, 'space', bridge=nested_demo())
+    assert nav.tab == NESTED and len(bridge.sent_goals) == 1
+    assert nav.feedback.errline(NESTED) == 'a goal is already running on /fibonacci'
     press(nav, 's')  # s only cancels the goal of its own tab.
     assert nav.feedback.log[0] == ('s', 'nothing running here — the goal runs on /fibonacci') and bridge.cancelled == []
     press(nav, '1', 's', '2', 'space')
-    assert [name for name, _, _ in bridge.sent_goals] == ['/fibonacci', ROTATE_ACTION.name]
+    assert [name for name, _, _ in bridge.sent_goals] == ['/fibonacci', NESTED_ACTION.name]
 
 
 def test_feedback_floats_show_readable():
-    nav, bridge = live_nav(*OPEN_ROTATE, 'enter', 'enter', *'1.5707963', 'escape', 'space', bridge=rotate_demo())
+    float32_row = ['j', 'j', 'j', 'enter', 'j', 'j', 'j', 'j']  # Unfold nested_field, down to float32_value.
+    nav, bridge = live_nav(*OPEN_NESTED, 'enter', *float32_row, 'enter', *'1.5707963', 'escape', 'space',
+                           bridge=nested_demo())
     advance(nav, bridge, 0.3)
-    assert shown(nav, ROTATE) == ('feedback', {'remaining': '1.25664'})
-    assert goal(nav, ROTATE).feedback.display['remaining'] == pytest.approx(1.2566370964050293)  # Kept exact.
+    what, values = shown(nav, NESTED)
+    assert (what, values['nested_field.float32_value']) == ('feedback', '1.25664')
+    remaining = goal(nav, NESTED).feedback.display['nested_field']['float32_value']
+    assert remaining == pytest.approx(1.2566370964050293)  # Kept exact.
 
 
 @pytest.mark.parametrize('failure, state, line', [

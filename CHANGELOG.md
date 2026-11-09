@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **The Docker playground image is `ros-tui-dev:<distro>-<uid>-<gid>`**, one
+  per ROS distro and user, shared by every clone and worktree of the repo. It
+  installs the dependencies in `package.xml` with rosdep, as CI does, so it is
+  smaller and builds faster. turtlesim is no longer needed: the demo servers' second
+  service is `/plan_to_pose` (`nav_msgs/srv/GetPlan`).
+
 ## [0.2.0] - 2026-10-08
 
 A new keyboard-first UI: one list of everything, a tab per entry, and layers

@@ -22,14 +22,15 @@ advances it, and without a `post` or `work` the entry applies answers and loads 
 from dataclasses import replace
 
 import pytest
-from harness.fake_bridge import CAMERA_INFO_SERVICE, DEMO_GRAPH, SERVICE_DELAY_S, FakeBridge, camera_demo
+from harness.fake_bridge import (CAMERA_INFO_SERVICE, DEMO_GRAPH, RESET_SERVICE, SERVICE_DELAY_S, FakeBridge,
+                                 camera_demo, reset_demo)
 from harness.live_world import live_nav, press
 from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ui.fields import FieldRows
 from ros_tui.ui.nav import AREA, EDIT, IN, Tab
 
 ADD = Tab('services', '/add_two_ints')
-POSE = Tab('services', '/set_pose')
+PLAN = Tab('services', '/plan_to_pose')
 CAMERA = Tab('services', CAMERA_INFO_SERVICE.name)
 OPEN_ADD = ['/', *'add', 'enter']
 EDIT_A = OPEN_ADD + ['enter', 'enter']  # Into REQUEST, then edit a.
@@ -143,13 +144,19 @@ def test_a_failed_call():
     assert nav.feedback.activity[0].cls == 'r'
 
 
-def test_teleport_absolute_has_an_empty_response():
-    nav, bridge = live_nav('/', *'set_pose', 'enter', 'enter', 'enter', '5', 'escape')
-    assert nav.tab == POSE and fields(data(nav, POSE).editor) == [('x', '5.0'), ('y', '0.0'), ('theta', '0.0')]
+def test_nested_request_and_response():
+    nav, bridge = live_nav('/', *'plan', 'enter', 'enter', 'j', 'j', 'enter', *'0.5', 'escape')
+    assert nav.tab == PLAN and fields(data(nav, PLAN).editor) == [('start', '{…}'), ('goal', '{…}'), ('tolerance', '0.5')]
     press(nav, 'space')
     bridge.clock.advance(SERVICE_DELAY_S)
-    assert bridge.service_calls[0][2].x == 5.0
-    assert data(nav, POSE).response.rows() == []
+    assert bridge.service_calls[0][2].tolerance == 0.5
+    assert fields(data(nav, PLAN).response)[2] == ('plan.poses', '[3 items]')
+
+
+def test_a_response_without_fields_shows_no_rows():
+    nav, bridge = live_nav('/', *'reset', 'enter', 'space', bridge=reset_demo())
+    bridge.clock.advance(SERVICE_DELAY_S)
+    assert data(nav, Tab('services', RESET_SERVICE.name)).response.rows() == []
     assert nav.feedback.activity[0].text == '✓ response (50.0 ms)'
 
 
@@ -191,7 +198,7 @@ def test_undo_only_in_this_tab():
 
 
 def test_edits_stay_with_their_entry():
-    nav, _ = live_nav(*EDIT_A, '4', 'escape', '/', *'set_pose', 'enter', '1')
+    nav, _ = live_nav(*EDIT_A, '4', 'escape', '/', *'plan', 'enter', '1')
     assert nav.tab == ADD and fields(data(nav).editor)[0] == ('a', '4')
 
 

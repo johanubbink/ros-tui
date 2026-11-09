@@ -43,7 +43,7 @@ def test_builtin_services_are_filtered():
     assert is_builtin_service(('rcl_interfaces/srv/SetParametersAtomically',))
     assert is_builtin_service(('type_description_interfaces/srv/GetTypeDescription',))
     assert not is_builtin_service(('std_srvs/srv/Trigger',))
-    assert not is_builtin_service(('turtlesim/srv/Spawn',))
+    assert not is_builtin_service(('nav_msgs/srv/GetPlan',))
     assert not is_builtin_service(())
 
 

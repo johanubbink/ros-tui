@@ -3,38 +3,34 @@
 # Headless (no X11) — built by compose.yaml at the repo root; see docs/docker.md.
 ARG ROS_DISTRO=jazzy
 FROM ros:${ROS_DISTRO}-ros-base
+ARG ROS_DISTRO
 
 # ---- Dependencies -----------------------------------------------------------
-# colcon + build tooling, the message packages the demo node needs, and the test
-# deps so `colcon test` / pytest also work in here. textual comes bundled with
-# ros_tui (ros_tui/_vendor), so there is no pip step.
-# librsvg2-bin + fonts-jetbrains-mono: the agent harness (scripts/agent_check.sh) turns
-# screenshot SVGs into PNGs with rsvg-convert, in the design's monospace font.
-#
-# `apt-get upgrade` first: the ros:${ROS_DISTRO}-ros-base layer is rebuilt less
-# often than the ROS apt repo updates, so freshly installing packages like
-# example_interfaces on top of it can pull a newer build than the fastcdr/rmw
-# already baked in. The ABI then mismatches and FastDDS serialization aborts
-# with an undefined-symbol error (e.g. the /fibonacci action or any action send).
-# Upgrading realigns the whole ROS stack so a build is reproducible whenever it runs.
-RUN apt-get update \
+# package.xml is the one list of ROS and Python dependencies: rosdep installs them, as CI does.
+# Only package.xml is copied in, so this layer is rebuilt only when it changes. The base image
+# already has colcon and rosdep. textual comes bundled with ros_tui (ros_tui/_vendor), so there
+# is no pip step.
+# Outside rosdep, as in CI: flake8 for scripts/agent_check.sh, and librsvg2-bin +
+# fonts-jetbrains-mono, with which the harness turns screenshot SVGs into PNGs in the design's
+# monospace font. sudo lets the playground user install extra tools (docs/testing.md: ffmpeg).
+# The apt cache mounts (one per distro) keep downloaded packages between builds, so a rebuild
+# after a package.xml change only fetches what is new.
+# `apt-get upgrade` first: a local ros:<distro>-ros-base can be older than the ROS apt repo, and a
+# package installed fresh on top of it (example_interfaces, say) may be built against a newer
+# fastcdr/rmw than the one in the base. FastDDS then aborts on an undefined symbol (e.g. on an
+# action send). Upgrading aligns the whole ROS stack; when the base is current it changes nothing.
+COPY package.xml /tmp/ros_tui_deps/ros_tui/package.xml
+RUN --mount=type=cache,id=ros-tui-apt-${ROS_DISTRO},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=ros-tui-apt-lists-${ROS_DISTRO},target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && rosdep update --rosdistro "${ROS_DISTRO}" \
+    && DEBIAN_FRONTEND=noninteractive rosdep install --from-paths /tmp/ros_tui_deps --ignore-src -y \
+        --rosdistro "${ROS_DISTRO}" \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ros-dev-tools \
-        ros-${ROS_DISTRO}-example-interfaces \
-        ros-${ROS_DISTRO}-rosidl-runtime-py \
-        ros-${ROS_DISTRO}-domain-coordinator \
-        ros-${ROS_DISTRO}-test-msgs \
-        ros-${ROS_DISTRO}-turtlesim \
-        python3-numpy \
-        python3-yaml \
-        python3-pytest \
-        python3-pytest-asyncio \
-        python3-flake8 \
-        librsvg2-bin \
-        fonts-jetbrains-mono \
-        sudo vim less \
-    && rm -rf /var/lib/apt/lists/*
+        python3-flake8 librsvg2-bin fonts-jetbrains-mono sudo \
+    && rm -rf /tmp/ros_tui_deps /root/.ros
 
 # ---- Non-root user, mapped to the host UID/GID ------------------------------
 # Files written to the bind-mounted source then belong to the host user.
