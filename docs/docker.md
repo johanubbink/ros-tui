@@ -42,8 +42,8 @@ kind something to do. Open each with `/` and its name, then `enter`:
 | File                                                     | What it does |
 | -------------------------------------------------------- | ------------ |
 | [`compose.yaml`](../compose.yaml)                        | The `ros_tui` service. Mounts the repo at `/ros_tui_ws/src/ros_tui` and runs the demo servers. |
-| [`docker/Dockerfile`](../docker/Dockerfile)              | `ros:jazzy-ros-base` plus colcon, the message packages the demo and tests need (turtlesim among them), and pytest. textual comes bundled with ros_tui. Adds a non-root user matching your UID/GID. |
-| [`docker/entrypoint.sh`](../docker/entrypoint.sh)        | Sources ROS, runs `colcon build --symlink-install`, sources the overlay, then runs the command. |
+| [`docker/Dockerfile`](../docker/Dockerfile)              | `ros:jazzy-ros-base` plus colcon, the message packages the demo and tests need (turtlesim among them), and pytest (no textual: ros_tui bundles its own). Adds a non-root user matching your UID/GID. |
+| [`docker/entrypoint.sh`](../docker/entrypoint.sh)        | Sources ROS, unpacks the bundled textual into the mounted `ros_tui/_vendor/` when it is missing or older than its lock (`scripts/vendor.py --if-stale`, which needs network), runs `colcon build --symlink-install`, sources the overlay, then runs the command. |
 | [`docker/create_dot_env`](../docker/create_dot_env)      | Writes `.env` with `USER_ID`, `GROUP_ID` and `ROS_DISTRO`. |
 | [`docker/run_tests.sh`](../docker/run_tests.sh)          | Runs pytest in the container (see [testing.md](testing.md)). |
 
@@ -52,7 +52,9 @@ Notes:
 - **Edits show up without a rebuild.** The source is bind-mounted and built
   with `--symlink-install`, so a change under `ros_tui/` is picked up the next
   time you start a process. Rebuild (`docker compose up --build`) only after
-  changing `package.xml`, `setup.py` or the Dockerfile.
+  changing `package.xml`, `setup.py` or the Dockerfile. A changed
+  `ros_tui/_vendor/requirements.txt` needs only a new container: the
+  entrypoint unpacks the new pins.
 - **Why `create_dot_env`?** The container user gets your UID/GID, so files it
   writes into the mounted repo (caches, the GIF) belong to you. Without `.env`,
   Compose uses `1000:1000`.

@@ -6,8 +6,9 @@ FROM ros:${ROS_DISTRO}-ros-base
 
 # ---- Dependencies -----------------------------------------------------------
 # colcon + build tooling, the message packages the demo node needs, and the test
-# deps so `colcon test` / pytest also work in here. textual comes bundled with
-# ros_tui (ros_tui/_vendor), so there is no pip step.
+# deps so `colcon test` / pytest also work in here. textual is not installed here:
+# the entrypoint unpacks ros_tui's bundled copy (scripts/vendor.py, no pip) into the
+# mounted source.
 # librsvg2-bin + fonts-jetbrains-mono: the agent harness (scripts/agent_check.sh) turns
 # screenshot SVGs into PNGs with rsvg-convert, in the design's monospace font.
 #
