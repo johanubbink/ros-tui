@@ -107,8 +107,8 @@ without rclpy. It records every call.
 
 ## Artifacts
 
-With `ROS_TUI_SHOTS=1`, shots land in `test/artifacts/` (git-ignored; uploaded
-as the `ui-screenshots` build artifact on pull requests), one folder per test,
+With `ROS_TUI_SHOTS=1`, shots land in `test/artifacts/` (git-ignored; CI doesn't
+write them), one folder per test,
 wiped when the test starts:
 
 ```
