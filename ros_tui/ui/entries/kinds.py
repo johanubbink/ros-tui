@@ -19,8 +19,9 @@ Bridge results reach an entry through `post`, which runs a function on the UI th
 imports run through `work`, in a worker thread (see `RosTuiApp`).
 """
 
-from typing import Any, Callable
+from typing import Callable
 
+from ros_tui.ros.contract import Bridge
 from ros_tui.ui.entries.action import ActionEntry
 from ros_tui.ui.entries.base import Context, Entry, Post, Tab, Work
 from ros_tui.ui.entries.node import NodeEntry
@@ -31,7 +32,7 @@ KINDS: dict[str, type[Entry]] = {
     'topics': TopicEntry, 'services': ServiceEntry, 'actions': ActionEntry, 'nodes': NodeEntry}
 
 
-def entry_factory(bridge: Any, post: Post | None = None, work: Work | None = None) -> Callable[[Tab], Entry]:
+def entry_factory(bridge: Bridge, post: Post | None = None, work: Work | None = None) -> Callable[[Tab], Entry]:
     """NavState's `new_entry` in the app: each tab's entry of its kind, all over one `Context`."""
     ctx = Context(bridge, post, work)
     return lambda tab: KINDS.get(tab.kind, Entry)(tab, ctx)

@@ -434,9 +434,12 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
   canonical name. No per-widget bindings, no focus-dependent behaviour.
 - **The keymap is the single source of truth** for dispatch, footer labels,
   `?`, the `g…` popup and docs/usage.md.
-- **The bridge is the only rclpy boundary.** The UI only calls `RosBridge`;
-  `ros_tui/ros/` never imports textual. `FakeBridge`
-  (`test/harness/fake_bridge.py`) must keep up with every bridge method.
+- **The bridge is the only rclpy boundary.** The UI only calls the `Bridge`
+  contract ([`ros/contract.py`](../ros_tui/ros/contract.py): every member, how
+  it answers and on which thread); `ros_tui/ros/` never imports textual.
+  `RosBridge` and `FakeBridge` (`test/harness/fake_bridge.py`) both implement
+  it, and `test/test_contract.py` checks that their parameters match and that
+  the UI calls nothing else on a bridge.
 - **Validation lives in one place**: `build_message` (`message_yaml.py`)
   reports `FieldError`s with the path; the UI maps the path to a row. Typed
   scalars, field rows and node parameters alike, go through
@@ -472,7 +475,7 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
       through the bridge and `post`. Register it in `entries/kinds.py`.
 - [ ] An `EntryView` in `entry_body.VIEWS`.
 - [ ] Keymap rows for its verbs, with labels; enter and esc labels per area.
-- [ ] Bridge calls in `RosBridge` and `FakeBridge`; the kind in `DEMO_GRAPH`
+- [ ] Bridge calls in `contract.py`, `RosBridge` and `FakeBridge`; the kind in `DEMO_GRAPH`
       and the demo servers.
 - [ ] A running marker, if it has one.
 - [ ] Unit tests (`test/test_entries_<kind>.py`) and a scenario test with shots.

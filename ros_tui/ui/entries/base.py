@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 if TYPE_CHECKING:
+    from ros_tui.ros.contract import Bridge
     from ros_tui.ui.nav import NavState
 
 Post = Callable[[Callable[[], None]], None]
@@ -96,14 +97,15 @@ class Running(NamedTuple):
 
 
 class Context:
-    """What the entries share: the bridge (a RosBridge or FakeBridge), `post` and `work`, and objects
-    shared by every entry of a kind (`single`). The bridge answers on its own thread; an entry wraps
-    every answer in `post(fn)`, which runs `fn` on the UI thread. Slow work that isn't a bridge call
-    (importing an interface type) goes to `work(fn)`, which runs `fn` in a worker thread; `fn` posts
-    its result too. Without a `post` or `work` (unit tests over a bridge that answers in place) `fn`
-    runs straight away."""
+    """What the entries share: the bridge (ros/contract.py says how it answers), `post` and `work`,
+    and objects shared by every entry of a kind (`single`). The bridge answers on its own thread; an
+    entry wraps every answer in `post(fn)`, which runs `fn` on the UI thread. Slow work that isn't a
+    bridge call (importing an interface type) goes to `work(fn)`, which runs `fn` in a worker
+    thread; `fn` posts its result too. Without a `post` or `work` (unit tests over a bridge that
+    answers in place) `fn` runs straight away. Without a bridge (an entry built with no Context)
+    the entry must not call it."""
 
-    def __init__(self, bridge: Any = None, post: Post | None = None, work: Work | None = None):
+    def __init__(self, bridge: 'Bridge | None' = None, post: Post | None = None, work: Work | None = None):
         self.bridge = bridge
         self.post = post or (lambda fn: fn())
         self.work = work or (lambda fn: fn())
