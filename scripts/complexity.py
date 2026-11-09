@@ -16,6 +16,7 @@
 """Cognitive complexity of ros_tui's own Python (complexipy), as a hotspot list or a ratchet.
 
     scripts/complexity.py              # list every function over the limit
+    scripts/complexity.py FILE...      # the same for these files; fails if any is over
     scripts/complexity.py --diff main  # fail on a changed function over the limit that is new
                                        # or got more complex than at the merge base with main
 
@@ -89,13 +90,14 @@ def over(table):
     return {key: score for key, score in table.items() if score > LIMIT}
 
 
-def hotspots():
-    paths = [p for p in git('ls-files').split() if measured(p)]
+def hotspots(files):
+    """List the functions over the limit, in files or else the whole repo; with files, any fails."""
+    paths = [p for p in (files or git('ls-files').split()) if measured(p)]
     found = sorted(over(scores(paths, ROOT)).items(), key=lambda kv: -kv[1])
     print(f'Cognitive complexity over {LIMIT}: {len(found)} function(s)')
     for (path, name), score in found:
         print(f'  {score:3d}  {path}  {name}')
-    return True
+    return not (files and found)
 
 
 def ratchet(ref):
@@ -119,10 +121,11 @@ def ratchet(ref):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('files', nargs='*', help='repo-relative files to measure (default: all)')
     parser.add_argument('--diff', metavar='REF',
                         help='gate the functions changed since the merge base with REF')
     args = parser.parse_args()
-    ok = ratchet(args.diff) if args.diff else hotspots()
+    ok = ratchet(args.diff) if args.diff else hotspots(args.files)
     return 0 if ok else 1
 
 

@@ -134,6 +134,7 @@ are not measured). It runs on the host and needs complexipy on `PATH`, or `uv`.
 
 ```bash
 scripts/complexity.py              # every function over the limit (15): refactor candidates
+scripts/complexity.py FILE...      # the same for these files; fails if any is over
 scripts/complexity.py --diff main  # fail if a changed function is over 15 and new or worse
 ```
 
@@ -157,3 +158,11 @@ a change in two passes:
 
 Plan the change first, give `implementer` the whole plan, check its result,
 then give `reviewer` the branch and what the implementer reported.
+
+A hook in [`.claude/settings.json`](../.claude/settings.json) lints every
+Python file Claude edits
+([`lint_edited.py`](../.claude/hooks/lint_edited.py)): flake8 with CI's
+settings, minus C901, and `scripts/complexity.py` on the file. Findings go
+straight back to Claude, so they are fixed while it works rather than in
+review. It needs flake8 or `uv` on the host; without either it only checks
+complexity.
