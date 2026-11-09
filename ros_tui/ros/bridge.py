@@ -929,7 +929,7 @@ class RosBridge:
             with contextlib.suppress(Exception):
                 pending.fail(shutdown_error)
         for record in entities.awaiting_response:
-            if not record.outer.done():
+            if record.outer is not None and not record.outer.done():
                 record.outer.set_exception(shutdown_error)
         entities.pending_ready = []
         entities.awaiting_response = []

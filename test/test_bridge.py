@@ -506,3 +506,14 @@ def test_housekeeping_times_out_a_request_without_response(bridge):
     with pytest.raises(TimeoutError, match='no response from /slow after 30 s'):
         late.outer.result(timeout=0)
     assert not fine.outer.done()
+
+
+def test_shutdown_fails_every_request_still_awaiting_its_response(bridge):
+    client = SimpleNamespace(remove_pending_request=lambda future: None)
+    later = time.monotonic() + 60
+    untracked = _AwaitingResponse(client, 'parameter future', later, '/param')  # No caller future.
+    tracked = _AwaitingResponse(client, 'call future', later, '/call', Future())
+    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([untracked, tracked]))
+    bridge.shutdown()
+    with pytest.raises(RuntimeError, match='ROS bridge shut down'):
+        tracked.outer.result(timeout=2.0)
