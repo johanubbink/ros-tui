@@ -41,6 +41,10 @@ The code:
   - [`graph.py`](../ros_tui/ros/graph.py): immutable `GraphSnapshot`s of the
     topics, services, actions and nodes, and `NodeInfo` (a node's endpoints,
     like `ros2 node info`).
+  - [`parameters.py`](../ros_tui/ros/parameters.py): `Param`, the parameter
+    type labels, and the `ParameterValue` a value is read from or sent as, by
+    the type the parameter was declared with. Imports rcl_interfaces only to
+    read or build one.
   - [`message_yaml.py`](../ros_tui/ros/message_yaml.py): loading interface
     types, the structure of a message, and checked plain data ↔ message
     conversion ([Messages](#messages)).
@@ -106,8 +110,9 @@ Results come back in one of two ways:
 `wait_for_service`. A request whose server isn't up yet is parked, and a
 **housekeeping timer** (4 Hz) checks parked requests and in-flight calls: a
 server must appear within 5 s, and a response must arrive within 30 s, or the
-request fails with a timeout. A goal whose action server is gone for 5 s ends
-with an error. `Inflight` ([`inflight.py`](../ros_tui/ros/inflight.py)) keeps
+request fails with a timeout. That holds for a service call and for each call
+of a node's parameter request alike, and shutdown fails both the same way. A
+goal whose action server is gone for 5 s ends with an error. `Inflight` ([`inflight.py`](../ros_tui/ros/inflight.py)) keeps
 these records and decides each of these outcomes; `RosBridge` tells it what
 was sent, accepted or ended and asks it what is busy. It holds no rclpy, so
 its tests run on a hand-driven clock with fake entities.

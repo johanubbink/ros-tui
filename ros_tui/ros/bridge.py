@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import rclpy
+from rcl_interfaces.msg import Parameter
+from rcl_interfaces.srv import GetParameters, ListParameters, SetParameters
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -46,81 +48,34 @@ from ros_tui.constants import (
     HOUSEKEEPING_PERIOD_S,
     SHUTDOWN_CANCEL_TIMEOUT_S,
 )
-from ros_tui.ros.contract import ActionEventCallback, GraphListener
+from ros_tui.ros.contract import (
+    ActionEventCallback,
+    GraphListener,
+    NodeInfoDone,
+    ParametersDone,
+    SetParameterDone,
+)
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.entity_cache import EntityCache
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, build_node_info, build_snapshot
 from ros_tui.ros.inflight import Inflight
 from ros_tui.ros.message_yaml import TimeSetter, import_type
+from ros_tui.ros.parameters import parameter_value, read_parameters
 
 
-@functools.lru_cache(maxsize=1)
-def _parameter_type_readers() -> dict:
-    """Map each rcl_interfaces ParameterType to its (type_label, ParameterValue attribute)."""
-    from rcl_interfaces.msg import ParameterType  # noqa: PLC0415
-    return {
-        ParameterType.PARAMETER_BOOL: ('bool', 'bool_value'),
-        ParameterType.PARAMETER_INTEGER: ('int', 'integer_value'),
-        ParameterType.PARAMETER_DOUBLE: ('double', 'double_value'),
-        ParameterType.PARAMETER_STRING: ('string', 'string_value'),
-        ParameterType.PARAMETER_BYTE_ARRAY: ('byte[]', 'byte_array_value'),
-        ParameterType.PARAMETER_BOOL_ARRAY: ('bool[]', 'bool_array_value'),
-        ParameterType.PARAMETER_INTEGER_ARRAY: ('int[]', 'integer_array_value'),
-        ParameterType.PARAMETER_DOUBLE_ARRAY: ('double[]', 'double_array_value'),
-        ParameterType.PARAMETER_STRING_ARRAY: ('string[]', 'string_array_value'),
-    }
+def _once(on_done: Callable[..., None]) -> Callable[..., None]:
+    """``on_done`` run at most once: a later call is ignored. A request whose on_done raised then
+    fails with that error, and its caller must not hear about the same request twice."""
+    called = False
 
+    def call(*answer: Any) -> None:
+        nonlocal called
+        if not called:
+            called = True
+            on_done(*answer)
 
-def _extract_parameters(names: list, values: list) -> list:
-    """Convert rcl_interfaces ParameterValue list into [(name, type_label, value)] tuples."""
-    readers = _parameter_type_readers()
-    result = []
-    for name, pv in zip(names, values):
-        type_label, attr = readers.get(pv.type, ('?', None))
-        value = getattr(pv, attr) if attr else None
-        if hasattr(value, 'tolist'):
-            value = value.tolist()
-        result.append((name, type_label, value))
-    return result
-
-
-def _python_to_parameter_value(py_value: Any) -> Any:
-    from rcl_interfaces.msg import ParameterType, ParameterValue  # noqa: PLC0415
-    pv = ParameterValue()
-    if isinstance(py_value, bool):
-        pv.type = ParameterType.PARAMETER_BOOL
-        pv.bool_value = py_value
-    elif isinstance(py_value, int):
-        pv.type = ParameterType.PARAMETER_INTEGER
-        pv.integer_value = py_value
-    elif isinstance(py_value, float):
-        pv.type = ParameterType.PARAMETER_DOUBLE
-        pv.double_value = py_value
-    elif isinstance(py_value, str):
-        pv.type = ParameterType.PARAMETER_STRING
-        pv.string_value = py_value
-    elif isinstance(py_value, list) and py_value:
-        first = py_value[0]
-        if isinstance(first, bool):
-            pv.type = ParameterType.PARAMETER_BOOL_ARRAY
-            pv.bool_array_value = py_value
-        elif isinstance(first, int):
-            pv.type = ParameterType.PARAMETER_INTEGER_ARRAY
-            pv.integer_array_value = py_value
-        elif isinstance(first, float):
-            pv.type = ParameterType.PARAMETER_DOUBLE_ARRAY
-            pv.double_array_value = py_value
-        elif isinstance(first, str):
-            pv.type = ParameterType.PARAMETER_STRING_ARRAY
-            pv.string_array_value = py_value
-        else:
-            raise ValueError(f'unsupported list element type: {type(first).__name__}')
-    elif isinstance(py_value, list):
-        raise ValueError('cannot infer type of empty list')
-    else:
-        raise ValueError(f'unsupported parameter type: {type(py_value).__name__}')
-    return pv
+    return call
 
 
 def adapted_qos(endpoint_infos: list[Any]) -> QoSProfile:
@@ -493,107 +448,63 @@ class RosBridge:
 
     # ---------------------------------------------------------------- parameters
 
-    def list_node_parameters(self, node_name: str, on_done: Callable) -> None:
-        """Fetch all parameter names+values for ``node_name``; result via ``on_done(params, err)``."""
+    def list_node_parameters(self, node_name: str, on_done: ParametersDone) -> None:
+        on_done = _once(on_done)
 
+        def fail(error: Exception) -> None:
+            on_done(None, str(error))
+
+        def listed(response: Any) -> None:
+            names = list(response.result.names)
+            if not names:
+                on_done([], None)
+                return
+            self._parameter_request(
+                f'{node_name}/get_parameters',
+                GetParameters,
+                lambda: GetParameters.Request(names=names),
+                lambda got: on_done(read_parameters(names, got.values), None),
+                fail,
+            )
+
+        self.submit(lambda: self._parameter_request(
+            f'{node_name}/list_parameters',
+            ListParameters,
+            lambda: ListParameters.Request(depth=ListParameters.Request.DEPTH_RECURSIVE),
+            listed,
+            fail,
+        ))
+
+    def set_node_parameter(
+        self, node_name: str, name: str, value: Any, type_label: str, on_done: SetParameterDone
+    ) -> None:
+        on_done = _once(on_done)
+
+        def answered(response: Any) -> None:
+            results = response.results
+            if results and not results[0].successful:
+                on_done(results[0].reason or 'rejected by node')
+            else:
+                on_done(None)
+
+        self.submit(lambda: self._parameter_request(
+            f'{node_name}/set_parameters',
+            SetParameters,
+            lambda: SetParameters.Request(
+                parameters=[Parameter(name=name, value=parameter_value(value, type_label))]
+            ),
+            answered,
+            lambda error: on_done(str(error)),
+        ))
+
+    def get_node_info(self, node_name: str, on_done: NodeInfoDone) -> None:
         def command() -> None:
             try:
-                self._start_list_node_params(node_name, on_done)
+                info = build_node_info(self._node, node_name)
             except Exception as error:
                 on_done(None, str(error))
-
-        self.submit(command)
-
-    def _start_list_node_params(self, node_name: str, on_done: Callable) -> None:
-        from rcl_interfaces.srv import ListParameters  # noqa: PLC0415
-        list_srv = f'{node_name}/list_parameters'
-        client = self._get_client(list_srv, 'rcl_interfaces/srv/ListParameters')
-        request = ListParameters.Request()
-        request.depth = ListParameters.Request.DEPTH_RECURSIVE
-
-        def handle(done_future: Any) -> None:
-            try:
-                names = list(done_future.result().result.names)
-                self._start_get_node_params(node_name, names, on_done)
-            except Exception as error:
-                on_done(None, str(error))
-
-        self._entities.inflight.wait_for_server(
-            client,
-            client.service_is_ready,
-            lambda: self._call_then(client, request, handle),
-            lambda e: on_done(None, str(e)),
-            list_srv,
-        )
-
-    def _start_get_node_params(self, node_name: str, names: list, on_done: Callable) -> None:
-        if not names:
-            on_done([], None)
-            return
-        get_srv = f'{node_name}/get_parameters'
-        client = self._get_client(get_srv, 'rcl_interfaces/srv/GetParameters')
-
-        from rcl_interfaces.srv import GetParameters  # noqa: PLC0415
-        request = GetParameters.Request()
-        request.names = names
-
-        def handle(done_future: Any) -> None:
-            try:
-                on_done(_extract_parameters(names, done_future.result().values), None)
-            except Exception as error:
-                on_done(None, str(error))
-
-        self._entities.inflight.wait_for_server(
-            client,
-            client.service_is_ready,
-            lambda: self._call_then(client, request, handle),
-            lambda e: on_done(None, str(e)),
-            get_srv,
-        )
-
-    def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done: Callable) -> None:
-        """Set a single parameter on ``node_name``; result via ``on_done(error_str_or_none)``."""
-
-        def command() -> None:
-            try:
-                import yaml  # noqa: PLC0415
-                from rcl_interfaces.msg import Parameter  # noqa: PLC0415
-                from rcl_interfaces.srv import SetParameters  # noqa: PLC0415
-                value = _python_to_parameter_value(yaml.safe_load(value_yaml))
-                set_srv = f'{node_name}/set_parameters'
-                client = self._get_client(set_srv, 'rcl_interfaces/srv/SetParameters')
-                request = SetParameters.Request(parameters=[Parameter(name=name, value=value)])
-
-                def handle(done_future: Any) -> None:
-                    try:
-                        results = done_future.result().results
-                        if results and not results[0].successful:
-                            on_done(results[0].reason or 'rejected by node')
-                        else:
-                            on_done(None)
-                    except Exception as error:
-                        on_done(str(error))
-
-                self._entities.inflight.wait_for_server(
-                    client,
-                    client.service_is_ready,
-                    lambda: self._call_then(client, request, handle),
-                    lambda e: on_done(str(e)),
-                    set_srv,
-                )
-            except Exception as error:
-                on_done(str(error))
-
-        self.submit(command)
-
-    def get_node_info(self, node_name: str, on_done: Callable) -> None:
-        """Introspect ``node_name``'s endpoints; result via ``on_done(info, error)``."""
-
-        def command() -> None:
-            try:
-                on_done(build_node_info(self._node, node_name), None)
-            except Exception as error:
-                on_done(None, str(error))
+                return
+            on_done(info, None)
 
         self.submit(command)
 
@@ -661,18 +572,42 @@ class RosBridge:
 
         return command
 
-    def _call_then(self, client: Any, request: Any, handle: Callable[[Any], None]) -> None:
-        """Call ``client`` async; when the response lands, run ``handle(future)`` on the ROS thread.
+    def _parameter_request(
+        self,
+        service_name: str,
+        service_type: Any,
+        make_request: Callable[[], Any],
+        on_response: Callable[[Any], None],
+        fail: Callable[[Exception], None],
+    ) -> None:
+        """Call the rcl_interfaces parameter service ``service_name`` (ROS thread).
 
-        The response is tracked, so the entity cache keeps ``client`` while the call is in flight
-        and a response that lands after shutdown began is ignored."""
-        rclpy_future = client.call_async(request)
-        self._entities.inflight.track_response(
-            client,
-            rclpy_future,
-            getattr(client, 'srv_name', 'parameter call'),
-            lambda done: self.submit(lambda: handle(done)),
-        )
+        ``on_response(response)`` runs on the ROS thread when it answers, straight from the reply,
+        never through the command queue, so a reply that lands while shutdown is under way is
+        handled like any other. Otherwise ``fail(error)`` runs, once: building the request or
+        sending it raised, no server within READY_TIMEOUT_S, no response within
+        RESPONSE_TIMEOUT_S, shutdown, or ``on_response`` raised. As ``on_response`` may have
+        answered the caller before it raised, the caller's on_done is wrapped in ``_once``. An
+        exception from ``fail`` on the reply is dropped, so it can't stop the spin loop."""
+
+        def reply(done: Any) -> None:
+            try:
+                on_response(done.result())
+            except Exception as error:
+                with contextlib.suppress(Exception):
+                    fail(error)
+
+        def dispatch() -> None:
+            future = client.call_async(make_request())
+            self._entities.inflight.track_response(client, future, service_name, reply, fail)
+
+        try:
+            client = self._get_client(service_name, f'rcl_interfaces/srv/{service_type.__name__}')
+            self._entities.inflight.wait_for_server(
+                client, client.service_is_ready, dispatch, fail, service_name
+            )
+        except Exception as error:
+            fail(error)
 
     def _poll_graph(self) -> None:
         previous = self._latest_graph

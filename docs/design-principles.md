@@ -447,7 +447,9 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
 - **Validation lives in one place**: `build_message` (`message_yaml.py`)
   reports `FieldError`s with the path; the UI maps the path to a row. Typed
   scalars, field rows and node parameters alike, go through
-  `fields.parse_scalar`.
+  `fields.parse_scalar`. A node parameter's typed value is then checked
+  against its declared type by `parameters.checked`, the check the bridge
+  runs before it sends.
 - **Every tunable number lives in `ros_tui/constants.py`**, with the
   stamp-at-send words (`HEADER_AUTO`, `TIME_NOW`).
 - **Time comes from an injectable clock.** `Feedback.clock` is the bridge's
