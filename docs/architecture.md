@@ -182,7 +182,7 @@ together.
   by the tab it was made in) and the register. It is driven by `handle_key`,
   `click`, `tick` and `set_catalog`; the rest of its public surface is
   read-only queries for the views (`footer()`, `summary()` for the test
-  harness, `shown(Overlay type)`, …) and a few calls for entries. Three
+  harness, `shown(Overlay type)`, …) and the `Host` members for entries. Three
   self-contained pieces sit beside it: the `Catalog`
   ([`catalog.py`](../ros_tui/ui/catalog.py)), what the ☰ list and search show,
   filled from each `GraphSnapshot`; the `Feedback`
@@ -210,9 +210,15 @@ together.
   Publish), rows, edits, a table of verbs (space, `s`, `r`, `y`, `p`, …),
   running markers and tick. `NavState.entry(tab)` makes it the first time
   (through the factory it is given) and keeps it after the tab closes. An
-  entry talks back through `nav.feedback` (`refuse`, `report_error` /
-  `clear_error`, `add_activity`, …) and a few NavState calls (`push_undo` /
-  `drop_undo`, `begin_edit`, `set_row`, `open_entity`); an undo step is a closure the entry pushes, and an `Area`
+  entry sees NavState only as a `Host` (`entries/base.py`), the one page to
+  read to write an entry: `feedback` (`refuse`, `report_error` /
+  `clear_error`, `add_activity`, …), read-only `catalog`, `tab`, `register`
+  and `overlay`, where the cursor is (`area`, `row_index`, `inside`), and
+  intents (`push_undo` / `drop_undo`, `start_edit` / `begin_edit`, `set_row`,
+  `open_entity`, `copy`, `show` / `close_overlay`), so NavState alone changes
+  its own state. No module under `entries/` imports `nav.py`
+  (`test_contract.py` checks it, and that NavState implements `Host`). An
+  undo step is a closure the entry pushes, and an `Area`
   says what its rows allow (`editable`, `folds`, `helpers`), so NavState
   holds no kind's areas, state or verbs. [`entries/kinds.py`](../ros_tui/ui/entries/kinds.py) maps
   each kind to its class: `TopicEntry` (Echo / Publish, the echo, the

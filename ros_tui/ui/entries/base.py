@@ -13,27 +13,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The contract between `NavState` and the entry kinds: `Entry` and the types it answers with.
+"""The contract between `NavState` and the entry kinds: `Entry`, the types it answers with, and
+`Host`, what an entry may ask of NavState.
 
 NavState makes one `Entry` per `Tab` the first time it needs it (through the factory it is given,
 `kinds.entry_factory` in the app) and keeps it after the tab closes, so an entry's edits, history
 and echo survive a close and reopen. NavState asks an entry what it shows (`areas`, `row_count`,
 labels) and hands it what you do (`start_edit` / `commit_edit`, `activate_row`, its `verbs`).
-An entry talks back through `nav.feedback` (`log_line`, `refuse`, `report_error`,
-`add_activity`, …) and NavState's few calls for entries (`push_undo`, `begin_edit`, `set_row`,
-…). Pure Python: this module imports nothing of the UI, so nav.py can import it.
+An entry talks back only through the `Host` it is handed (NavState is the one in the app). Pure
+Python: this module imports nothing of the UI at run time, so nav.py can import it.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Protocol
 
 if TYPE_CHECKING:
     from ros_tui.ros.contract import Bridge
-    from ros_tui.ui.nav import NavState
+    from ros_tui.ui.catalog import Catalog
+    from ros_tui.ui.feedback import Feedback
+    from ros_tui.ui.helpers import Helper
+    from ros_tui.ui.register import Register
+
+# The layers, top to bottom: the tab row › inside a tab (the ☰ list, or an entry's area pick) ›
+# the rows of one area › typing into one value. An entry names one only as `Editing.back`.
+TABS, IN, AREA, EDIT = ('tabs', 'in', 'area', 'edit')
 
 Post = Callable[[Callable[[], None]], None]
 Work = Post
-Verb = Callable[['NavState', str, Any], None]  # (nav, how the key reads in the log, the argument or None).
+Verb = Callable[['Host', str, Any], None]  # (nav, how the key reads in the log, the argument or None).
 
 
 @dataclass(frozen=True)
@@ -74,8 +81,8 @@ class UndoEntry:
     """One undo step: `revert` undoes it and returns the log line."""
 
     owner: Tab | None  # The tab it was made in; None for one any tab can undo (a closed tab).
-    revert: Callable[['NavState'], str]
-    tag: Any = None  # What it changed, for `NavState.drop_undo` (a parameter's name).
+    revert: Callable[['Host'], str]
+    tag: Any = None  # What it changed, for `Host.drop_undo` (a parameter's name).
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,102 @@ class Context:
         return self._singles.setdefault(cls, cls())
 
 
+class Host(Protocol):
+    """What an entry may ask of the UI around it: the `nav` its hooks, verbs and undo steps get.
+
+    NavState is the host in the app; an entry sees nothing of it beyond these members. The
+    properties are read-only: an entry changes the UI through the methods, never by assigning.
+    "The cursor" is the cursor in the active tab; `how` is how the key reads in the log ('enter',
+    ':rate 5'), passed on to the log line.
+    """
+
+    # ---------------------------------------------------------------- what it holds
+
+    @property
+    def feedback(self) -> 'Feedback':
+        """What the UI says back, through its methods only. `log_line(how, text)` for every verb;
+        `refuse(how, toast, log=None)` when a verb can't run (a red toast, and `log` or the toast as
+        the log line); `report_error(tab, text)` / `clear_error(tab)` for the tab's error line;
+        `add_activity(tab, text, cls)` for what ROS answered; `show_toast(text, kind)`,
+        `flash_send(tab)` on a send, `hint(how)`; and `clock()` to time a call."""
+        ...
+
+    @property
+    def catalog(self) -> 'Catalog':
+        """What the graph has: `catalog.item(tab)` is the tab's entity (its type, its counts), or None."""
+        ...
+
+    @property
+    def tab(self) -> Tab | None:
+        """The active tab (None on the ☰ list). An entry whose tab isn't it runs in the background."""
+        ...
+
+    @property
+    def register(self) -> 'Register | None':
+        """What y copied last, app-wide, for p (None before the first copy). `copy` replaces it."""
+        ...
+
+    @property
+    def overlay(self) -> Any:
+        """What sits on top and has the keys (a field helper the entry opened, …), or None."""
+        ...
+
+    # ---------------------------------------------------------------- where the cursor is
+
+    def area(self) -> Area | None:
+        """The area under the cursor, at the area pick or inside it (None on the ☰ list)."""
+        ...
+
+    def row_index(self, area: Area | None = None) -> int:
+        """The cursor's row in `area` (default: the area under the cursor)."""
+        ...
+
+    def inside(self, area_id: str) -> bool:
+        """The cursor is in the rows of area `area_id`, or typing into one of them (not at the area
+        pick above them). An echo is frozen while the cursor is inside it."""
+        ...
+
+    # ---------------------------------------------------------------- what an entry makes happen
+
+    def set_row(self, index: int, area: Area | None = None) -> None:
+        """Move the cursor to row `index` of `area` (default: the area under the cursor)."""
+        ...
+
+    def start_edit(self, how: str, clear: bool = False) -> bool:
+        """Edit the row under the cursor, as enter does (`clear`: start from an empty value), through
+        the entry's own `start_edit`. False when the row can't be edited."""
+        ...
+
+    def begin_edit(self, editing: Editing) -> None:
+        """Start typing into `editing`, an editor of the entry's own outside its rows (the repeat
+        rate). Keeping it returns to `editing.back`, by default where the cursor was."""
+        ...
+
+    def push_undo(self, entry: UndoEntry) -> None:
+        """One step u undoes: u calls `entry.revert(nav)` and logs what it returns."""
+        ...
+
+    def drop_undo(self, gone: Callable[[UndoEntry], bool]) -> None:
+        """Forget the undo steps `gone` picks (a change that can't be undone any more)."""
+        ...
+
+    def open_entity(self, kind: str, name: str, how: str) -> None:
+        """Open (or go to) the tab of another entity, at its area pick, and log it."""
+        ...
+
+    def copy(self, register: 'Register') -> None:
+        """y copied `register`: p pastes it into an editor of the same type, in any tab."""
+        ...
+
+    def show(self, overlay: 'Helper') -> None:
+        """Open `overlay` on top (a field helper); it has the keys until it closes. The entry logs it."""
+        ...
+
+    def close_overlay(self) -> None:
+        """Close the overlay without a log line; the entry logs what it did (a helper applied)."""
+        ...
+
+
 class Entry:
     """What one entry holds and does. NavState asks; each entry kind subclasses it (entries/kinds.py).
 
@@ -142,10 +245,10 @@ class Entry:
     def area_named(self, area_id: str) -> Area | None:
         return next((area for area in self.areas() if area.id == area_id), None)
 
-    def on_open(self, nav: 'NavState') -> None:
+    def on_open(self, nav: 'Host') -> None:
         """Its tab was opened or gone to."""
 
-    def on_close(self, nav: 'NavState') -> list[str]:
+    def on_close(self, nav: 'Host') -> list[str]:
         """Its tab is being closed: stop what nothing could stop once it is gone (an echo, a
         repeat). Returns what it stopped, for the log line ('echo stopped'). A running goal keeps
         running: canceling it would be a send."""
@@ -161,7 +264,7 @@ class Entry:
     def commit_edit(self, editing: Editing) -> Commit:
         return Commit(True, f'kept {editing.field or "the value"}')
 
-    def activate_row(self, nav: 'NavState', area: Area, row: int, how: str) -> bool:
+    def activate_row(self, nav: 'Host', area: Area, row: int, how: str) -> bool:
         """enter on a row, before it is edited: open an interface, show / hide a field, fold or
         unfold a nested message or list. True if done (then the row isn't edited)."""
         return False
@@ -190,7 +293,7 @@ class Entry:
         """What runs in this entry (an echo, a repeat, a goal), whether its tab is open or not."""
         return ()
 
-    def tick(self, nav: 'NavState') -> bool:
+    def tick(self, nav: 'Host') -> bool:
         """The clock ticked: take in what arrived (an echo's messages). True when the views should redraw."""
         return False
 
