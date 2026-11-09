@@ -17,16 +17,19 @@
 
 import threading
 import time
-from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
+import rclpy
 from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, FIBONACCI_ACTION, INBOX_TOPIC, wait_for
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from rcl_interfaces.srv import ListParameters
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from ros_tui.constants import READY_TIMEOUT_S
-from ros_tui.ros.bridge import RosBridge, _ActiveGoal, _AwaitingResponse, _PendingReady, adapted_qos
+from ros_tui.ros.bridge import RosBridge, adapted_qos
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEventKind
 from std_msgs.msg import String
@@ -119,13 +122,15 @@ def test_service_unavailable_times_out(bridge):
         future.result(timeout=8.0)
 
 
-def test_lru_overflow_with_pending_clients_does_not_crash(bridge):
+def test_more_parked_calls_than_the_client_cache_holds_each_time_out(bridge):
+    """Every cached client is busy, so the cache grows instead of destroying a client a
+    call still needs: each call ends with its own timeout."""
     futures = [
         bridge.call_service(f'/tui_missing_{index}', ADD_TWO_INTS_TYPE, AddTwoInts.Request())
         for index in range(10)
     ]
     for future in futures:
-        with pytest.raises((TimeoutError, RuntimeError)):
+        with pytest.raises(TimeoutError, match='not available'):
             future.result(timeout=8.0)
 
 
@@ -240,6 +245,105 @@ def test_bridge_shutdown_cancels_a_running_goal(fixture_servers, ros_domain):
     own_bridge.shutdown()
     assert time.monotonic() - started < 3.0
     assert wait_for(lambda: fixture_servers.canceled_goals == canceled_before + 1, timeout=5.0)
+
+
+HELD_NODE = '/tui_held'
+HELD_ACTION = '/tui_held_goal'
+
+
+class HeldServers:
+    """A parameter list service and an action server that each hold a request until released."""
+
+    def __init__(self, context):
+        self.node = rclpy.create_node('tui_held_servers', context=context)
+        self.list_received, self.release_list = threading.Event(), threading.Event()
+        self.goal_received, self.release_goal = threading.Event(), threading.Event()
+        self.cancel_requests = 0
+        group = ReentrantCallbackGroup()
+        self.node.create_service(ListParameters, f'{HELD_NODE}/list_parameters', self._list,
+                                 callback_group=group)
+        self.action_server = ActionServer(
+            self.node, Fibonacci, HELD_ACTION, execute_callback=self._execute,
+            goal_callback=self._goal, cancel_callback=self._cancel, callback_group=group)
+
+    def _list(self, request, response):
+        self.list_received.set()
+        self.release_list.wait(timeout=10.0)
+        return response
+
+    def _goal(self, goal_request):
+        self.goal_received.set()
+        self.release_goal.wait(timeout=10.0)
+        return GoalResponse.ACCEPT
+
+    def _cancel(self, cancel_request):
+        self.cancel_requests += 1
+        return CancelResponse.ACCEPT
+
+    def _execute(self, goal_handle):
+        deadline = time.monotonic() + 5.0
+        while not goal_handle.is_cancel_requested and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        else:
+            goal_handle.succeed()
+        return Fibonacci.Result()
+
+
+@pytest.fixture
+def held_servers(ros_domain):
+    context = rclpy.Context()
+    rclpy.init(context=context)
+    servers = HeldServers(context)
+    executor = MultiThreadedExecutor(num_threads=4, context=context)
+    executor.add_node(servers.node)
+    spin_thread = threading.Thread(target=executor.spin, name='held-spin', daemon=True)
+    spin_thread.start()
+    yield servers
+    servers.release_list.set()
+    servers.release_goal.set()
+    executor.shutdown()
+    spin_thread.join(timeout=3.0)
+    servers.node.destroy_node()
+    rclpy.shutdown(context=context)
+
+
+def test_shutdown_cancels_a_goal_accepted_after_a_parameter_reply_landed(held_servers):
+    """A parameter reply that lands while shutdown waits for the goals is ignored, so the wait
+    goes on and the goal, accepted only then, is still canceled."""
+    own_bridge = RosBridge(node_name='ros_tui_held_test')
+    own_bridge.start()
+    try:
+        own_bridge.list_node_parameters(HELD_NODE, lambda params, error: None)
+        assert held_servers.list_received.wait(timeout=10.0)
+        events = []
+        own_bridge.send_goal(HELD_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=5), events.append)
+        assert held_servers.goal_received.wait(timeout=10.0)
+        stopping = threading.Thread(target=own_bridge.shutdown, kwargs={'timeout_s': 5.0})
+        stopping.start()
+        time.sleep(0.3)  # The bridge is now waiting for its goal's acceptance to cancel it.
+        held_servers.release_list.set()
+        time.sleep(0.1)  # The parameter reply lands first.
+        held_servers.release_goal.set()
+        stopping.join(timeout=6.0)
+        assert wait_for(lambda: held_servers.cancel_requests == 1, timeout=3.0), event_kinds(events)
+    finally:
+        own_bridge.shutdown()
+
+
+def test_shutdown_fails_a_call_still_awaiting_its_response(held_servers):
+    own_bridge = RosBridge(node_name='ros_tui_held_call_test')
+    own_bridge.start()
+    try:
+        future = own_bridge.call_service(
+            f'{HELD_NODE}/list_parameters', 'rcl_interfaces/srv/ListParameters', ListParameters.Request()
+        )
+        assert held_servers.list_received.wait(timeout=10.0)
+    finally:
+        own_bridge.shutdown()
+    with pytest.raises(RuntimeError, match='ROS bridge shut down'):
+        future.result(timeout=2.0)
 
 
 def test_subscribe_receives_chatter(bridge, fixture_servers):
@@ -394,130 +498,3 @@ def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
     bridge.set_node_parameter(full_name, 'no_such_param', '1', on_set)
     assert done.wait(timeout=10.0), 'set_node_parameter never completed'
     assert result['error'] is not None  # undeclared parameter is rejected by the node.
-
-
-class _FakeFuture:
-    """A call_async future whose done callback fires only when the test triggers it."""
-
-    def __init__(self):
-        self._callback = None
-
-    def add_done_callback(self, callback):
-        self._callback = callback
-
-    def fire(self):
-        self._callback(self)
-
-
-class _FakeClient:
-    srv_name = '/fake/set_parameters'
-
-    def __init__(self, future):
-        self._future = future
-
-    def call_async(self, _request):
-        return self._future
-
-
-def test_call_then_marks_client_in_use_until_response(bridge):
-    """An in-flight parameter call keeps its client out of LRU eviction (regression).
-
-    ``_call_then`` must register the client in ``awaiting_response`` so ``_client_in_use``
-    reports it busy for the call's lifetime — otherwise ``_get_or_create`` could evict and
-    ``destroy_client`` it mid-flight — then drop it once the response lands.
-    """
-    future = _FakeFuture()
-    client = _FakeClient(future)
-    key = (_FakeClient.srv_name, 'rcl_interfaces/srv/SetParameters')
-    handled = []
-
-    # Dispatch on the ROS thread, exactly as the real parameter paths do.
-    bridge.submit(lambda: bridge._call_then(client, object(), handled.append)).result(timeout=2.0)
-
-    # While the response is pending, the client is busy and cannot be chosen as a victim.
-    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is True
-
-    # The response lands: the client is released and the handler is re-submitted to run.
-    bridge.submit(future.fire).result(timeout=2.0)
-    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is False
-    assert wait_for(lambda: bool(handled), timeout=2.0), 'handle was never invoked'
-
-
-def on_ros_thread(bridge, fn):
-    """Run `fn` on the bridge's ROS thread (the only one that may touch its entities)."""
-    return bridge.submit(fn).result(timeout=2.0)
-
-
-def test_housekeeping_dispatches_fails_or_keeps_each_wait_for_a_server(bridge):
-    seen = []
-
-    def pending(label, is_ready, deadline):
-        return _PendingReady(entity=object(), is_ready=is_ready, dispatch=lambda: seen.append((label, 'sent')),
-                             fail=lambda error: seen.append((label, str(error))), deadline=deadline, label=label)
-
-    def broken():
-        raise RuntimeError('graph gone')
-
-    now = time.monotonic()
-    waits = [pending('/ready', lambda: True, now + 60), pending('/late', lambda: False, now - 1),
-             pending('/broken', broken, now + 60), pending('/waiting', lambda: False, now + 60)]
-    on_ros_thread(bridge, lambda: bridge._entities.pending_ready.extend(waits))
-    on_ros_thread(bridge, bridge._tick_pending)
-    left = on_ros_thread(bridge, lambda: [wait.label for wait in bridge._entities.pending_ready])
-    on_ros_thread(bridge, lambda: bridge._entities.pending_ready.clear())
-    assert seen == [('/ready', 'sent'), ('/late', '/late not available (no server found)'),
-                    ('/broken', 'graph gone')]
-    assert left == ['/waiting']
-
-
-def test_housekeeping_ends_a_goal_whose_server_vanished(bridge):
-    events = []
-
-    def goal(server_up, lost_since=None):
-        return _ActiveGoal(handle=None, on_event=events.append,
-                           client=SimpleNamespace(server_is_ready=lambda: server_up), server_lost_since=lost_since)
-
-    now = time.monotonic()
-    gone, lost, back = goal(False, now - READY_TIMEOUT_S - 1), goal(False), goal(True, now)
-
-    def track():
-        bridge._entities.active_goals.update({'/gone': gone, '/lost': lost, '/back': back})
-        bridge._entities.inflight_actions.add('/gone')
-
-    on_ros_thread(bridge, track)
-    on_ros_thread(bridge, bridge._tick_pending)
-    goals = on_ros_thread(bridge, lambda: sorted(bridge._entities.active_goals))
-    inflight = on_ros_thread(bridge, lambda: set(bridge._entities.inflight_actions))
-    on_ros_thread(bridge, lambda: bridge._entities.active_goals.clear())
-    assert goals == ['/back', '/lost'] and '/gone' not in inflight
-    assert [(event.action_name, event.kind, event.payload) for event in events] == [
-        ('/gone', ActionEventKind.ERROR, 'action server vanished while the goal was executing')]
-    assert lost.server_lost_since is not None and back.server_lost_since is None
-
-
-def test_housekeeping_times_out_a_request_without_response(bridge):
-    dropped = []
-    client = SimpleNamespace(remove_pending_request=dropped.append)
-    now = time.monotonic()
-    late = _AwaitingResponse(client, 'late future', now - 1, '/slow', Future())
-    untracked = _AwaitingResponse(client, 'parameter future', now - 1, '/param')  # No caller future.
-    fine = _AwaitingResponse(client, 'fine future', now + 60, '/fine', Future())
-    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([late, untracked, fine]))
-    on_ros_thread(bridge, bridge._tick_pending)
-    left = on_ros_thread(bridge, lambda: list(bridge._entities.awaiting_response))
-    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.clear())
-    assert left == [fine] and dropped == ['late future', 'parameter future']
-    with pytest.raises(TimeoutError, match='no response from /slow after 30 s'):
-        late.outer.result(timeout=0)
-    assert not fine.outer.done()
-
-
-def test_shutdown_fails_every_request_still_awaiting_its_response(bridge):
-    client = SimpleNamespace(remove_pending_request=lambda future: None)
-    later = time.monotonic() + 60
-    untracked = _AwaitingResponse(client, 'parameter future', later, '/param')  # No caller future.
-    tracked = _AwaitingResponse(client, 'call future', later, '/call', Future())
-    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([untracked, tracked]))
-    bridge.shutdown()
-    with pytest.raises(RuntimeError, match='ROS bridge shut down'):
-        tracked.outer.result(timeout=2.0)

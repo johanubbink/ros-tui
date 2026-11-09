@@ -32,6 +32,12 @@ The code:
     may ask of ROS: each request, how it answers and on which thread.
   - [`bridge.py`](../ros_tui/ros/bridge.py): `RosBridge`, the thread that owns
     rclpy and implements `Bridge` ([The bridge](#the-bridge)).
+  - [`inflight.py`](../ros_tui/ros/inflight.py): `Inflight`, the bridge's
+    requests in flight (waits for a server, awaited responses, goals) and when
+    each one fails. No rclpy.
+  - [`entity_cache.py`](../ros_tui/ros/entity_cache.py): `EntityCache`, the
+    bounded cache of clients and publishers that never evicts a busy one. No
+    rclpy.
   - [`graph.py`](../ros_tui/ros/graph.py): immutable `GraphSnapshot`s of the
     topics, services, actions and nodes, and `NodeInfo` (a node's endpoints,
     like `ros2 node info`).
@@ -100,12 +106,19 @@ Results come back in one of two ways:
 `wait_for_service`. A request whose server isn't up yet is parked, and a
 **housekeeping timer** (4 Hz) checks parked requests and in-flight calls: a
 server must appear within 5 s, and a response must arrive within 30 s, or the
-request fails with a timeout.
+request fails with a timeout. A goal whose action server is gone for 5 s ends
+with an error. `Inflight` ([`inflight.py`](../ros_tui/ros/inflight.py)) keeps
+these records and decides each of these outcomes; `RosBridge` tells it what
+was sent, accepted or ended and asks it what is busy. It holds no rclpy, so
+its tests run on a hand-driven clock with fake entities.
 
 **Clients and publishers are cached** per (name, type), so calling a service
-twice reuses its client. The cache holds 8 entries and evicts the least
-recently used one, skipping any entity still in use, so a long session doesn't
-pile up DDS resources.
+twice reuses its client. The cache
+([`entity_cache.py`](../ros_tui/ros/entity_cache.py)) holds 8 entries and
+evicts the least recently used one, skipping any entity still in use (a
+request, response or goal in `Inflight`, or a periodic publisher) and the one
+it just made, so a long session doesn't pile up DDS resources. When all are in
+use it grows past 8 rather than break a call.
 
 **Periodic publishing** is a timer per topic on the ROS thread. It keeps
 running while the UI shows other topics, and the bridge destroys them all on
@@ -246,8 +259,9 @@ together.
 That clears the bridge's running flag (so `submit()` refuses new work) and
 wakes the executor. The ROS thread leaves its spin loop and tears down: queued
 commands are cancelled, and parked and in-flight requests fail with "ROS
-bridge shut down". Then every running goal is canceled, as `ros2 action
-send_goal` does on ctrl+c, so nothing keeps acting on the robot after you quit:
+bridge shut down" (a reply that still lands for one of them is ignored). Then
+every running goal is canceled, as `ros2 action send_goal` does on ctrl+c, so
+nothing keeps acting on the robot after you quit:
 the thread spins for at most `SHUTDOWN_CANCEL_TIMEOUT_S` (1 s) until each
 server answered the cancel (a goal still waiting for acceptance is canceled
 when it is accepted). Then every timer (including periodic publishers),
