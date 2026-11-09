@@ -209,7 +209,7 @@ applied by `MessageEntry`, so every message editor has them.
   an edit and is one undo step. While the fields make no value, enter keeps the
   popup open with `fix the highlighted values first`.
 - **Enums in insert** take a constant's name or prefix, any case, or a number
-  (`fields.enum_value`); the completion (`fields.enum_matches`, in `comp`)
+  (`values.enum_value`); the completion (`values.enum_matches`, in `comp`)
   replaces the type hint while typing. At rest: `level: 2 ERROR`.
 - A row with a helper shows a `[f Quaternion]` badge; `f` elsewhere says `no
   helper for this field — fields with one show [f …]`.
@@ -395,7 +395,7 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
 ## Code principles
 
 - **A pure model, thin widgets.** `nav.py`, `keymap.py`, `fields.py`,
-  `register.py`, `helpers/` and `entries/` are plain Python: no textual, no
+  `values.py`, `register.py`, `helpers/` and `entries/` are plain Python: no textual, no
   rclpy (`test_keymap.py` checks `nav`, `keymap` and `fields`). They are unit-tested on their own.
   - `NavState` (`nav.py`) holds the tabs, layer, cursors, kind chip, the one
     `overlay`, the undo stack and the register. What there is to open is its
@@ -463,11 +463,14 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
 - **Validation lives in one place**: `build_message` (`message_yaml.py`)
   reports `FieldError`s with the path; the UI maps the path to a row. Typed
   scalars, field rows and node parameters alike, go through
-  `fields.parse_scalar`. A node parameter's typed value is then checked
+  `values.parse_scalar`. A node parameter's typed value is then checked
   against its declared type by `parameters.checked`, the check the bridge
   runs before it sends.
-- **Every tunable number lives in `ros_tui/constants.py`**, with the
-  stamp-at-send words (`HEADER_AUTO`, `TIME_NOW`).
+- **Every tunable number lives in `ros_tui/constants.py`.**
+- **The message type labels have one owner**: `ros/schema.py` (no ROS
+  import) reads the array grammar, writes and parses field paths
+  (`points[1].x`) and holds the stamp-at-send words (`HEADER_AUTO`,
+  `TIME_NOW`); `message_yaml.py`, the field rows and the helpers all use it.
 - **Time comes from an injectable clock.** `Feedback.clock` is the bridge's
   `now()` and `Feedback.wall` its `time_of_day()` (a `ManualClock` under
   `FakeBridge`), so every shot is repeatable; nothing in the model reads real
