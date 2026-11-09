@@ -27,7 +27,6 @@ dotted/indexed path (``pose.position.x``, ``points[1].x``).
 import array
 import functools
 import math
-from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy
@@ -42,15 +41,14 @@ from rosidl_runtime_py.convert import get_message_slot_types
 from rosidl_runtime_py.import_message import import_message_from_namespaced_type
 from rosidl_runtime_py.utilities import get_action, get_message, get_service
 
-from ros_tui.constants import HEADER_AUTO, TIME_NOW, TRUNCATE_ARRAY_ELEMENTS, TRUNCATE_STRING_CHARS, TYPE_CACHE_SIZE
+from ros_tui.constants import TRUNCATE_ARRAY_ELEMENTS, TRUNCATE_STRING_CHARS, TYPE_CACHE_SIZE
+from ros_tui.ros.schema import (BOOL_TYPE, FLOAT_TYPES, HEADER_AUTO, HEADER_TYPE, INTEGER_TYPES, STAMP_WORDS,
+                                FieldNode, Path, path_text)
 
 # A deferred setter receives a builtin_interfaces/msg/Time and stamps it into the message.
 TimeSetter = Callable[[Any], None]
 
 _LOADERS = {'msg': get_message, 'srv': get_service, 'action': get_action}
-_FLOAT_TYPENAMES = ('float', 'double', 'float32', 'float64')
-_HEADER_CLASS = 'std_msgs.msg._header.Header'
-_TIME_CLASS = 'builtin_interfaces.msg._time.Time'
 
 
 class IntrospectionError(Exception):
@@ -86,21 +84,6 @@ def request_class(kind: str, interface: type) -> type:
     return interface
 
 
-@dataclass(frozen=True)
-class FieldNode:
-    """A field in a message's static structure: its name, type label, and nested fields.
-
-    ``constants`` holds the enum choices ``(name, int_value)`` that apply to this field, when
-    the field is an integer enum backed by message constants (see :func:`_field_enum_choices`);
-    empty otherwise. The Enum helper offers these as its choices.
-    """
-
-    name: str
-    type_label: str
-    children: tuple['FieldNode', ...] = field(default_factory=tuple)
-    constants: tuple[tuple[str, int], ...] = ()
-
-
 @functools.lru_cache(maxsize=TYPE_CACHE_SIZE)
 def message_structure(kind: str, type_name: str) -> tuple[FieldNode, ...]:
     """Static field tree for ``kind``/``type_name`` (introspected from the class, no instance)."""
@@ -119,12 +102,6 @@ def _class_fields(message_class: type, seen: frozenset) -> tuple[FieldNode, ...]
         FieldNode(name, types[name], _slot_children(slot, seen), enum_choices.get(name, ()))
         for name, slot in zip(types, message_class.SLOT_TYPES)
     )
-
-
-_INTEGER_SCALAR_TYPES = frozenset(
-    {'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64',
-     'byte', 'char', 'octet'}
-)
 
 
 def _message_constants(message_class: type) -> list[tuple[str, int]]:
@@ -163,7 +140,7 @@ def _field_enum_choices(message_class: type) -> dict[str, tuple[tuple[str, int],
     if not constants:
         return {}
     types = message_class.get_fields_and_field_types()
-    int_fields = [name for name, label in types.items() if label in _INTEGER_SCALAR_TYPES]
+    int_fields = [name for name, label in types.items() if label in INTEGER_TYPES]
     choices = {}
     for name in int_fields:
         prefixed = tuple((n, v) for n, v in constants if n.startswith(name.upper() + '_'))
@@ -210,7 +187,7 @@ def build_message(message_class: type, values: Any) -> tuple[Any, list[TimeSette
     if values is None:
         values = {}
     setters: list[TimeSetter] = []
-    message = _build(message_class, values, '', setters)
+    message = _build(message_class, values, (), setters)
     return message, setters
 
 
@@ -230,22 +207,22 @@ def _checked_instance(message_class: type) -> Any:
         return message_class()
 
 
-def _build(message_class: type, values: Any, path: str, setters: list[TimeSetter]) -> Any:
+def _build(message_class: type, values: Any, path: Path, setters: list[TimeSetter]) -> Any:
     message = _checked_instance(message_class)
     if values is None:
         return message
     if not isinstance(values, dict):
         raise FieldError(
-            path.rstrip('.'),
+            path_text(path),
             f'expected a mapping for {interface_label(message_class)}, '
             f"got {type(values).__name__} '{values}'",
         )
     slots = get_message_slot_types(message)
     for field_name, field_value in values.items():
-        field_path = f'{path}{field_name}'
+        field_path = path + (field_name,)
         if field_name not in slots:
             raise FieldError(
-                field_path, f"'{field_name}' is not a field of {interface_label(message_class)}"
+                path_text(field_path), f"'{field_name}' is not a field of {interface_label(message_class)}"
             )
         setter = _time_magic(message, field_name, field_value)
         if setter is not None:
@@ -258,29 +235,31 @@ def _build(message_class: type, values: Any, path: str, setters: list[TimeSetter
         except FieldError:
             raise
         except (AssertionError, ValueError, TypeError, OverflowError) as error:
-            raise FieldError(field_path, str(error)) from error
+            raise FieldError(path_text(field_path), str(error)) from error
     return message
 
 
 def _time_magic(message: Any, field_name: str, field_value: Any) -> TimeSetter | None:
     """The deferred setter a ``header: auto`` or ``stamp: now`` value stands for, else None."""
     current = getattr(message, field_name)
-    if _is_class(current, _HEADER_CLASS) and field_value == HEADER_AUTO:
+    label = _type_label(current)
+    word = STAMP_WORDS.get(label)
+    if word is None or field_value != word:
+        return None
+    if label == HEADER_TYPE:
         return functools.partial(setattr, current, 'stamp')
-    if _is_class(current, _TIME_CLASS) and field_value == TIME_NOW:
-        return functools.partial(setattr, message, field_name)
-    return None
+    return functools.partial(setattr, message, field_name)
 
 
-def _build_field(current: Any, slot: Any, field_value: Any, field_path: str, setters: list[TimeSetter]) -> Any:
+def _build_field(current: Any, slot: Any, field_value: Any, field_path: Path, setters: list[TimeSetter]) -> Any:
     """``field_value`` converted for a field of the kind ``slot`` (sequence or array, nested
     message, byte, other primitive); ``current`` is the field's default value."""
     if isinstance(slot, AbstractNestedType):
         return _build_sequence(current, slot, field_value, field_path, setters)
     if hasattr(current, 'get_fields_and_field_types'):
-        return _build(type(current), field_value, f'{field_path}.', setters)
+        return _build(type(current), field_value, field_path, setters)
     if _is_octet(slot):
-        return _byte_value(field_value, field_path)
+        return _byte_value(field_value, path_text(field_path))
     return _coerce_primitive(current, field_value)
 
 
@@ -288,28 +267,28 @@ def _build_sequence(
     current: Any,
     slot: AbstractNestedType,
     field_value: Any,
-    field_path: str,
+    field_path: Path,
     setters: list[TimeSetter],
 ) -> Any:
     if isinstance(field_value, str) or not isinstance(field_value, (list, tuple)):
-        raise FieldError(field_path, f'expected a list, got {type(field_value).__name__}')
+        raise FieldError(path_text(field_path), f'expected a list, got {type(field_value).__name__}')
     value_type = slot.value_type
     if isinstance(value_type, NamespacedType):
         element_class = import_message_from_namespaced_type(value_type)
         return [
-            _build(element_class, item, f'{field_path}[{index}].', setters)
+            _build(element_class, item, field_path + (index,), setters)
             for index, item in enumerate(field_value)
         ]
     if _is_octet(value_type):
         return [
-            _byte_value(item, f'{field_path}[{index}]') for index, item in enumerate(field_value)
+            _byte_value(item, path_text(field_path + (index,))) for index, item in enumerate(field_value)
         ]
     if isinstance(current, array.array):
         return array.array(current.typecode, field_value)
     if isinstance(current, numpy.ndarray):
         return _checked_numpy_array(current, field_value, field_path)
     return [
-        _coerce_element(value_type, item, f'{field_path}[{index}]')
+        _coerce_element(value_type, item, path_text(field_path + (index,)))
         for index, item in enumerate(field_value)
     ]
 
@@ -319,9 +298,9 @@ def _coerce_element(value_type: Any, item: Any, item_path: str) -> Any:
         if isinstance(value_type, (AbstractString, AbstractWString)):
             return item if isinstance(item, str) else str(item)
         if isinstance(value_type, BasicType):
-            if value_type.typename == 'boolean':
+            if value_type.typename == BOOL_TYPE:
                 return bool(item)
-            if value_type.typename in _FLOAT_TYPENAMES:
+            if value_type.typename in FLOAT_TYPES:
                 return float(item)
             return int(item)
         return item
@@ -329,7 +308,7 @@ def _coerce_element(value_type: Any, item: Any, item_path: str) -> Any:
         raise FieldError(item_path, str(error)) from error
 
 
-def _checked_numpy_array(current: numpy.ndarray, field_value: Any, field_path: str) -> Any:
+def _checked_numpy_array(current: numpy.ndarray, field_value: Any, field_path: Path) -> Any:
     """
     Validate every element before converting to a numpy array.
 
@@ -337,7 +316,7 @@ def _checked_numpy_array(current: numpy.ndarray, field_value: Any, field_path: s
     and the generated setter only checks size.
     """
     checked = [
-        _checked_numpy_element(current.dtype, item, f'{field_path}[{index}]')
+        _checked_numpy_element(current.dtype, item, path_text(field_path + (index,)))
         for index, item in enumerate(field_value)
     ]
     return numpy.array(checked, dtype=current.dtype)
@@ -420,7 +399,7 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
     if _is_octet(slot):
         return _byte_to_int(value)
     if hasattr(value, 'get_fields_and_field_types'):
-        if seed and _is_class(value, _HEADER_CLASS):
+        if seed and _type_label(value) == HEADER_TYPE:
             return HEADER_AUTO  # Prefill the "stamp at send time" magic instead of a zeroed header.
         return _plain_message(value, max_array, max_str, seed)
     if isinstance(value, numpy.number):
@@ -455,7 +434,7 @@ def _is_octet(slot: Any) -> bool:
     return isinstance(slot, BasicType) and slot.typename == 'octet'
 
 
-def _is_class(value: Any, qualified: str) -> bool:
-    """Whether ``value`` is an instance of the class named ``qualified``, matched by name so that
-    std_msgs and builtin_interfaces are not imported here."""
-    return f'{type(value).__module__}.{type(value).__name__}' == qualified
+def _type_label(value: Any) -> str:
+    """The type label of a nested message as its parent's fields name it ('std_msgs/Header'), read
+    from the class's name so that std_msgs and builtin_interfaces are not imported here."""
+    return f"{type(value).__module__.split('.', 1)[0]}/{type(value).__name__}"

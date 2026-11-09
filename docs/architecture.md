@@ -45,6 +45,10 @@ The code:
     type labels, and the `ParameterValue` a value is read from or sent as, by
     the type the parameter was declared with. Imports rcl_interfaces only to
     read or build one.
+  - [`schema.py`](../ros_tui/ros/schema.py): the type labels and field paths
+    of messages as plain strings (the array grammar, `points[1].x`, the
+    stamp-at-send words) and `FieldNode`. Imports no ROS, so the UI reads
+    labels and paths with it.
   - [`message_yaml.py`](../ros_tui/ros/message_yaml.py): loading interface
     types, the structure of a message, and checked plain data ↔ message
     conversion ([Messages](#messages)).
@@ -64,7 +68,10 @@ The code:
     (`base.py`), one `Entry` subclass per entry kind (topic, service, action,
     node) and `kinds.py`, which maps a kind to its class.
   - [`fields.py`](../ros_tui/ui/fields.py): `FieldRows`, the model of a message
-    as editable field rows.
+    as editable field rows, and an echo's flat rows.
+  - [`values.py`](../ros_tui/ui/values.py): one value as text: shown as flow
+    YAML, and typed text read back by its type label, with the error the user
+    sees.
   - [`helpers/`](../ros_tui/ui/helpers/): the field helpers (Quaternion,
     Header, Time, Enum) and their maths.
   - [`register.py`](../ros_tui/ui/register.py): the typed copy / paste register.

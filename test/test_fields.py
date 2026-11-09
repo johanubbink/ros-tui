@@ -19,8 +19,8 @@ import functools
 
 import pytest
 from ros_tui.ros.message_yaml import build_message, import_type, message_structure, message_to_plain, request_class
-from ros_tui.ui.fields import (ARRAY, COMPACT, LEAF, MESSAGE, Element, FieldRows, array_info, coerce, default_value,
-                               parse, parse_path, path_text, short_type, summary)
+from ros_tui.ros.schema import FieldNode
+from ros_tui.ui.fields import ARRAY, COMPACT, LEAF, MESSAGE, FieldRows, coerce, default_value, parse
 from test_message_yaml import ROUNDTRIP_TYPES
 
 
@@ -200,18 +200,18 @@ def test_parse_errors_name_the_field(label, text, message):
     assert str(error.value) == message
 
 
-POINT = Element('p', 'geometry_msgs/Point', (Element('x', 'double'), Element('n', 'int64')))
+POINT = FieldNode('p', 'geometry_msgs/Point', (FieldNode('x', 'double'), FieldNode('n', 'int64')))
 
 
 @pytest.mark.parametrize('node, value, want', [
-    (Element('a', 'double'), 5, 5.0),
-    (Element('a', 'float'), 2.5, 2.5),
-    (Element('a', 'double'), True, True),  # A bool is not a whole number here.
-    (Element('a', 'int64'), 5, 5),
-    (Element('a', 'double[3]'), [1, 2.5, 'x'], [1.0, 2.5, 'x']),
-    (Element('a', 'sequence<double>'), 'oops', 'oops'),  # Not a list: left for the send check.
+    (FieldNode('a', 'double'), 5, 5.0),
+    (FieldNode('a', 'float'), 2.5, 2.5),
+    (FieldNode('a', 'double'), True, True),  # A bool is not a whole number here.
+    (FieldNode('a', 'int64'), 5, 5),
+    (FieldNode('a', 'double[3]'), [1, 2.5, 'x'], [1.0, 2.5, 'x']),
+    (FieldNode('a', 'sequence<double>'), 'oops', 'oops'),  # Not a list: left for the send check.
     (POINT, {'x': 1, 'n': 1, 'q': 2}, {'x': 1.0, 'n': 1, 'q': 2}),  # An unknown key is kept as typed.
-    (Element('a', 'sequence<geometry_msgs/Point>', POINT.children), [{'x': 3}], [{'x': 3.0}]),
+    (FieldNode('a', 'sequence<geometry_msgs/Point>', POINT.children), [{'x': 3}], [{'x': 3.0}]),
 ])
 def test_coerce_makes_whole_numbers_floats_where_sent_as_floats(node, value, want):
     assert repr(coerce(node, value)) == repr(want)  # repr tells 5 from 5.0 and True from 1.
@@ -261,17 +261,7 @@ def test_send_check_errors_map_to_their_row():
     assert form.row(form.reveal('pose.position.x')).field == 'pose.position'  # Inside a compact row.
 
 
-def test_paths_hints_and_summaries():
-    assert path_text(('points', 1, 'x')) == 'points[1].x' and parse_path('points[1].x') == ('points', 1, 'x')
-    assert [short_type(label) for label in ('int64', 'geometry_msgs/Point', 'double[9]',
-                                            'sequence<geometry_msgs/Point32>', 'sequence<double, 3>')] == [
-        'int64', 'Point', 'double[9]', 'Point32[]', 'double[<=3]']
-    assert array_info('sequence<string<=5, 3>') == ('string<=5', None, 3)
-    assert summary({'a': 19, 'b': 23}, 60) == 'a: 19, b: 23'
-    assert summary({'data': 'x' * 100}, 20) == 'data: xxxxxxxxxxxxx…'
-
-
 def leaf_row(label):
     """The row of a message with one field `a` of type `label`, at its zero value."""
-    node = Element('a', label)
+    node = FieldNode('a', label)
     return FieldRows((node,), {'a': default_value(node)}).row(0)
