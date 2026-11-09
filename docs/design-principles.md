@@ -220,7 +220,7 @@ what uses it. The ones that carry meaning:
 | `key` | key caps, the selected-panel border, cursors |
 | `ok` | success, `● live`, `↻` repeating, INSERT |
 | `live` | running: `◉` echoing, the goal spinner, `calling…` |
-| `warn` | `❄ FROZEN`, `+N new since`, canceled, `● changed`, stop buttons |
+| `warn` | `❄ FROZEN`, `+N new since`, canceled, `● changed`, stop buttons, `⚠ not in the ROS graph` |
 | `bad` | errors: errlines, bad toasts, `✗` |
 | `reg` | the register chip |
 
@@ -309,6 +309,11 @@ keys.
   Here column and in search rows, whether the tab is open or not. One hook
   feeds them all: `Entry.running()` returns `Running(glyph, label, tone)`;
   `NavState.running` / `running_all` read it, `widgets.base.markers` draws it.
+- **Gone from the graph**: an open entry the graph loses keeps its tab and its
+  last known type, and its header shows `⚠ not in the ROS graph` (`warn`) until
+  it is back. Sends stay enabled: a call or goal with no server fails with a
+  clear error after a short wait. Before the first graph arrives nothing is
+  missing.
 - **Closing a tab stops its echo and repeat** (`Entry.on_close`): `closed
   /chatter — echo stopped · u reopens it`. A running goal is **not** canceled on
   close (a cancel is a send); reopening gives `s` back. **Quitting stops

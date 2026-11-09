@@ -155,7 +155,7 @@ def hint(*parts: tuple[str, str] | str, color: str = '') -> Text:
 
 
 def pill(text: str, tone: str) -> Text:
-    """A state pill in a panel title: "calling…", "✓ OK", in a `theme.TONES` tone."""
+    """A state pill in a `theme.TONES` tone: a panel title's "calling…", a toast, a header's warning."""
     return Text.assemble((f' {text} ', style(*TONES[tone], bold=True)))
 
 

@@ -16,7 +16,8 @@
 """An open entry: its header, then its areas as panels.
 
 The header is the kind tag, the name and the type (a node's namespace, and the switch of an entry
-with modes: a topic's Echo / Publish), then, after a blank line, the entry's button row, if it
+with modes: a topic's Echo / Publish); an entry the graph lost keeps its last known type and shows
+"⚠ not in the ROS graph" until it is back. Then, after a blank line, the entry's button row, if it
 has one, and a blank line before the panels. Each area is a `Panel` (widgets/panel.py), drawn
 selected on the IN layer and inside on the AREA and EDIT layers. An entry kind has its view in
 `VIEWS`. A click on a panel goes inside its area, a click on the switch picks that mode.
@@ -33,7 +34,7 @@ from ros_tui.ui.theme import KINDS
 from ros_tui.ui.widgets.action_entry import action_panels, action_toolbar
 from ros_tui.ui.widgets.base import NavView, clickable, fit, spread, style, switch
 from ros_tui.ui.widgets.node_entry import node_panels
-from ros_tui.ui.widgets.panel import Panel, cursor_line, draw_panel, panel_state, side_by_side, split
+from ros_tui.ui.widgets.panel import Panel, cursor_line, draw_panel, panel_state, pill, side_by_side, split
 from ros_tui.ui.widgets.service_entry import service_panels, service_toolbar
 from ros_tui.ui.widgets.topic_entry import topic_counts, topic_panels, topic_toolbar
 
@@ -69,11 +70,17 @@ class EntryBody(NavView):
         item = nav.catalog.item(tab)
         left = Text.assemble(
             (f' {kind.glyph} {kind.one.upper()} ', style(kind.color, kind.tag_bg)), '  ',
-            (tab.name, style('accent', bold=True)), '  ', (item.type if item else '', style('muted')))
+            (tab.name, style('accent', bold=True)))
+        # A node has no type; a message entry keeps the one it loaded.
+        parts = [Text(item.type if item else getattr(entry, 'type', ''), style('muted'))]
         note = VIEWS[tab.kind].note
         if note:
+            parts.append(note(nav, entry))
+        if item is None and len(nav.catalog):  # Gone from a graph seen at least once.
+            parts.append(pill('⚠ not in the ROS graph', 'warn'))
+        for part in filter(None, parts):
             left.append('  ')
-            left.append_text(note(nav, entry))
+            left.append_text(part)
         if not entry.modes():
             return fit(left, width)
         modes = switch(*((mode.capitalize(), mode == entry.mode, ('mode', mode)) for mode in entry.modes()))
