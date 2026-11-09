@@ -39,6 +39,7 @@ from ros_tui.ui.fields import COMPACT, LEAF, Row, flow_yaml
 from ros_tui.ui.helpers.header import parse_header
 from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler, yaw_of
 from ros_tui.ui.helpers.time import parse_time, seconds_str_to_stamp, stamp_to_seconds_str
+from ros_tui.ui.keymap import key_for
 
 ENUM, QUAT, HEADER, TIME = 'enum', 'quat', 'header', 'time'
 NAMES = {ENUM: 'Enum', QUAT: 'Quaternion', HEADER: 'Header', TIME: 'Time'}
@@ -61,7 +62,9 @@ MODES = {  # Each helper kind's modes, in strip order.
     TIME: (Mode('now', (), 'stamped at send'), Mode('seconds', ('seconds',), 'seconds since the epoch, e.g. 2.5'),
            Mode('sec + nanosec', ('sec', 'nanosec'), 'the two fields as they are sent')),
 }
-MODE_KEYS = 'tab next way to enter it · ↑↓ field · type to change · enter applies · esc cancels'
+# The keys a Helper interprets itself are spelled out here; the two that leave it are the keymap's.
+LEAVE_KEYS = f"{key_for('verb', 'helper_apply', 'helper')} applies · {key_for('close_overlay', mode='helper')} cancels"
+MODE_KEYS = f'tab next way to enter it · ↑↓ field · type to change · {LEAVE_KEYS}'
 
 
 class Result(NamedTuple):
@@ -135,7 +138,7 @@ class Helper:
     def keys(self) -> str:
         """The key hint line at the bottom of the popup."""
         if self.kind == ENUM:
-            return f'j k or ↑↓ pick · {self.jump_keys()} jump · enter applies · esc cancels'
+            return f'j k or ↑↓ pick · {self.jump_keys()} jump · {LEAVE_KEYS}'
         return MODE_KEYS
 
     def press(self, key: str, char: str | None) -> None:

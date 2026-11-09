@@ -45,13 +45,12 @@ from typing import Any
 from ros_tui.constants import PUBLISH_DEFAULT_RATE_HZ, PUBLISH_RATE_MAX_HZ, PUBLISH_RATE_MIN_HZ
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.message_yaml import message_to_plain
-from ros_tui.ui.entries.base import IN, Area, Commit, Context, Editing, Host, Running, Tab, UndoEntry, Verb
-from ros_tui.ui.entries.message import EDITOR, MessageEntry, Received
+from ros_tui.ui.entries.base import EDITOR, IN, OUT, RATE, Area, Commit, Context, Editing, Host, Running, Tab, UndoEntry, Verb
+from ros_tui.ui.entries.message import MessageEntry, Received
 from ros_tui.ui.fields import Row, flat_rows
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.register import Register
 
-ECHO = 'out'  # The area id of LATEST MESSAGE.
-RATE = 'rate'  # The Editing area of the rate editor.
 ECHOING = Running('◉', 'echoing', 'live')
 RATE_RANGE = f'{PUBLISH_RATE_MIN_HZ:g}–{PUBLISH_RATE_MAX_HZ:g} Hz'  # The rates a repeat takes.
 
@@ -100,7 +99,7 @@ class TopicEntry(MessageEntry):
 
     KIND = 'msg'
     ROLE = 'message'
-    MODES = {'echo': (Area(ECHO, 'LATEST MESSAGE', 'show / hide field'),),
+    MODES = {'echo': (Area(OUT, 'LATEST MESSAGE', 'show / hide field'),),
              'publish': (Area(EDITOR, 'MESSAGE', 'edit', True, folds=True, helpers=True),)}
 
     def __init__(self, tab: Tab, ctx: Context | None = None):
@@ -181,9 +180,10 @@ class TopicEntry(MessageEntry):
         if self.mode != 'publish':
             self.mode, back = 'publish', IN
         text = rate_text(self.rate())
-        nav.begin_edit(Editing(RATE, 0, text, old=text, fresh=True, field='repeat rate',
-                               note='(type a number, enter keeps it)', crumb=('repeat rate',), back=back))
-        nav.feedback.log_line(how, 'editing the repeat rate: type a number, enter keeps it')
+        keeps = f"type a number, {key_for('edit_keep', mode='insert')} keeps it"
+        nav.begin_edit(Editing(RATE, 0, text, old=text, fresh=True, field='repeat rate', note=f'({keeps})',
+                               crumb=('repeat rate',), back=back))
+        nav.feedback.log_line(how, f'editing the repeat rate: {keeps}')
 
     def _command_rate(self, nav: Host, how: str, text: str) -> None:
         """:rate 5"""
@@ -201,7 +201,8 @@ class TopicEntry(MessageEntry):
             nav.feedback.add_activity(tab, activity, 'g')
         nav.feedback.clear_error(tab)
         nav.feedback.show_toast(f'repeat rate {rate_text(rate)} Hz', 'info')
-        nav.feedback.log_line(how, f'repeat rate on {tab.name} is {rate_text(rate)} Hz' + (' (u undoes)' if undo else ''))
+        undoes = f" ({key_for('undo')} undoes)" if undo else ''
+        nav.feedback.log_line(how, f'repeat rate on {tab.name} is {rate_text(rate)} Hz{undoes}')
 
     def commit_edit(self, editing: Editing) -> Commit:
         if editing.area != RATE:
@@ -213,7 +214,7 @@ class TopicEntry(MessageEntry):
         running = self.repeat is not None
         undo, activity = self._set_rate(rate)
         text = f'repeat rate {rate_text(rate)} Hz' + (' (applied to the running repeat)' if running else '')
-        return Commit(True, text + (' (u undoes)' if undo else ''), undo, (activity, 'g') if activity else ())
+        return Commit(True, text + (f" ({key_for('undo')} undoes)" if undo else ''), undo, (activity, 'g') if activity else ())
 
     # ---------- rows ----------
     def echo_rows(self, nav: Host) -> list[Row]:
@@ -229,13 +230,13 @@ class TopicEntry(MessageEntry):
         return self.shown if self.frozen(nav) else self.latest
 
     def row_count(self, area: Area) -> int:
-        if area.id == ECHO:
+        if area.id == OUT:
             return len(flat_rows(self.editor.fields, None)) if self.editor else 0
         return super().row_count(area)
 
     def activate_row(self, nav: Host, area: Area, row: int, how: str) -> bool:
         """enter on an echoed field hides or shows it."""
-        if area.id != ECHO:
+        if area.id != OUT:
             return super().activate_row(nav, area, row, how)
         rows = self.echo_rows(nav)
         if not 0 <= row < len(rows):
@@ -248,15 +249,15 @@ class TopicEntry(MessageEntry):
     # ---------- echo: live and frozen ----------
     def frozen(self, nav: Host) -> bool:
         """An echo is frozen while the cursor is inside its LATEST MESSAGE."""
-        return nav.inside(ECHO) and nav.tab == self.tab and self.mode == 'echo' and self.echo is not None
+        return nav.inside(OUT) and nav.tab == self.tab and self.mode == 'echo' and self.echo is not None
 
     def leave_area(self, area: Area) -> str | None:
-        if area.id == ECHO and self.echo is not None:
+        if area.id == OUT and self.echo is not None:
             return 'out of the latest message: values are live again'
         return None
 
     def esc_label(self, area: Area) -> str | None:
-        return 'go live' if area.id == ECHO and self.echo is not None else None
+        return 'go live' if area.id == OUT and self.echo is not None else None
 
     def tick(self, nav: Host) -> bool:
         """Drain a running echo: keep the newest message, count, rate, drops; a
@@ -319,7 +320,8 @@ class TopicEntry(MessageEntry):
         nav.copy(Register.of(self.type, self.ROLE, tab.name, message_to_plain(received.message)))
         which = 'frozen' if self.frozen(nav) else 'latest'
         nav.feedback.show_toast(f'copied the {which} {nav.register.label} from {tab.name}', 'info')
-        nav.feedback.log_line(how, f'copied the {which} message — p pastes it into an editor of the same type')
+        nav.feedback.log_line(how, f"copied the {which} message — {key_for('verb', 'paste')} pastes it into an editor "
+                                   'of the same type')
 
     # ---------- publish ----------
     def _publish(self, nav: Host, how: str) -> None:
@@ -334,7 +336,8 @@ class TopicEntry(MessageEntry):
     def _start_repeat(self, nav: Host, how: str) -> None:
         """r: publish the message at the rate until s stops it."""
         if self.repeat is not None:
-            nav.feedback.show_toast(f'already repeating at {rate_text(self.repeat.rate)} Hz — s stops it', 'info')
+            nav.feedback.show_toast(f'already repeating at {rate_text(self.repeat.rate)} Hz — '
+                                    f"{key_for('verb', 'secondary')} stops it", 'info')
             nav.feedback.log_line(how, 'already repeating')
             return
         ready = self._ready(nav, how)
@@ -402,8 +405,9 @@ class TopicEntry(MessageEntry):
             verbs.update({
                 'primary': lambda nav, how, _: self._toggle_echo(nav, how),
                 'secondary': lambda nav, how, _: nav.feedback.log_line(
-                    how, 'space stops the echo; going into the latest message freezes it'),
-                'repeat': lambda nav, how, _: nav.feedback.log_line(how, 'r repeats a publish — e switches to Publish'),
+                    how, f"{key_for('primary')} stops the echo; going into the latest message freezes it"),
+                'repeat': lambda nav, how, _: nav.feedback.log_line(
+                    how, f"{key_for('verb', 'repeat')} repeats a publish — {key_for('switch_mode')} switches to Publish"),
                 'history_older': self._history_is_for_publish,
                 'history_newer': self._history_is_for_publish,
                 'yank': lambda nav, how, _: self._yank_echo(nav, how),
@@ -419,7 +423,7 @@ class TopicEntry(MessageEntry):
 
     @staticmethod
     def _history_is_for_publish(nav: Host, how: str, _: Any) -> None:
-        nav.feedback.log_line(how, 'the history is for Publish — e switches to it')
+        nav.feedback.log_line(how, f"the history is for Publish — {key_for('switch_mode')} switches to it")
 
     def _paste_in_echo(self, nav: Host, how: str, _: Any) -> None:
         if nav.register is None:
