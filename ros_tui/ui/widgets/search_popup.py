@@ -22,7 +22,7 @@ the window scrolls to keep the picked one in view. A click on a match opens it.
 
 from rich.text import Text
 
-from ros_tui.ui.fields import short_type
+from ros_tui.ros.schema import short_type
 from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import Search
 from ros_tui.ui.theme import KINDS

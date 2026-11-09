@@ -34,16 +34,17 @@ import dataclasses
 import math
 from typing import Any, NamedTuple
 
-from ros_tui.constants import HEADER_AUTO, TIME_NOW
-from ros_tui.ui.fields import COMPACT, LEAF, Row, flow_yaml
+from ros_tui.ros.schema import HEADER_AUTO, HEADER_TYPE, TIME_NOW, TIME_TYPE
+from ros_tui.ui.fields import COMPACT, LEAF, Row
 from ros_tui.ui.helpers.header import parse_header
 from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler, yaw_of
 from ros_tui.ui.helpers.time import parse_time, seconds_str_to_stamp, stamp_to_seconds_str
 from ros_tui.ui.keymap import key_for
+from ros_tui.ui.values import flow_yaml
 
 ENUM, QUAT, HEADER, TIME = 'enum', 'quat', 'header', 'time'
 NAMES = {ENUM: 'Enum', QUAT: 'Quaternion', HEADER: 'Header', TIME: 'Time'}
-BY_TYPE = {'geometry_msgs/Quaternion': QUAT, 'std_msgs/Header': HEADER, 'builtin_interfaces/Time': TIME}
+BY_TYPE = {'geometry_msgs/Quaternion': QUAT, HEADER_TYPE: HEADER, TIME_TYPE: TIME}
 NANOSEC = 1_000_000_000
 DIGITS = 6  # What a typed number is rounded to when it is shown again.
 

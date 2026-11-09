@@ -16,9 +16,8 @@
 """The field rows of a message: one row per field, nested messages and lists folding in place.
 
 Pure Python (no textual, no rclpy). `FieldRows` works on a message's static structure (the
-`FieldNode`s of `message_yaml.message_structure`, or anything with `name`, `type_label`, `children`
-and `constants`) and its value as plain data (`message_yaml.message_to_plain`). Every row has a
-`shape`:
+`FieldNode`s of `message_yaml.message_structure`, `ros/schema.py`) and its value as plain data
+(`message_yaml.message_to_plain`). Every row has a `shape`:
 
 - LEAF: a number, bool or string. Shown and typed as its value.
 - COMPACT: a small message on one row as flow YAML, `{x: 1.0, y: 2.0, z: 0.0}` (COMPACT_TYPES).
@@ -28,73 +27,34 @@ and `constants`) and its value as plain data (`message_yaml.message_to_plain`). 
 - ARRAY: a list or fixed array, `▸ points [3 items]`. Unfolding it lists `[0]`, `[1]` …; elements
   are added and deleted in place. A list of numbers or strings can also be typed whole, `[1, 2]`.
 
-Typed text is parsed per row (`parse`): a string field takes bare text as the string, an enum
-field (a whole number with constants) a constant's name or the start of one ('err' is ERROR), the
-other fields read it as YAML and check its type, with a message that names the field and quotes the
-text ("a needs a whole number, got "x""). Ranges, sizes and keys are checked by the message's own
-validator (`build_message`, passed in as `validate`): its `FieldError.path` is mapped back to a row
-(`reveal`), so validation stays in one place.
+Typed text is parsed per row (`parse`) by the value codec (`values.py`): a string field takes bare
+text as the string, an enum field (a whole number with constants) a constant's name or the start of
+one ('err' is ERROR), the other fields read it as YAML and check its type, with a message that names
+the field and quotes the text ("a needs a whole number, got "x""). Ranges, sizes and keys are
+checked by the message's own validator (`build_message`, passed in as `validate`): its
+`FieldError.path` is mapped back to a row (`reveal`), so validation stays in one place.
 """
 
 import copy
 import math
-import re
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable
 
-import yaml
-
-from ros_tui.constants import ECHO_DISPLAY_DIGITS, HEADER_AUTO, TIME_NOW
+from ros_tui.constants import ECHO_DISPLAY_DIGITS
+from ros_tui.ros.schema import (BOOL_TYPE, FLOAT_TYPES, HEADER_TYPE, STAMP_WORDS, TIME_TYPE, FieldNode, Path,
+                                array_info, element_of, is_string, parse_path, path_text, short_type, within)
+from ros_tui.ui.values import describe, enum_value, flow_yaml, parse_list, parse_map, parse_scalar
 
 # Messages small enough to be typed on one row as flow YAML. Keep this set small.
 COMPACT_TYPES = frozenset({
     'geometry_msgs/Point', 'geometry_msgs/Point32', 'geometry_msgs/Vector3', 'geometry_msgs/Quaternion',
-    'geometry_msgs/Pose2D', 'std_msgs/Header', 'builtin_interfaces/Time', 'builtin_interfaces/Duration',
+    'geometry_msgs/Pose2D', HEADER_TYPE, TIME_TYPE, 'builtin_interfaces/Duration',
 })
-# Compact types with a stamp-at-send word (message_yaml.build_message's magic values).
-MAGIC_WORDS = {'std_msgs/Header': HEADER_AUTO, 'builtin_interfaces/Time': TIME_NOW}
 
 LEAF, COMPACT, MESSAGE, ARRAY = 'leaf', 'compact', 'message', 'array'
 
-FLOAT_TYPES = frozenset({'float', 'double', 'float32', 'float64'})
-BOOL_TYPE = 'boolean'
 
-Path = tuple[str | int, ...]
-
-_FIXED = re.compile(r'^(?P<element>.+)\[(?P<size>\d+)\]$')
-_SEQUENCE = re.compile(r'^sequence<(?P<element>.+?)(?:, ?(?P<bound>\d+))?>$')
-_PATH_PART = re.compile(r'([^.\[\]]+)|\[(\d+)\]')
-_FIELD_PREFIX = re.compile(r"^(?:The '[^']*' field |byte field )")
-
-
-class ArrayInfo(NamedTuple):
-    element: str  # The element's type label.
-    size: int | None  # The size of a fixed array (T[N]), else None.
-    bound: int | None  # The most elements a bounded sequence (sequence<T, N>) holds, else None.
-
-
-class Element(NamedTuple):
-    """The type of one element of an ARRAY row, shaped like a FieldNode."""
-
-    name: str
-    type_label: str
-    children: tuple = ()
-    constants: tuple = ()
-
-
-def array_info(label: str) -> ArrayInfo | None:
-    match = _SEQUENCE.match(label)
-    if match:
-        return ArrayInfo(match['element'], None, int(match['bound']) if match['bound'] else None)
-    match = _FIXED.match(label)
-    return ArrayInfo(match['element'], int(match['size']), None) if match else None
-
-
-def element_of(node: Any) -> Element:
-    return Element(node.name, array_info(node.type_label).element, node.children, node.constants)
-
-
-def shape_of(node: Any) -> str:
+def shape_of(node: FieldNode) -> str:
     label = node.type_label
     if array_info(label):
         return ARRAY
@@ -103,20 +63,7 @@ def shape_of(node: Any) -> str:
     return MESSAGE if '/' in label else LEAF
 
 
-def short_type(label: str) -> str:
-    """The type as a row's hint shows it: 'int64', 'Point', 'double[9]', 'Point32[]', 'double[<=3]'."""
-    info = array_info(label)
-    if info:
-        size = info.size if info.size is not None else f'<={info.bound}' if info.bound else ''
-        return f'{short_type(info.element)}[{size}]'
-    return label.rsplit('/', 1)[-1]
-
-
-def is_string(label: str) -> bool:
-    return label.startswith(('string', 'wstring'))
-
-
-def default_value(node: Any) -> Any:
+def default_value(node: FieldNode) -> Any:
     """A zero value for `node` (a new list element): 0, 0.0, false, '', [] or a dict of zeros."""
     label = node.type_label
     info = array_info(label)
@@ -131,76 +78,10 @@ def default_value(node: Any) -> Any:
     return '' if is_string(label) else 0
 
 
-def path_text(path: Path) -> str:
-    """A path as the user reads it and FieldError reports it: 'pose.position', 'points[1].x'."""
-    text = ''
-    for part in path:
-        text += f'[{part}]' if isinstance(part, int) else (f'.{part}' if text else part)
-    return text
-
-
-def parse_path(text: str) -> Path:
-    return tuple(int(index) if index else name for name, index in _PATH_PART.findall(text))
-
-
-def _scalar_yaml(value: Any) -> str | None:
-    """A bool, int or float as yaml.safe_dump writes it (without the cost of a dump), else None."""
-    kind = type(value)
-    if kind is bool:
-        return 'true' if value else 'false'
-    if kind is int:
-        return str(value)
-    if kind is not float:
-        return None
-    if value != value:
-        return '.nan'
-    if value in (math.inf, -math.inf):
-        return '.inf' if value > 0 else '-.inf'
-    text = repr(value).lower()
-    return text.replace('e', '.0e', 1) if '.' not in text and 'e' in text else text
-
-
-def flow_yaml(value: Any) -> str:
-    """`value` as one line of YAML that parses back to it: '5.0', '[1, 2]', "{x: 1.0, y: 'a b'}"."""
-    text = _scalar_yaml(value)
-    if text is not None:
-        return text
-    if type(value) is list:  # A list of numbers (and bools) is the common non-scalar: no dump either.
-        items = [_scalar_yaml(item) for item in value]
-        if None not in items:
-            return f'[{", ".join(items)}]'
-    text = yaml.safe_dump(value, default_flow_style=True, sort_keys=False, width=math.inf, allow_unicode=True).strip()
-    if text.endswith('\n...'):  # safe_dump ends a bare scalar with a document-end marker.
-        text = text[:-len('\n...')].rstrip()
-    return text
-
-
-def summary(values: dict, limit: int) -> str:
-    """The top-level fields as one line for the activity strip: 'a: 19, b: 23' (cut at `limit`)."""
-    text = ', '.join(f'{name}: {flow_yaml(value)}' for name, value in values.items())
-    return text if len(text) <= limit else text[:limit - 1] + '…'
-
-
-def describe(error: Any, typed: str = '') -> str:
-    """A validator's FieldError as the user reads it: the field first, then what is wrong."""
-    detail = _FIELD_PREFIX.sub('', str(getattr(error, 'detail', error)))
-    path = getattr(error, 'path', '')
-    if not detail.startswith('must'):
-        return f'{path}: {detail}' if path else detail
-    if typed and 'got' not in detail:
-        detail += f', got "{typed}"'
-    return f'{path} {detail}'
-
-
-def within(path: str, field: str) -> bool:
-    """True when the field path `path` is `field` or inside it."""
-    return path == field or path.startswith((field + '.', field + '['))
-
-
 @dataclass(frozen=True)
 class Row:
     path: Path
-    node: Any  # FieldNode-like: name, type_label, children, constants.
+    node: FieldNode
     depth: int
     shape: str
     value: Any
@@ -266,100 +147,11 @@ class Row:
         """The text an edit starts from; parse() reads it back to the same value."""
         if self.shape == LEAF and is_string(self.label):
             text = str(self.value)
-            return text if _parse_string(text) == text else flow_yaml(text)
+            return text if parse_scalar(self.label, self.field, text) == text else flow_yaml(text)
         return flow_yaml(self.value)
 
 
-def _parse_string(text: str) -> str:
-    """Bare text is the string itself; text in quotes is read as a YAML string ('' is empty)."""
-    stripped = text.strip()
-    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in '\'"':
-        try:
-            value = yaml.safe_load(stripped)
-        except yaml.YAMLError:
-            return text
-        return value if isinstance(value, str) else text
-    return text
-
-
-def _load(text: str) -> Any:
-    try:
-        return yaml.safe_load(text)
-    except yaml.YAMLError:
-        return None
-
-
-def parse_list(field: str, text: str) -> list:
-    """`text` read as a YAML list (its elements unchecked), or ValueError naming the field. A node's
-    array parameters are read by it too (entries/node.parse_value)."""
-    value = _load(text.strip())
-    if not isinstance(value, list):
-        raise ValueError(f'{field} needs a list like [1, 2], got "{text.strip()}"')
-    return value
-
-
-def parse_scalar(label: str, field: str, text: str) -> Any:
-    """`text` read as a value of the primitive type `label`, or ValueError naming the field. Node
-    parameters are read by it too (entries/node.parse_value)."""
-    shown = text.strip()
-    if is_string(label):
-        return _parse_string(text)
-    if label == BOOL_TYPE:
-        if shown.lower() in ('true', 'false'):
-            return shown.lower() == 'true'
-        raise ValueError(f'{field} needs true or false, got "{shown}"')
-    if label in FLOAT_TYPES:
-        try:
-            return float(shown)  # Also 1e-3, nan and inf.
-        except ValueError:
-            raise ValueError(f'{field} needs a number, got "{shown}"') from None
-    number = _whole_number(shown)
-    if number is None:
-        raise ValueError(f'{field} needs a whole number, got "{shown}"')
-    return number
-
-
-def enum_value(constants: tuple, field: str, text: str) -> int:
-    """`text` typed into an enum field: a constant's name or the start of one, in any case ('err'
-    is ERROR), or a number. ValueError naming the field and its names otherwise."""
-    typed = text.strip()
-    lowered = typed.lower()
-    match = (next((number for name, number in constants if name.lower() == lowered), None)
-             if lowered else None)
-    if match is None and lowered:
-        match = next((number for name, number in constants if name.lower().startswith(lowered)), None)
-    if match is not None:
-        return match
-    number = _whole_number(typed)
-    if number is None:
-        names = ' / '.join(name for name, _ in constants)
-        raise ValueError(f'{field} needs {names} or a number, got "{typed}"')
-    return number
-
-
-def enum_matches(constants: tuple, text: str) -> str:
-    """The completion next to an enum field being typed: the constants that `text` could mean,
-    'OK=0  WARN=1  ERROR=2  STALE=3 · type a name or number'."""
-    typed = text.strip().lower()
-    matches = [f'{name}={number}' for name, number in constants
-               if not typed or name.lower().startswith(typed) or str(number) == typed]
-    return ('  '.join(matches) if matches else 'no match') + ' · type a name or number'
-
-
-def _whole_number(text: str) -> int | None:
-    """Decimal, so a typed 019 is 19 (YAML would read 017 as octal); 5.0 is whole too."""
-    try:
-        return int(text)
-    except ValueError:
-        pass
-    try:
-        number = float(text)
-    except ValueError:
-        return None
-    return int(number) if number.is_integer() else None
-
-
-def coerce(node: Any, value: Any) -> Any:
+def coerce(node: FieldNode, value: Any) -> Any:
     """`value` with whole numbers in float fields made floats, so it shows as it will be sent."""
     label = node.type_label
     if array_info(label):
@@ -372,7 +164,7 @@ def coerce(node: Any, value: Any) -> Any:
     return value
 
 
-def _coerce_fields(node: Any, values: dict) -> dict:
+def _coerce_fields(node: FieldNode, values: dict) -> dict:
     """A message's flow map, each field coerced by its own type; a key that is no field of `node` is
     kept as typed (the send check names it)."""
     children = {child.name: child for child in node.children}
@@ -386,7 +178,7 @@ def _merge(old: Any, new: Any) -> Any:
     return {**old, **{key: _merge(old.get(key), value) for key, value in new.items()}}
 
 
-def _template(node: Any) -> str:
+def _template(node: FieldNode) -> str:
     return '{' + ', '.join(f'{child.name}: …' for child in node.children) + '}'
 
 
@@ -397,7 +189,7 @@ def parse(row: Row, text: str) -> Any:
         return _parse_compact(row, shown)
     if row.shape == ARRAY:
         element = array_info(label).element
-        return [parse_scalar(element, f'{field}[{index}]', flow_yaml(item) if not isinstance(item, str) else item)
+        return [parse_scalar(element, path_text(row.path + (index,)), item if isinstance(item, str) else flow_yaml(item))
                 for index, item in enumerate(parse_list(field, shown))]
     if row.node.constants:
         return enum_value(row.node.constants, field, text)
@@ -407,13 +199,11 @@ def parse(row: Row, text: str) -> Any:
 def _parse_compact(row: Row, shown: str) -> Any:
     """A compact message typed as its magic word ('auto', 'now') or a flow map, which is laid over
     the row's old value: {x: 1} keeps the old y and z."""
-    magic = MAGIC_WORDS.get(row.label)
+    magic = STAMP_WORDS.get(row.label)
     if magic and shown == magic:
         return magic
-    value = _load(shown)
-    if not isinstance(value, dict):
-        needs = f'{magic} or {_template(row.node)}' if magic else _template(row.node)
-        raise ValueError(f'{row.field} needs {needs}, got "{shown}"')
+    needs = f'{magic} or {_template(row.node)}' if magic else _template(row.node)
+    value = parse_map(row.field, needs, shown)
     return coerce(row.node, _merge(row.value, value))
 
 

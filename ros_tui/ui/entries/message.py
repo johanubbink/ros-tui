@@ -43,11 +43,13 @@ from typing import Any, Callable
 from ros_tui.constants import SEND_HISTORY_MAX, SUMMARY_MAX_CHARS
 from ros_tui.ros.message_yaml import (build_message, import_type, message_structure, message_to_display,
                                       message_to_plain, request_class)
+from ros_tui.ros.schema import path_text
 from ros_tui.ui.entries.base import EDITOR, Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
-from ros_tui.ui.fields import FieldRows, Row, describe, flow_yaml, path_text, summary
+from ros_tui.ui.fields import FieldRows, Row
 from ros_tui.ui.helpers import Helper, helper_name
 from ros_tui.ui.keymap import key_for
 from ros_tui.ui.register import Register
+from ros_tui.ui.values import describe, flow_yaml, summary
 
 
 Build = Callable[[dict], tuple[Any, list]]  # Plain values -> (message, time setters); raises FieldError.

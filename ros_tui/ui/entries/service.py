@@ -30,7 +30,8 @@ from ros_tui.constants import SUMMARY_MAX_CHARS
 from ros_tui.ros.message_yaml import class_structure, message_to_plain
 from ros_tui.ui.entries.base import EDITOR, OUT, Area, Context, Host, Tab, Verb
 from ros_tui.ui.entries.message import MessageEntry
-from ros_tui.ui.fields import FieldRows, summary
+from ros_tui.ui.fields import FieldRows
+from ros_tui.ui.values import summary
 
 
 @dataclass

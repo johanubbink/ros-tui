@@ -25,7 +25,7 @@ pasting (entries/message.py, entries/topic.py); NavState holds the one register,
 import copy
 from dataclasses import dataclass
 
-from ros_tui.ui.fields import short_type
+from ros_tui.ros.schema import short_type
 
 
 def type_label(type_name: str, role: str) -> str:

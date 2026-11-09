@@ -27,8 +27,9 @@ touches the model. Until an answer is in, the area says "loading…".
 from typing import Any, NamedTuple
 
 from ros_tui.ros.parameters import BOOL, DOUBLE, INT, STRING, UNKNOWN, Param, checked
+from ros_tui.ros.schema import BOOL_TYPE
 from ros_tui.ui.entries.base import IFS, PARAM, Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
-from ros_tui.ui.fields import BOOL_TYPE, flow_yaml, parse_list, parse_scalar
+from ros_tui.ui.values import flow_yaml, parse_list, parse_scalar
 from ros_tui.ui.keymap import key_for
 
 
@@ -64,7 +65,7 @@ def edit_text(param: Param, value: Any) -> str:
     return value if param.type == STRING else render_value(value)
 
 
-# The parameter types read as a message field of the same type (fields.parse_scalar).
+# The parameter types read as a message field of the same type (values.parse_scalar).
 _SCALAR_LABELS = {BOOL: BOOL_TYPE, INT: 'int64', DOUBLE: 'double'}
 
 

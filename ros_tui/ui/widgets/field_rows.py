@@ -31,12 +31,14 @@ enum's completion instead of the hint); a value the last send check rejected is 
 
 from rich.text import Text
 
+from ros_tui.ros.schema import within
 from ros_tui.ui.entries.base import Area, Editing
 from ros_tui.ui.entries.message import MessageEntry
-from ros_tui.ui.fields import FieldRows, Row, enum_matches, flat_text, within
+from ros_tui.ui.fields import FieldRows, Row, flat_text
 from ros_tui.ui.helpers import helper_name
 from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import AREA, NavState
+from ros_tui.ui.values import enum_matches
 from ros_tui.ui.widgets.base import HISTORY_KEYS, edit_value, keyed, style
 from ros_tui.ui.widgets.panel import Panel, hint, waiting
 
