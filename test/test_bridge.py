@@ -28,7 +28,9 @@ from rcl_interfaces.srv import ListParameters
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from ros_tui.ros import inflight
 from ros_tui.ros.bridge import RosBridge, adapted_qos
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEventKind
@@ -346,6 +348,51 @@ def test_shutdown_fails_a_call_still_awaiting_its_response(held_servers):
         future.result(timeout=2.0)
 
 
+@pytest.fixture
+def held_bridge(held_servers):
+    own_bridge = RosBridge(node_name='ros_tui_held_param_test')
+    own_bridge.start()
+    yield own_bridge
+    own_bridge.shutdown()
+
+
+def list_held_params(bridge, held_servers):
+    """Ask the held node for its parameters; returns the list the answers land in."""
+    answers = []
+    bridge.list_node_parameters(HELD_NODE, lambda params, error: answers.append((params, error)))
+    assert held_servers.list_received.wait(timeout=10.0)
+    return answers
+
+
+def test_a_parameter_request_without_a_response_times_out(held_bridge, held_servers, monkeypatch):
+    monkeypatch.setattr(inflight, 'RESPONSE_TIMEOUT_S', 1.0)
+    answers = list_held_params(held_bridge, held_servers)
+    assert wait_for(lambda: answers, timeout=5.0)
+    assert answers == [(None, f'no response from {HELD_NODE}/list_parameters after 1 s')]
+
+
+def test_shutdown_fails_a_parameter_request_awaiting_its_response(held_bridge, held_servers):
+    answers = list_held_params(held_bridge, held_servers)
+    held_bridge.shutdown()
+    assert answers == [(None, 'ROS bridge shut down')]
+
+
+def test_a_parameter_reply_is_handled_once_the_bridge_refuses_new_commands(
+    held_bridge, held_servers, monkeypatch,
+):
+    """A reply that lands after shutdown() began but before the ROS thread stopped spinning is
+    handled where it lands: nothing raises in the spin loop, and on_done still runs."""
+    answers = list_held_params(held_bridge, held_servers)
+
+    def refuse(command):
+        raise RuntimeError('ROS bridge is not running')
+
+    monkeypatch.setattr(held_bridge, 'submit', refuse)  # What submit does once shutdown() began.
+    held_servers.release_list.set()
+    assert wait_for(lambda: answers, timeout=5.0)
+    assert answers == [([], None)]  # The held node lists no parameters.
+
+
 def test_subscribe_receives_chatter(bridge, fixture_servers):
     buffer = EchoBuffer()
     bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=2.0)
@@ -434,58 +481,27 @@ def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
     assert not any('/_' in name for name in leaked), leaked
 
 
-def test_list_and_set_node_parameters(bridge, fixture_servers):
+def fixture_node_name(fixture_servers):
     node = fixture_servers.node
-    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
-
-    def list_params():
-        holder = {}
-        done = threading.Event()
-
-        def on_done(params, error):
-            holder['params'], holder['error'] = params, error
-            done.set()
-
-        bridge.list_node_parameters(full_name, on_done)
-        done.wait(timeout=5.0)
-        return holder.get('params'), holder.get('error')
-
-    def test_param_value():
-        params, _error = list_params()
-        if params is None:
-            return None
-        return next((value for name, _type, value in params if name == 'test_param'), None)
-
-    # Poll until the node's parameter services are discovered and report the declared value.
-    assert wait_for(lambda: test_param_value() == 0, timeout=15.0), (
-        f'test_param never listed as 0: {list_params()}'
-    )
-
-    def set_param(value):
-        result = {}
-        done = threading.Event()
-
-        def on_set(error):
-            result['error'] = error
-            done.set()
-
-        bridge.set_node_parameter(full_name, 'test_param', value, on_set)
-        assert done.wait(timeout=5.0), 'set_node_parameter never completed'
-        return result.get('error')
-
-    # Set it through the bridge and confirm success (no error string back), then restore
-    # the declared value — fixture_servers is module-scoped, so leaking 42 would make
-    # order-dependent runs of sibling tests see the wrong value.
-    try:
-        assert set_param('42') is None
-        assert wait_for(lambda: test_param_value() == 42, timeout=10.0)
-    finally:
-        set_param('0')
+    return f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
 
 
-def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
-    node = fixture_servers.node
-    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
+def list_params(bridge, node_name, timeout=5.0):
+    """(params, error) from list_node_parameters, or (None, None) if it never answered."""
+    holder = {}
+    done = threading.Event()
+
+    def on_done(params, error):
+        holder['params'], holder['error'] = params, error
+        done.set()
+
+    bridge.list_node_parameters(node_name, on_done)
+    done.wait(timeout=timeout)
+    return holder.get('params'), holder.get('error')
+
+
+def set_param(bridge, node_name, name, value, type_label):
+    """The error set_node_parameter answered with (None when the node took the value)."""
     result = {}
     done = threading.Event()
 
@@ -493,6 +509,75 @@ def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
         result['error'] = error
         done.set()
 
-    bridge.set_node_parameter(full_name, 'no_such_param', '1', on_set)
+    bridge.set_node_parameter(node_name, name, value, type_label, on_set)
     assert done.wait(timeout=10.0), 'set_node_parameter never completed'
-    assert result['error'] is not None  # undeclared parameter is rejected by the node.
+    return result.get('error')
+
+
+def param_value(bridge, node_name, name):
+    params, _error = list_params(bridge, node_name)
+    return next((value for listed, _type, value in params or () if listed == name), None)
+
+
+def test_list_and_set_node_parameters(bridge, fixture_servers):
+    full_name = fixture_node_name(fixture_servers)
+    # Poll until the node's parameter services are discovered and report the declared value.
+    assert wait_for(lambda: param_value(bridge, full_name, 'test_param') == 0, timeout=15.0), (
+        f'test_param never listed as 0: {list_params(bridge, full_name)}'
+    )
+    params, _error = list_params(bridge, full_name)
+    assert {(name, kind) for name, kind, _value in params} >= {
+        ('test_param', 'int'), ('test_doubles', 'double[]'), ('test_names', 'string[]'),
+    }
+    # Set it through the bridge and confirm success (no error string back), then restore
+    # the declared value — fixture_servers is module-scoped, so leaking 42 would make
+    # order-dependent runs of sibling tests see the wrong value.
+    try:
+        assert set_param(bridge, full_name, 'test_param', 42, 'int') is None
+        assert wait_for(lambda: param_value(bridge, full_name, 'test_param') == 42, timeout=10.0)
+    finally:
+        set_param(bridge, full_name, 'test_param', 0, 'int')
+
+
+@pytest.mark.parametrize('name, type_label, sent, declared, received', [
+    ('test_doubles', 'double[]', [1, 2], [0.5], [1.0, 2.0]),  # Whole numbers, sent as doubles.
+    ('test_doubles', 'double[]', [], [0.5], []),
+    ('test_names', 'string[]', [], ['a'], []),
+])
+def test_set_an_array_parameter_by_its_declared_type(
+    bridge, fixture_servers, name, type_label, sent, declared, received,
+):
+    full_name = fixture_node_name(fixture_servers)
+    node = fixture_servers.node
+    assert wait_for(lambda: param_value(bridge, full_name, name) is not None, timeout=15.0)
+    try:
+        assert set_param(bridge, full_name, name, sent, type_label) is None
+        assert list(node.get_parameter(name).value) == received
+        assert param_value(bridge, full_name, name) == received
+    finally:
+        node.set_parameters([Parameter(name, value=declared)])
+
+
+@pytest.mark.parametrize('ask', [
+    lambda bridge, node, on_done: bridge.list_node_parameters(node, on_done),
+    lambda bridge, node, on_done: bridge.set_node_parameter(node, 'test_param', 0, 'int', on_done),
+    lambda bridge, node, on_done: bridge.get_node_info(node, on_done),
+], ids=['list', 'set', 'info'])
+def test_a_node_request_callback_that_raises_is_not_called_again(bridge, fixture_servers, ask):
+    full_name = fixture_node_name(fixture_servers)
+    assert wait_for(lambda: param_value(bridge, full_name, 'test_param') == 0, timeout=15.0)
+    calls = []
+
+    def on_done(*answer):
+        calls.append(answer)
+        raise RuntimeError('a bug in the caller')
+
+    ask(bridge, full_name, on_done)
+    assert wait_for(lambda: calls, timeout=10.0)
+    bridge.submit(lambda: None).result(timeout=2.0)  # The ROS thread is past the reply's handler.
+    assert len(calls) == 1 and calls[0][-1] is None, calls  # Answered once, without an error.
+
+
+def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
+    # The undeclared parameter is rejected by the node.
+    assert set_param(bridge, fixture_node_name(fixture_servers), 'no_such_param', 1, 'int') is not None
