@@ -47,7 +47,14 @@ has no test, add one before moving it.
 
 - `scripts/agent_check.sh` (flake8 as CI runs it + pytest in the Docker
   image; arguments go to pytest, e.g. `scripts/agent_check.sh test/test_fields.py -q`).
-  Run the files you touched, then the whole suite once at the end.
+  Run the files you touched, then the fast tier once at the end
+  (`scripts/agent_check.sh --fast`, what CI runs). If you changed
+  `ros_tui/ros/`, the app's startup or shutdown, or a test marked `offline`,
+  run the whole suite (`scripts/agent_check.sh`) instead. The tiers are in
+  `docs/testing.md`.
+- A test over real ROS asserts only outcomes that eventually arrive: no rates,
+  elapsed times, "nothing within X s" or sleeps for ordering
+  (`docs/testing.md`). Test timing on a controlled clock instead.
 - UI change: look at the new or changed PNGs in `test/artifacts/` next to
   their `expect` text, as `docs/agentic-dev.md` describes.
 - `scripts/complexity.py --diff main`: no function you touched may be over

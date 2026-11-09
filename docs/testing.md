@@ -7,7 +7,7 @@ three selected with markers (see [`pytest.ini`](../pytest.ini)):
 | ----------- | ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | model       | (none)      | `test_nav.py`, `test_keymap.py`, `test_fields.py`, `test_values.py`, `test_entries_*.py`, `test_helpers.py`, `test_register.py`, `test_widgets.py`, `test_harness.py` | The UI's model without running the app: layers and overlays (`NavState` over a fixed catalog with stand-in entries, `harness/nav_world.py`), the keymap (and that `docs/usage.md` lists it and the views take their keys from it), the field rows, a value typed and shown as text, each entry kind and the field helpers over a `FakeBridge` (`harness/live_world.py`: `live_nav`, `press`, `advance`), the widgets' pure layout helpers, the harness's clock. |
 | unit        | (none)      | `test_schema.py`, `test_message_yaml.py`, `test_message_display.py`, `test_echo.py`, `test_graph.py`, `test_inflight.py`, `test_entity_cache.py`, `test_parameters.py`, `test_contract.py`, `test_vendor_script.py` | Pure logic, no rclpy node: type labels and field paths (and that reading them loads no ROS), message round trips over many interface types, range and size checks, `byte`/NaN edge cases, display truncation, the echo buffer, the graph, the bridge's requests in flight (waits for a server, response timeouts, goals whose server vanished, shutdown) on a hand-driven clock, its entity cache, a node parameter's value built by its declared type and read back, that `RosBridge` and `FakeBridge` both implement the bridge contract (and the UI calls nothing else) and `NavState` the entries' `Host` (and the entries use nothing else of it), that the paired tables agree (the `:` commands suggested and run, the kinds of every per-kind table), how `scripts/vendor.py` reads its lock, picks the pinned wheel from PyPI's listing and what it unpacks. |
-| bridge      | `ros_graph` | `test_bridge.py`                                                | The real `RosBridge` against in-process fixture servers (and, for shutdown, servers that hold a request until the test releases it). |
+| bridge      | `ros_graph` | `test_bridge.py`, `test_bridge_offline.py`                      | The real `RosBridge` against in-process fixture servers (and, for shutdown, servers that hold a request until the test releases it). |
 | UI          | `ui`, `shots` | `ui/test_*.py`                                                | Scenarios: the textual app headless, driven by keys against the live `FakeBridge.demo()` world (no rclpy), with named screenshots. |
 | end to end  | `e2e`       | `test_e2e_smoke.py`                                             | The real app, driven by keys, over the real bridge and the fixture servers: echo, publish, call, send a goal, set a parameter. |
 
@@ -18,7 +18,49 @@ so they don't see or disturb other ROS nodes on the machine.
 domain only within one container, and parallel runs share the compose network,
 so without it two runs can pick the same domain and answer each other. The fixture
 servers are in [`test/conftest.py`](../test/conftest.py) and mirror the demo
-node.
+node; one instance serves the whole run, because a node re-created under the
+same name is slow to be discovered again (the servers that hold a request, in
+`test_bridge_offline.py`, are likewise one node reset for each test). A test
+that leaves its bridge running uses the session-wide `peer` bridge, so DDS
+discovers it once; whatever it creates lives for the run, so it publishes only
+on topics of its own. A test that shuts its bridge down takes a fresh one
+from the `bridge` fixture.
+
+## Two tiers
+
+| Tier    | Selected by          | What                                                                                   | Who runs it |
+| ------- | -------------------- | -------------------------------------------------------------------------------------- | ----------- |
+| fast    | `-m "not offline"`   | model, unit and UI tests, and `test_bridge.py`: the bridge's handling of rclpy entities on its ROS thread, plus one smoke test per way it talks over DDS (graph, service, publish, subscribe, action, parameters) | CI, on every distro; the implementer while it works |
+| offline | the `offline` marker | `test_bridge_offline.py` (the rest of the bridge over DDS: timeouts, cancels, shutdown with requests in flight, node info, parameter types and callbacks) and `test_e2e_smoke.py` | `scripts/agent_check.sh` by default; the reviewer before it passes a change |
+
+The fast tier is deterministic: nothing in it depends on how fast the machine
+is, apart from the DDS smoke tests, which wait only for outcomes. A new
+real-ROS test goes in the offline tier unless it is the one smoke test for a
+new way the bridge talks to other nodes.
+
+### Real-ROS tests wait for outcomes, never for time
+
+A test over real DDS runs on a machine that may be loaded by parallel agents and
+builds. So it:
+
+- asserts only an outcome that eventually arrives (a response, a message, an
+  event, a value on the node), polling with `wait_for` or `UiSession.wait_until`
+  up to `EVENTUALLY_S` (15 s): a slow machine makes the test slower, never red;
+- never asserts a rate, an elapsed time, or that nothing happens within some
+  seconds;
+- never sleeps to order things: wait for the state that should come first (on
+  the node, in a server the test holds, or in the app's model) before acting on
+  it or taking a shot;
+- lifts a real-time limit of the bridge it doesn't test (`monkeypatch` the
+  constant to `EVENTUALLY_S`), so a slow machine can't run into it.
+
+Whatever is quantitative or about time is tested deterministically instead: on
+a clock the test controls (`EchoBuffer(clock=…)`, the `FakeBridge`'s
+`ManualClock`) or by what the bridge set up on its ROS thread (the timer
+period it created, the timer or subscription it destroyed). A real-ROS test
+may add one long-timeout check that something eventually stops (as
+`test_periodic_publish_reaches_the_node_until_shutdown` does), since that can
+only pass late, never fail early.
 
 ## Running them
 
@@ -27,23 +69,23 @@ With ROS 2 sourced and the package built:
 ```bash
 colcon test --packages-select ros_tui && colcon test-result --verbose
 # or straight from the repo:
-python3 -m pytest
-python3 -m pytest -m ui           # one kind
-python3 -m pytest -m "not e2e"    # skip the slowest
+python3 -m pytest                      # both tiers
+python3 -m pytest -m "not offline"     # the fast tier, as CI runs it
+python3 -m pytest -m ui                # one kind
 ```
 
-Without ROS on your machine, run them in the [Docker playground](docker.md),
-which has every test dependency:
+Without ROS on your machine, use `scripts/agent_check.sh` (below), or run
+pytest in the [Docker playground](docker.md), which has every test dependency:
 
 ```bash
-docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh        # everything
-docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh -m ui  # one kind
+docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh                    # both tiers
+docker compose run --rm ros_tui src/ros_tui/docker/run_tests.sh -m "not offline"   # the fast tier
 ```
 
-Extra arguments go straight to pytest. The whole suite takes under a
-minute.
+Extra arguments go straight to pytest. The fast tier takes about 15 s, both
+tiers together about a minute.
 
-CI runs flake8, a colcon build and the whole suite on every push and pull
+CI runs flake8, a colcon build and the fast tier on every push and pull
 request to `main`, once per distro: [`jazzy.yml`](../.github/workflows/jazzy.yml),
 [`lyrical.yml`](../.github/workflows/lyrical.yml) and
 [`rolling.yml`](../.github/workflows/rolling.yml) each call
@@ -64,7 +106,8 @@ the end-to-end tests) write PNG, SVG, text and JSON shots to `test/artifacts/`.
 One command runs flake8 and the suite in Docker with shots on:
 
 ```bash
-scripts/agent_check.sh               # everything
+scripts/agent_check.sh               # both tiers
+scripts/agent_check.sh --fast        # the fast tier only, as CI runs it
 scripts/agent_check.sh -m shots      # only the scenarios
 scripts/agent_check.sh test/ui/test_topic.py -q
 ```

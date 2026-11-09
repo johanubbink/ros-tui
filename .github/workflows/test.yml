@@ -21,14 +21,19 @@ jobs:
       with:
         path: src/ros_tui
 
-    # Everything comes from package.xml through rosdep, plus the screenshot tooling and flake8.
+    # Everything comes from package.xml through rosdep, plus flake8.
     # textual is bundled: scripts/vendor.py unpacks it from its lock (no pip) before the build.
     - name: Install dependencies
       run: |
         apt-get update -qq
         rosdep update --rosdistro ${{ inputs.distro }}
         rosdep install --from-paths src --ignore-src -y --rosdistro ${{ inputs.distro }}
-        apt-get install -y --no-install-recommends python3-flake8 librsvg2-bin fonts-jetbrains-mono
+        apt-get install -y --no-install-recommends python3-flake8
+
+    # Only the job that writes the screenshots (see "Test with pytest") renders them to PNG.
+    - name: Install screenshot tooling
+      if: github.event_name == 'pull_request' && inputs.distro == 'jazzy'
+      run: apt-get install -y --no-install-recommends librsvg2-bin fonts-jetbrains-mono
 
     - name: Unpack the bundled textual
       run: python3 src/ros_tui/scripts/vendor.py
@@ -52,6 +57,8 @@ jobs:
         . install/setup.bash
         cd /tmp && python3 -c "import ros_tui, textual; assert '/install/' in textual.__file__ and '_vendor' in textual.__file__, textual.__file__"
 
+    # The fast tier: everything but the tests marked offline, which scripts/agent_check.sh runs
+    # (see docs/testing.md).
     - name: Test with pytest
       working-directory: src/ros_tui
       shell: bash
@@ -60,7 +67,7 @@ jobs:
         ROS_TUI_SHOTS: ${{ github.event_name == 'pull_request' && inputs.distro == 'jazzy' && '1' || '0' }}
       run: |
         . /opt/ros/${{ inputs.distro }}/setup.bash
-        python3 -m pytest
+        python3 -m pytest -m "not offline"
 
     - name: Upload UI screenshots
       if: always() && github.event_name == 'pull_request' && inputs.distro == 'jazzy'
