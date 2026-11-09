@@ -44,6 +44,7 @@ from textual.message import Message
 from textual.screen import Screen
 
 from ros_tui.constants import UI_TICK_PERIOD_S
+from ros_tui.ros.contract import Bridge
 from ros_tui.ros.graph import GraphSnapshot
 from ros_tui.ui import theme
 from ros_tui.ui.entries.kinds import entry_factory
@@ -98,7 +99,7 @@ class RosTuiApp(App, inherit_bindings=False):
     }
     """
 
-    def __init__(self, bridge):
+    def __init__(self, bridge: Bridge):
         super().__init__()
         self._bridge = bridge
         self.nav = NavState(entry_factory(bridge, lambda fn: self.post_message(UiCall(fn)), self._work),

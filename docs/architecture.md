@@ -28,8 +28,10 @@ The code:
 
 - [`ros_tui/ros/`](../ros_tui/ros/): everything that talks to ROS. Nothing in
   here imports textual.
+  - [`contract.py`](../ros_tui/ros/contract.py): `Bridge`, everything the UI
+    may ask of ROS: each request, how it answers and on which thread.
   - [`bridge.py`](../ros_tui/ros/bridge.py): `RosBridge`, the thread that owns
-    rclpy ([The bridge](#the-bridge)).
+    rclpy and implements `Bridge` ([The bridge](#the-bridge)).
   - [`graph.py`](../ros_tui/ros/graph.py): immutable `GraphSnapshot`s of the
     topics, services, actions and nodes, and `NodeInfo` (a node's endpoints,
     like `ros2 node info`).
@@ -41,7 +43,7 @@ The code:
   - [`events.py`](../ros_tui/ros/events.py): the action lifecycle events the
     bridge emits.
 - [`ros_tui/ui/`](../ros_tui/ui/): the textual app ([The UI](#the-ui)). Nothing
-  in here touches rclpy; it only calls `RosBridge` methods.
+  in here touches rclpy; it only calls the `Bridge` contract.
   - [`app.py`](../ros_tui/ui/app.py): `RosTuiApp`, one screen of views over the
     nav model, the one key router, the clock tick and the graph updates.
   - [`nav.py`](../ros_tui/ui/nav.py): `NavState`, the pure model of what is on
@@ -77,11 +79,13 @@ them until shutdown. Every rclpy entity (clients, publishers, subscriptions,
 timers) is created and destroyed on that thread, because creating or
 destroying entities from another thread races the executor's wait set.
 
-The UI asks for work through the bridge's public methods (`call_service`,
-`send_goal`, `publish_once`, `subscribe`, `list_node_parameters`, …). Each one
-wraps the work in a closure and calls `submit()`, which puts it on a queue and
-triggers a guard condition. The guard condition wakes the executor, which runs
-the queued closures on the ROS thread.
+The UI asks for work through the `Bridge` contract in
+[`contract.py`](../ros_tui/ros/contract.py) (`call_service`, `send_goal`,
+`publish_once`, `subscribe`, `list_node_parameters`, …), which says per member
+how it answers. `FakeBridge` implements the same contract for the tests. Each
+`RosBridge` method wraps the work in a closure and calls `submit()`, which puts
+it on a queue and triggers a guard condition. The guard condition wakes the
+executor, which runs the queued closures on the ROS thread.
 
 Results come back in one of two ways:
 

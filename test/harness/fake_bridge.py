@@ -302,7 +302,8 @@ class ManualClock:
 
 
 class FakeBridge:
-    """The bridge contract the UI uses, recorded; canned by default, simulated when ``live``."""
+    """The bridge contract (ros_tui/ros/contract.py) without rclpy, recorded; canned by default,
+    simulated when ``live``."""
 
     def __init__(
         self,
@@ -482,7 +483,7 @@ class FakeBridge:
             buffer.push(message)
 
     def subscribe(self, name, type_name, buffer):
-        self.subscriptions[name] = buffer
+        self.subscriptions.setdefault(name, buffer)  # A second subscribe keeps the first, as RosBridge does.
         feed = self.feeds.get(name) if self.live else None
         if feed is not None and name not in self._feed_timers:
             counter = itertools.count(1)

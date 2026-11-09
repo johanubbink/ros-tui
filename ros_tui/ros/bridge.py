@@ -49,13 +49,11 @@ from ros_tui.constants import (
     RESPONSE_TIMEOUT_S,
     SHUTDOWN_CANCEL_TIMEOUT_S,
 )
+from ros_tui.ros.contract import ActionEventCallback, GraphListener
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import EMPTY_GRAPH, GraphSnapshot, build_node_info, build_snapshot
 from ros_tui.ros.message_yaml import TimeSetter, import_type
-
-GraphListener = Callable[[GraphSnapshot], None]
-ActionEventCallback = Callable[[ActionEvent], None]
 
 
 @functools.lru_cache(maxsize=1)
@@ -202,7 +200,7 @@ class _Entities:
 
 
 class RosBridge:
-    """UI-agnostic facade over one rclpy node spun on a dedicated thread."""
+    """The bridge contract (ros/contract.py) over one rclpy node spun on a dedicated thread."""
 
     def __init__(self, node_name: str = 'ros_tui'):
         self._node_name = node_name
