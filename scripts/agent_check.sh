@@ -32,7 +32,9 @@ marker="$(mktemp)"
 trap 'rm -f "$marker"' EXIT
 
 # -T: no pseudo-TTY, so this works from agents and CI-like shells.
-docker compose run --rm -T -e ROS_TUI_SHOTS="${ROS_TUI_SHOTS:-1}" ros_tui bash -c '
+# Discovery stays inside the container: parallel runs (several agents) share the compose network,
+# and domain_coordinator only picks a free ROS_DOMAIN_ID within one container.
+docker compose run --rm -T -e ROS_TUI_SHOTS="${ROS_TUI_SHOTS:-1}" -e ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ros_tui bash -c '
     set -e
     cd /ros_tui_ws/src/ros_tui
     echo "[agent_check] flake8 (errors)"
