@@ -17,7 +17,7 @@ jobs:
       image: ros:${{ inputs.distro }}-ros-base
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         path: src/ros_tui
 
@@ -71,7 +71,7 @@ jobs:
 
     - name: Upload UI screenshots
       if: always() && github.event_name == 'pull_request' && inputs.distro == 'jazzy'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ui-screenshots
         path: src/ros_tui/test/artifacts/
