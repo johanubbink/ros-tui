@@ -6,135 +6,67 @@
 [![Release](https://img.shields.io/github/v/release/johanubbink/ros-tui)](https://github.com/johanubbink/ros-tui/releases/latest)
 [![License](https://img.shields.io/github/license/johanubbink/ros-tui)](LICENSE)
 
-ros_tui is a terminal UI for poking at a running ROS 2 system. Browse its
-**topics, services, actions and nodes**, fill in a message field by field,
-and echo, publish, call, send goals or set parameters, without typing
-`ros2 ... "{...}"` one-liners. It is keyboard-first, with vim keys and
-familiar alternatives, and a click does what its keys would.
+A terminal UI for poking at a running ROS 2 system. Browse topics,
+services, actions and nodes, fill in messages field by field, and echo,
+publish, call or send goals without typing `ros2 ... "{...}"` one-liners.
 
 ![ros_tui against the demo servers: echoing a topic, calling a service, sending an action goal and setting a node parameter](assets/ros-tui-demo.gif)
 
 ## Install
 
-ros_tui needs a sourced ROS 2 environment (Jazzy, Lyrical or Rolling) and
-nothing else: it carries its own copy of textual, so there is no pip step.
-
-**One file.** Download the release onto your `PATH`:
-
-```bash
-sudo curl -fsSL -o /usr/local/bin/ros_tui https://github.com/johanubbink/ros-tui/releases/latest/download/ros_tui.pyz && sudo chmod +x /usr/local/bin/ros_tui
-```
-
-Without sudo, put it in `~/.local/bin` instead. That directory is only on
-`PATH` if it existed when you logged in, so if `ros_tui` isn't found, run
-`~/.local/bin/ros_tui` or add the directory to your `PATH`:
+You need a sourced ROS 2 environment (Jazzy, Lyrical or Rolling). Nothing
+else: ros_tui is a single file with its dependencies built in.
 
 ```bash
 mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/ros_tui https://github.com/johanubbink/ros-tui/releases/latest/download/ros_tui.pyz && chmod +x ~/.local/bin/ros_tui
 ```
 
-**From source**, in a colcon workspace:
+If `ros_tui` isn't found afterwards, `~/.local/bin` isn't on your `PATH` yet.
+Log out and back in, or add it to your `PATH`.
+
+Prefer a system-wide install? Use `/usr/local/bin` with `sudo` instead. To
+build from source, clone the repo into a colcon workspace and
+`colcon build --packages-select ros_tui`.
+
+## Use it
+
+Run `ros_tui` (or `ros2 run ros_tui ros_tui` from a colcon build). It opens
+on a list of every topic, service, action and node in the graph.
+
+| Key             | Does                                          |
+| --------------- | --------------------------------------------- |
+| `j` `k`         | move (arrows work too)                        |
+| `enter` / `esc` | go in / go back                               |
+| `space`         | send: publish, call, send the goal, set params |
+| `/`             | find anything by name                         |
+| `?`             | every key that works right now                |
+| `:q`            | quit                                          |
+
+Moving and editing never send anything; only `space` does. The full guide
+is in [docs/usage.md](docs/usage.md).
+
+## Try it without a robot
+
+The repo has a Docker playground with demo servers. You only need Docker;
+no ROS on the host.
 
 ```bash
-mkdir -p ~/ros_tui_ws/src && cd ~/ros_tui_ws/src
-git clone https://github.com/johanubbink/ros-tui.git
-cd ~/ros_tui_ws
-rosdep install --from-paths src --ignore-src -y
-colcon build --packages-select ros_tui
-source install/setup.bash
+docker/create_dot_env            # once
+docker compose up --build        # start the demo servers
+docker compose exec ros_tui bash # in a second terminal
+ros2 run ros_tui ros_tui
 ```
 
-## Run it
+See [docs/docker.md](docs/docker.md) for what to try.
 
-```bash
-ros_tui                          # the one-file install
-ros2 run ros_tui ros_tui         # a colcon (or apt) install
-```
+## More docs
 
-The ☰ list fills in from the live ROS graph and stays up to date. What ROS
-prints meanwhile (RMW warnings, log lines) goes to a log file under
-`~/.ros/log`, not over the UI.
-
-## Using it
-
-ros_tui opens on the **☰ list** of everything in the graph. `j` `k` (or ↑ ↓)
-pick an entry, `enter` opens it in a tab, `/` finds anything by name, `?`
-shows every key that works right now.
-
-**Layers.** The screen is a stack: the tab row › inside a tab › inside an
-area (a panel such as REQUEST) › typing a value. **`esc` always goes up one
-layer, `enter` always goes down one**, and the footer always says where you
-are and what those two will do. Keys never depend on focus.
-
-**Only space sends.** Space (or `^s`) is an entry's one sending key; `r` starts
-a repeating publish, and `s` only stops a repeat or cancels a goal. Moving and
-editing never send, and a value is checked (and the field named) before
-anything goes out.
-
-- **Topics** open in Echo when someone publishes them, else in Publish (`e`
-  switches). Echo shows the newest message with the count and Hz; `enter`
-  freezes it to read it. Publish sends once, or `r` repeats at a rate.
-- **Services**: edit the request, space calls it, the response and its time
-  appear next to it.
-- **Actions**: edit the goal, space sends it, feedback streams in until the
-  result; `s` cancels. Goals still running are canceled when you quit.
-- **Nodes**: a node's interfaces (`enter` opens one) and its parameters, which
-  you change and then set with space.
-
-Messages are edited as field rows, prefilled with the defaults. `f` on a
-Header, Time, Quaternion or enum field opens a helper to fill it in, `y` / `p`
-copy and paste a message between entries of the same type, `u` undoes, `[`
-`]` bring back what you sent before.
-
-| Key           | Does                                                      |
-| ------------- | --------------------------------------------------------- |
-| `enter` `esc` | down / up one layer                                       |
-| `j` `k` `h` `l` | move (or the arrows, tab)                               |
-| `space` `^s`  | publish, start / stop the echo, call, send the goal, set parameters |
-| `r` `R` `s`   | repeat a publish, change its rate, stop it / cancel a goal |
-| `e`           | switch a topic between Echo and Publish                   |
-| `i` `c`       | edit the value / clear it and edit                        |
-| `f`           | field helper                                              |
-| `y` `p` `u`   | copy, paste, undo                                         |
-| `0`…`9` `x`   | go to a tab, close it                                     |
-| `/` `:` `?`   | search, commands (`:log`, `:rate 5`, …), all keys         |
-| `:q`          | quit (or `ctrl+q`)                                        |
-
-More detail, and every key, is in [docs/usage.md](docs/usage.md). Why the UI
-works this way is in [docs/design-principles.md](docs/design-principles.md).
-
-## Run it without a robot
-
-The repo includes a Docker playground with some example servers. You only need
-Docker with the Compose plugin; ROS isn't needed on the host.
-
-```bash
-docker/create_dot_env            # once: matches the container user to yours
-docker compose up --build        # builds, then starts the demo servers
-docker compose exec ros_tui bash # in a second terminal...
-ros2 run ros_tui ros_tui         # ...then run the TUI inside it
-```
-
-See [docs/docker.md](docs/docker.md) for what to try on each entry.
-
-## Docs
-
-- [docs/usage.md](docs/usage.md): the layers, each kind of entry, the
-  editor, the field helpers and every key.
-- [docs/docker.md](docs/docker.md): the Docker playground and the demo
-  servers.
-- [docs/design-principles.md](docs/design-principles.md): the rules behind
-  the UI, its look and its copy, for anyone changing it.
-- [docs/architecture.md](docs/architecture.md): how ros_tui works inside.
-- [docs/testing.md](docs/testing.md): running the tests, and
-  `scripts/make_gif.py`, which remakes the GIF above.
+- [Usage](docs/usage.md): every screen and key
+- [Design principles](docs/design-principles.md): why the UI works this way
+- [Architecture](docs/architecture.md): how it works inside
+- [Testing](docs/testing.md): running the tests and remaking the GIF
 
 ## License
 
-ros_tui is released under the Apache License 2.0. See [LICENSE](LICENSE).
-
-It bundles [textual](https://github.com/Textualize/textual) and its
-dependencies (rich, Pygments, markdown-it-py, mdit-py-plugins, mdurl,
-linkify-it-py, platformdirs, typing_extensions) in
-[`ros_tui/_vendor`](ros_tui/_vendor), each under its own MIT, BSD or PSF
-license, included next to it.
+Apache 2.0, see [LICENSE](LICENSE). Bundled dependencies (textual and
+friends) in [`ros_tui/_vendor`](ros_tui/_vendor) keep their own licenses.
