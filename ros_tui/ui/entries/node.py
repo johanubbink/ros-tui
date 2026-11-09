@@ -27,10 +27,10 @@ touches the model. Until an answer is in, the area says "loading…".
 from typing import Any, NamedTuple
 
 from ros_tui.ros.parameters import BOOL, DOUBLE, INT, STRING, UNKNOWN, Param, checked
-from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
+from ros_tui.ui.entries.base import IFS, PARAM, Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
 from ros_tui.ui.fields import BOOL_TYPE, flow_yaml, parse_list, parse_scalar
+from ros_tui.ui.keymap import key_for
 
-PARAM = 'par'  # The area id of PARAMETERS; its undo steps are tagged with the parameter's name.
 
 # (group title, NodeInfo attribute, the kind its entries open as), in the order they are listed.
 INTERFACE_GROUPS = (
@@ -89,7 +89,7 @@ def parse_value(param: Param, text: str) -> Any:
 class NodeEntry(Entry):
     """A node: what is known about it is None until the bridge has answered."""
 
-    AREAS = (Area('ifs', 'INTERFACES', 'open it'), Area(PARAM, 'PARAMETERS', 'edit', True))
+    AREAS = (Area(IFS, 'INTERFACES', 'open it'), Area(PARAM, 'PARAMETERS', 'edit', True))
 
     def __init__(self, tab: Tab, ctx: Context | None = None):
         super().__init__(tab, ctx)
@@ -132,13 +132,13 @@ class NodeEntry(Entry):
 
     # ---------- rows ----------
     def row_count(self, area: Area) -> int:
-        if area.id == 'ifs':
+        if area.id == IFS:
             return len(self.interfaces())
         return len(self.params or ()) if area.id == PARAM else 0
 
     def activate_row(self, nav: Host, area: Area, row: int, how: str) -> bool:
         """enter on an interface opens it in a tab."""
-        rows = self.interfaces() if area.id == 'ifs' else []
+        rows = self.interfaces() if area.id == IFS else []
         if not 0 <= row < len(rows):
             return False
         nav.open_entity(rows[row].kind, rows[row].name, how)
@@ -168,7 +168,8 @@ class NodeEntry(Entry):
             text = f'{param.name} unchanged'
         else:
             changes[param.name] = value
-            text = f'{param.name} = {render_value(value)} (not set yet: space sets it, u undoes)'
+            text = (f'{param.name} = {render_value(value)} '
+                    f"(not set yet: {key_for('primary')} sets it, {key_for('undo')} undoes)")
         after = changes.get(param.name, _NO_CHANGE)
         undo = UndoEntry(self.tab, lambda nav: self._undo(param.name, before), param.name) if after != before else None
         return Commit(True, text, undo)
@@ -190,7 +191,7 @@ class NodeEntry(Entry):
 
     @staticmethod
     def _paste(nav: Host, how: str, _: Any) -> None:
-        nav.feedback.refuse(how, 'nothing copied yet (y copies)' if nav.register is None
+        nav.feedback.refuse(how, f"nothing copied yet ({key_for('verb', 'yank')} copies)" if nav.register is None
                             else 'nothing to paste into on a node', 'no editor here')
 
     def _set_changed(self, nav: Host, how: str) -> None:
@@ -198,7 +199,7 @@ class NodeEntry(Entry):
         A change clears when its set succeeds; a failed one stays changed."""
         changes = self.changes
         if not changes:
-            nav.feedback.refuse(how, 'change a value first (enter edits it)', 'no changed parameters to set')
+            nav.feedback.refuse(how, f"change a value first ({key_for('go_down')} edits it)", 'no changed parameters to set')
             return
         count = len(changes)
         types = {param.name: param.type for param in self.params or ()}

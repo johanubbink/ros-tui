@@ -24,6 +24,7 @@ from textual import events
 from textual.widget import Widget
 
 from ros_tui.ui.entries.base import Running, Tab
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import NavState
 from ros_tui.ui.theme import KINDS, TOKENS
 
@@ -205,16 +206,18 @@ def primary_look(nav: NavState, tab: Tab, look: str) -> str:
     return 'flash' if nav.feedback.flashing(tab) else look
 
 
-BUTTON_VERBS = {'space': 'primary', 's': 'secondary', 'r': 'repeat'}  # A button's key -> the verb a click runs.
+# The keys of an entry's older / newer sends, as a hint names them: "[ ]".
+HISTORY_KEYS = f"{key_for('verb', 'history_older')} {key_for('verb', 'history_newer')}"
 
 
-def button(label: Text | str, key: str, look: str = '') -> Text:
-    """A button with its key ("▶ Call space"): the label (a Text may style parts of itself) and the
-    key on the look's background. A click on it does what its key does (`BUTTON_VERBS`), unless it is disabled ('off')."""
+def button(label: Text | str, verb: str, look: str = '') -> Text:
+    """A button for an entry verb ('primary' or a `verb` the keymap runs), with the key that runs it
+    ("▶ Call space"): the label (a Text may style parts of itself) and the key on the look's
+    background. A click on it runs the verb, unless it is disabled ('off')."""
+    key = key_for('primary') if verb == 'primary' else key_for('verb', verb)
     color, bg, key_color = BUTTON_LOOKS[look]
     text = Text.assemble(' ', label, ' ')
     text.stylize_before(style(color, bg, bold=look in ('pri', 'stop', 'flash')))
     text.append(key, style(key_color, bg, bold=look != 'off'))  # Keys are bold.
     text.append(' ', style(bg=bg))
-    verb = BUTTON_VERBS.get(key) if look != 'off' else None
-    return clickable(text, ('verb', verb) if verb else None, before=True)
+    return clickable(text, ('verb', verb) if look != 'off' else None, before=True)

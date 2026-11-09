@@ -19,19 +19,18 @@ the ServiceEntry (entries/service.py)."""
 
 from rich.text import Text
 
-from ros_tui.ui.entries.base import Area
-from ros_tui.ui.entries.message import EDITOR
+from ros_tui.ui.entries.base import EDITOR, OUT, Area
 from ros_tui.ui.entries.service import ServiceEntry
 from ros_tui.ui.nav import NavState
-from ros_tui.ui.widgets.base import button, keyed, primary_look, spread, style
+from ros_tui.ui.widgets.base import HISTORY_KEYS, button, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, field_lines
 from ros_tui.ui.widgets.panel import Panel, pill
 
 
 def service_toolbar(nav: NavState, entry: ServiceEntry, width: int) -> Text:
     """The button row: the Call button with its key, and where earlier requests are."""
-    return spread(button('▶ Call', 'space', primary_look(nav, entry.tab, 'pri')), keyed('[ ]', 'earlier requests', 'dim'),
-                  width, optional=True)
+    return spread(button('▶ Call', 'primary', primary_look(nav, entry.tab, 'pri')),
+                  keyed(HISTORY_KEYS, 'earlier requests', 'dim'), width, optional=True)
 
 
 def response_panel(nav: NavState, entry: ServiceEntry, area: Area) -> Panel:
@@ -58,5 +57,5 @@ def response_panel(nav: NavState, entry: ServiceEntry, area: Area) -> Panel:
 
 def service_panels(nav: NavState, entry: ServiceEntry) -> list[Panel]:
     """REQUEST and RESPONSE, in the order of the entry's areas."""
-    makers = {EDITOR: editor_panel, 'out': response_panel}
+    makers = {EDITOR: editor_panel, OUT: response_panel}
     return [makers[area.id](nav, entry, area) for area in entry.areas()]

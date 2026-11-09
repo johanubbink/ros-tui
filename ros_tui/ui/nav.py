@@ -406,8 +406,9 @@ class NavState:
         else:
             self.layer = IN
         self.editing = None
-        self.feedback.log_line(how, f'closed {tab.name} — {" · ".join(stopped + ["u reopens it"])}')
-        self.feedback.show_toast(f'closed {tab.name} · u undoes', 'info')
+        undo = keymap.key_for('undo')
+        self.feedback.log_line(how, f'closed {tab.name} — {" · ".join(stopped + [f"{undo} reopens it"])}')
+        self.feedback.show_toast(f'closed {tab.name} · {undo} undoes', 'info')
 
     def _goto_tab(self, digit: str) -> None:
         if digit == '0':
@@ -472,7 +473,7 @@ class NavState:
             # enter on a row: the entry's own action first (fold a list, open an interface), else edit it.
             if not self.entry(self.tab).activate_row(self, self.area(), self.row_index(), how) \
                     and not self.start_edit(how):
-                self.feedback.log_line(how, 'nothing to edit here — esc goes back up')
+                self.feedback.log_line(how, f"nothing to edit here — {keymap.key_for('go_up')} goes back up")
         else:
             self._commit_edit(how)
 

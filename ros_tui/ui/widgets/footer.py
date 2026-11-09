@@ -23,10 +23,13 @@ widgets/command_suggestions.py).
 from rich.text import Text
 
 from ros_tui.ui.command_line import CommandLine
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.theme import MODES
 from ros_tui.ui.widgets.base import NavView, cursor_cell, keyed, spread, style
 
-COMMAND_HINT = '↑↓ pick · tab completes · enter runs · esc cancels'
+COMMAND_HINT = (f"{key_for('cmd_move', -1, 'command')}{key_for('cmd_move', 1, 'command')} pick · "
+                f"{key_for('cmd_complete', mode='command')} completes · {key_for('cmd_run', mode='command')} runs · "
+                f"{key_for('close_overlay', mode='command')} cancels")
 
 
 class Footer(NavView):
@@ -55,8 +58,9 @@ class Footer(NavView):
             last = index == len(foot.path) - 1
             left.append(part, style('bright', bold=True) if last else style('head'))
         right = Text()
-        for key, label, color in (('esc', foot.esc, 'grey'), ('enter', foot.enter, 'grey'),
-                                  ('f', foot.helper and f'{foot.helper} helper', 'bright'), ('?', 'keys', 'grey')):
+        for key, label, color in ((key_for('go_up'), foot.esc, 'grey'), (key_for('go_down'), foot.enter, 'grey'),
+                                  (key_for('helper'), foot.helper and f'{foot.helper} helper', 'bright'),
+                                  (key_for('which_key'), 'keys', 'grey')):
             if label:
                 right.append_text(keyed(key, label, color))
                 right.append('  ')
