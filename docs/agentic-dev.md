@@ -8,7 +8,8 @@ follows are in [design-principles.md](design-principles.md).
 ## One command
 
 ```bash
-scripts/agent_check.sh                       # flake8 + the whole suite, shots on
+scripts/agent_check.sh                       # flake8 + both test tiers, shots on (about a minute)
+scripts/agent_check.sh --fast                # flake8 + the fast tier only, as CI runs it (about 15 s)
 scripts/agent_check.sh -m shots              # flake8 + only the screenshot scenarios
 scripts/agent_check.sh test/ui/test_topic.py -q
 ROS_TUI_SHOTS=0 scripts/agent_check.sh       # no artifacts
@@ -17,7 +18,10 @@ ROS_TUI_SHOTS=0 scripts/agent_check.sh       # no artifacts
 It runs in the Docker playground image (`docker compose run`), because the host
 may have no textual or ROS. It runs flake8 the way CI does (real errors fail the
 run, style issues are listed), then pytest with `ROS_TUI_SHOTS=1` and any
-arguments you give it. At the end it prints the artifact folder and the
+arguments you give it. `--fast`, as the first argument, leaves out the tests
+marked `offline` (the real-ROS bridge tests beyond the smoke tests, and the
+end-to-end tests; see [testing.md](testing.md#two-tiers)). Several runs can go
+at once, from one worktree or several. At the end it prints the artifact folder and the
 `manifest.md` of every test that wrote shots. Its exit status is pytest's.
 
 If the image is older than `docker/Dockerfile`, rebuild it with
@@ -150,12 +154,16 @@ not just to move the number.
 a change in two passes:
 
 - **`implementer`** makes it work: tests first, then the code, verified with
-  `scripts/agent_check.sh` and the screenshots.
+  `scripts/agent_check.sh` on the files it touched, the fast tier
+  (`--fast`), and the screenshots; the whole suite as well when it changed
+  `ros_tui/ros/` or the end-to-end paths.
 - **`reviewer`** owns the code quality: it reviews the diff for bugs, docs
   drift and test quality (each new test must fail without the change), checks
   the screenshots against [design-principles.md](design-principles.md), and
   simplifies toward deep modules with narrow interfaces until
-  `scripts/complexity.py --diff main` passes.
+  `scripts/complexity.py --diff main` passes. It runs both tiers
+  (`scripts/agent_check.sh`) before it passes a change, since CI runs only the
+  fast one.
 
 Plan the change first, give `implementer` the whole plan, check its result,
 then give `reviewer` the branch and what the implementer reported.

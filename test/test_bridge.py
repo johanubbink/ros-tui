@@ -13,7 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests: the real RosBridge against in-process fixture servers (no UI)."""
+"""The real RosBridge (no UI), in the fast tier that CI runs on every distro.
+
+Two kinds of test, both deterministic enough for CI:
+
+- How the bridge drives rclpy, checked on the ROS thread without waiting on DDS: the command queue,
+  the entities it creates and destroys, the housekeeping of parked and in-flight requests.
+- A smoke test of each way it talks to other nodes over DDS (graph, service, publish, subscribe,
+  action, parameters), against the fixture servers in conftest.py. They assert only outcomes that
+  eventually arrive, so a slow machine makes them slower, never red.
+
+The rest of the bridge's DDS behaviour is in test_bridge_offline.py (see docs/testing.md).
+"""
 
 import threading
 import time
@@ -21,7 +32,8 @@ from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
-from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, FIBONACCI_ACTION, INBOX_TOPIC, wait_for
+from conftest import (ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, EVENTUALLY_S, FIBONACCI_ACTION, FIXTURE_NODE,
+                      INBOX_TOPIC, answer_of, event_kinds, terminal_event, wait_for)
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -38,22 +50,21 @@ FIBONACCI_TYPE = 'example_interfaces/action/Fibonacci'
 STRING_TYPE = 'std_msgs/msg/String'
 
 
-def event_kinds(events):
-    return [event.kind for event in events]
+def on_ros_thread(bridge, fn):
+    """Run `fn` on the bridge's ROS thread (the only one that may touch its entities)."""
+    return bridge.submit(fn).result(timeout=EVENTUALLY_S)
 
 
-def terminal_event(events):
-    return next((event for event in events if event.kind == ActionEventKind.RESULT), None)
-
+# ---------------------------------------------------------------- the ROS thread and its entities
 
 def test_submit_runs_on_ros_thread(bridge):
     future = bridge.submit(lambda: threading.current_thread().name)
-    assert future.result(timeout=2.0) == 'ros-bridge'
+    assert future.result(timeout=EVENTUALLY_S) == 'ros-bridge'
 
 
 def test_submit_storm_all_resolve(bridge):
     futures = [bridge.submit(lambda value=value: value) for value in range(200)]
-    assert [future.result(timeout=5.0) for future in futures] == list(range(200))
+    assert [future.result(timeout=EVENTUALLY_S) for future in futures] == list(range(200))
 
 
 def test_submit_after_shutdown_raises(bridge):
@@ -69,213 +80,51 @@ def test_shutdown_idempotent(bridge):
 
 def test_start_twice_is_a_noop(bridge):
     bridge.start()
-    assert bridge.submit(lambda: 'ok').result(timeout=2.0) == 'ok'
+    assert bridge.submit(lambda: 'ok').result(timeout=EVENTUALLY_S) == 'ok'
 
 
-def test_graph_lists_fixture_entities(bridge, fixture_servers):
-    def fixture_entities_visible():
-        graph = bridge.latest_graph
-        return (
-            any(entry.name == FIBONACCI_ACTION for entry in graph.actions)
-            and any(entry.name == ADD_TWO_INTS_SERVICE for entry in graph.services)
-            and any(entry.name == CHATTER_TOPIC for entry in graph.topics)
-        )
+def test_periodic_publish_runs_a_timer_at_the_rate_until_stopped(bridge):
+    def timer_of(name):
+        periodic = bridge._entities.periodic.get(name)
+        return periodic.timer if periodic else None
 
-    assert wait_for(fixture_entities_visible)
-    graph = bridge.latest_graph
-    action = next(entry for entry in graph.actions if entry.name == FIBONACCI_ACTION)
-    assert action.types == (FIBONACCI_TYPE,)
-    service = next(entry for entry in graph.services if entry.name == ADD_TWO_INTS_SERVICE)
-    assert service.types == (ADD_TWO_INTS_TYPE,)
-    assert next(entry for entry in graph.topics if entry.name == CHATTER_TOPIC).publishers >= 1
-    all_names = [
-        entry.name for group in (graph.actions, graph.services, graph.topics) for entry in group
-    ]
-    assert not any('/_' in name for name in all_names), all_names
+    def live_timers():
+        return list(bridge._node.timers)
 
-
-def test_graph_listener_fires_with_increasing_versions(bridge, fixture_servers):
-    seen_versions = []
-    bridge.set_graph_listener(lambda snapshot: seen_versions.append(snapshot.version))
-    topic_name = '/tui_listener_probe'
-    bridge.publish_once(topic_name, STRING_TYPE, String(data='x')).result(timeout=2.0)
-    assert wait_for(lambda: any(entry.name == topic_name for entry in bridge.latest_graph.topics))
-    assert wait_for(lambda: seen_versions)
-    assert seen_versions == sorted(set(seen_versions)), 'versions must be strictly increasing'
+    bridge.start_periodic_publish(INBOX_TOPIC, STRING_TYPE, String(data='tick'), rate_hz=20.0).result(EVENTUALLY_S)
+    first = on_ros_thread(bridge, lambda: timer_of(INBOX_TOPIC))
+    assert first.timer_period_ns == 50_000_000
+    # Starting again on the topic replaces the loop: the old timer is gone, the new one has the new rate.
+    bridge.start_periodic_publish(INBOX_TOPIC, STRING_TYPE, String(data='tock'), rate_hz=4.0).result(EVENTUALLY_S)
+    second = on_ros_thread(bridge, lambda: timer_of(INBOX_TOPIC))
+    assert second.timer_period_ns == 250_000_000
+    timers = on_ros_thread(bridge, live_timers)
+    assert second in timers and first not in timers
+    bridge.stop_periodic_publish(INBOX_TOPIC).result(EVENTUALLY_S)
+    assert on_ros_thread(bridge, lambda: timer_of(INBOX_TOPIC)) is None
+    assert second not in on_ros_thread(bridge, live_timers)
 
 
-def test_service_call_roundtrip(bridge, fixture_servers):
-    future = bridge.call_service(
-        ADD_TWO_INTS_SERVICE, ADD_TWO_INTS_TYPE, AddTwoInts.Request(a=2, b=3)
-    )
-    assert future.result(timeout=5.0).sum == 5
+def test_shutdown_leaves_nothing_on_the_node(bridge):
+    """Nothing the bridge made outlives it: no periodic publish, echo or graph poll keeps running."""
+    bridge.start_periodic_publish(INBOX_TOPIC, STRING_TYPE, String(data='tick'), rate_hz=20.0).result(EVENTUALLY_S)
+    bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, EchoBuffer()).result(timeout=EVENTUALLY_S)
+    bridge.shutdown()
+    assert wait_for(lambda: not bridge._thread.is_alive()), 'the ROS thread never ended'
+    node = bridge._node
+    left = (list(node.timers), list(node.publishers), list(node.subscriptions), list(node.clients), list(node.guards))
+    assert left == ([], [], [], [], []), left
 
 
-def test_service_unavailable_times_out(bridge):
-    future = bridge.call_service(
-        '/tui_no_such_service', ADD_TWO_INTS_TYPE, AddTwoInts.Request(a=1, b=1)
-    )
-    with pytest.raises(TimeoutError, match='not available'):
-        future.result(timeout=8.0)
+def test_unsubscribe_destroys_the_subscription(bridge):
+    def subscribed_topics():
+        return [subscription.topic_name for subscription in bridge._node.subscriptions]
 
-
-def test_lru_overflow_with_pending_clients_does_not_crash(bridge):
-    futures = [
-        bridge.call_service(f'/tui_missing_{index}', ADD_TWO_INTS_TYPE, AddTwoInts.Request())
-        for index in range(10)
-    ]
-    for future in futures:
-        with pytest.raises((TimeoutError, RuntimeError)):
-            future.result(timeout=8.0)
-
-
-def test_action_goal_feedback_result(bridge, fixture_servers):
-    events = []
-    bridge.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=5), events.append)
-    assert wait_for(lambda: terminal_event(events), timeout=10.0), event_kinds(events)
-    kinds = event_kinds(events)
-    # Feedback may overtake the goal response on the wire, so only assert relative order.
-    assert ActionEventKind.ACCEPTED in kinds
-    assert kinds.index(ActionEventKind.ACCEPTED) < kinds.index(ActionEventKind.RESULT)
-    assert ActionEventKind.FEEDBACK in kinds
-    result_event = terminal_event(events)
-    from action_msgs.msg import GoalStatus
-
-    assert result_event.status == GoalStatus.STATUS_SUCCEEDED
-    assert list(result_event.payload.sequence) == [0, 1, 1, 2, 3, 5]
-
-
-def test_action_cancel_midway(bridge, fixture_servers):
-    events = []
-    bridge.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=200), events.append)
-    assert wait_for(lambda: ActionEventKind.FEEDBACK in event_kinds(events), timeout=10.0)
-    bridge.cancel_goal(FIBONACCI_ACTION)
-    assert wait_for(lambda: terminal_event(events), timeout=10.0)
-    kinds = event_kinds(events)
-    assert ActionEventKind.CANCEL_ACCEPTED in kinds
-    from action_msgs.msg import GoalStatus
-
-    assert terminal_event(events).status == GoalStatus.STATUS_CANCELED
-
-
-def test_double_send_rejected_while_in_flight(bridge, fixture_servers):
-    events = []
-    second_events = []
-    bridge.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=200), events.append)
-    assert wait_for(lambda: ActionEventKind.ACCEPTED in event_kinds(events), timeout=10.0)
-    bridge.send_goal(
-        FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=3), second_events.append
-    )
-    assert wait_for(lambda: second_events, timeout=5.0)
-    assert second_events[0].kind == ActionEventKind.ERROR
-    assert 'already in flight' in second_events[0].payload
-    bridge.cancel_goal(FIBONACCI_ACTION)
-    assert wait_for(lambda: terminal_event(events), timeout=10.0)
-
-
-def test_send_goal_to_missing_server_reports_error(bridge):
-    events = []
-    bridge.send_goal('/tui_no_such_action', FIBONACCI_TYPE, Fibonacci.Goal(order=3), events.append)
-    assert wait_for(lambda: events, timeout=8.0)
-    assert events[0].kind == ActionEventKind.ERROR
-    assert 'not available' in events[0].payload
-
-
-def test_publish_once_received_by_fixture(bridge, fixture_servers):
-    fixture_servers.inbox_messages.clear()
-
-    def published_and_received():
-        bridge.publish_once(INBOX_TOPIC, STRING_TYPE, String(data='hello')).result(timeout=2.0)
-        time.sleep(0.05)
-        return fixture_servers.inbox_messages
-
-    assert wait_for(published_and_received)
-    assert fixture_servers.inbox_messages[-1] == 'hello'
-
-
-def test_periodic_publish_rate_then_stop(bridge, fixture_servers):
-    fixture_servers.inbox_messages.clear()
-    bridge.start_periodic_publish(
-        INBOX_TOPIC, STRING_TYPE, String(data='tick'), rate_hz=20.0
-    ).result(timeout=2.0)
-    assert wait_for(lambda: fixture_servers.inbox_messages, timeout=5.0)
-    assert bridge.periodic_topics() == (INBOX_TOPIC,)
-    # A loaded machine only delivers late, never early: ten more messages must come (it keeps
-    # publishing), and must take at least a quarter second (it isn't far faster than 20 Hz).
-    target = len(fixture_servers.inbox_messages) + 10
-    started = time.monotonic()
-    assert wait_for(lambda: len(fixture_servers.inbox_messages) >= target, timeout=5.0)
-    elapsed = time.monotonic() - started
-    assert elapsed >= 0.25, f'10 messages in {elapsed:.2f} s: faster than 20 Hz'
-    bridge.stop_periodic_publish(INBOX_TOPIC).result(timeout=2.0)
-    assert bridge.periodic_topics() == ()
-    time.sleep(0.3)  # Let in-flight messages land before sampling the settled count.
-    settled_count = len(fixture_servers.inbox_messages)
-    time.sleep(0.4)
-    assert len(fixture_servers.inbox_messages) == settled_count
-
-
-def wait_until_quiet(messages, quiet_s, timeout):
-    """True once no message has arrived in ``messages`` for ``quiet_s`` seconds."""
-    deadline = time.monotonic() + timeout
-    count, since = len(messages), time.monotonic()
-    while time.monotonic() < deadline:
-        time.sleep(0.02)
-        if len(messages) != count:
-            count, since = len(messages), time.monotonic()
-        elif time.monotonic() - since >= quiet_s:
-            return True
-    return False
-
-
-def test_bridge_shutdown_stops_periodic_publish(fixture_servers, ros_domain):
-    own_bridge = RosBridge(node_name='ros_tui_shutdown_test')
-    own_bridge.start()
-    fixture_servers.inbox_messages.clear()
-    own_bridge.start_periodic_publish(
-        INBOX_TOPIC, STRING_TYPE, String(data='tick'), rate_hz=20.0
-    ).result(timeout=2.0)
-    assert wait_for(lambda: fixture_servers.inbox_messages, timeout=5.0)
-    own_bridge.shutdown()
-    # Messages sent just before shutdown may still be on their way: wait until none has arrived for
-    # 0.25 s (never true while it still publishes at 20 Hz), then nothing more may come.
-    assert wait_until_quiet(fixture_servers.inbox_messages, quiet_s=0.25, timeout=3.0)
-    settled_count = len(fixture_servers.inbox_messages)
-    time.sleep(0.4)
-    assert len(fixture_servers.inbox_messages) == settled_count
-
-
-def test_bridge_shutdown_cancels_a_running_goal(fixture_servers, ros_domain):
-    own_bridge = RosBridge(node_name='ros_tui_shutdown_goal_test')
-    own_bridge.start()
-    events = []
-    own_bridge.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=200), events.append)
-    assert wait_for(lambda: ActionEventKind.FEEDBACK in event_kinds(events), timeout=10.0)
-    canceled_before = fixture_servers.canceled_goals
-    started = time.monotonic()
-    own_bridge.shutdown()
-    assert time.monotonic() - started < 3.0
-    assert wait_for(lambda: fixture_servers.canceled_goals == canceled_before + 1, timeout=5.0)
-
-
-def test_subscribe_receives_chatter(bridge, fixture_servers):
-    buffer = EchoBuffer()
-    bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=2.0)
-    assert wait_for(lambda: buffer.drain()[1] >= 50, timeout=5.0)
-    _, _, _, rate_hz = buffer.drain()
-    # About 100 Hz. The rate is taken over the last arrivals, which bunch up on a loaded machine,
-    # so the band is wide: it catches a rate that is missing or off by an order of magnitude.
-    assert 30.0 <= rate_hz <= 300.0
-
-
-def test_unsubscribe_stops_delivery(bridge, fixture_servers):
-    buffer = EchoBuffer()
-    bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=2.0)
-    assert wait_for(lambda: buffer.drain()[1] > 0, timeout=5.0)
-    bridge.unsubscribe(CHATTER_TOPIC).result(timeout=2.0)
-    received_after_stop = buffer.drain()[1]
-    time.sleep(0.3)
-    assert buffer.drain()[1] == received_after_stop
+    bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, EchoBuffer()).result(timeout=EVENTUALLY_S)
+    bridge.subscribe(CHATTER_TOPIC, STRING_TYPE, EchoBuffer()).result(timeout=EVENTUALLY_S)  # Already on.
+    assert on_ros_thread(bridge, subscribed_topics).count(CHATTER_TOPIC) == 1
+    bridge.unsubscribe(CHATTER_TOPIC).result(timeout=EVENTUALLY_S)
+    assert CHATTER_TOPIC not in on_ros_thread(bridge, subscribed_topics)
 
 
 def test_adapted_qos_truth_table():
@@ -298,118 +147,6 @@ def test_adapted_qos_truth_table():
     assert adapted_qos([reliable_volatile]).reliability == ReliabilityPolicy.RELIABLE
     assert adapted_qos([transient]).durability == DurabilityPolicy.TRANSIENT_LOCAL
     assert adapted_qos([transient, reliable_volatile]).durability == DurabilityPolicy.VOLATILE
-
-
-def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
-    node = fixture_servers.node
-    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
-
-    def fetch_info():
-        holder = {}
-        done = threading.Event()
-
-        def on_done(info, error):
-            holder['info'] = info
-            holder['error'] = error
-            done.set()
-
-        bridge.get_node_info(full_name, on_done)
-        done.wait(timeout=3.0)
-        return holder.get('info'), holder.get('error')
-
-    def names(entries):
-        return {entry.name for entry in entries}
-
-    def discovered():
-        # Until the bridge has discovered the fixture node, get_*_by_node raises
-        # "nonexistent node" and get_node_info reports it as an error — keep polling.
-        info, _error = fetch_info()
-        if info is None:
-            return None
-        ready = (
-            CHATTER_TOPIC in names(info.publishers)
-            and INBOX_TOPIC in names(info.subscribers)
-            and ADD_TWO_INTS_SERVICE in names(info.service_servers)
-            and FIBONACCI_ACTION in names(info.action_servers)
-        )
-        return info if ready else None
-
-    info = wait_for(discovered, timeout=15.0)
-    assert info is not None, f'fixture node endpoints were not discovered: {fetch_info()}'
-    assert info.node_name == full_name
-    assert CHATTER_TOPIC in names(info.publishers)
-    assert INBOX_TOPIC in names(info.subscribers)
-    assert ADD_TWO_INTS_SERVICE in names(info.service_servers)
-    assert FIBONACCI_ACTION in names(info.action_servers)
-    # The fixture node's own parameter services are hidden, as the ☰ list hides them.
-    assert not any(name.endswith('/get_parameters') for name in names(info.service_servers))
-    # No hidden action-internal endpoints leak into the topic/service lists.
-    leaked = names(info.publishers) | names(info.subscribers) | names(info.service_servers)
-    assert not any('/_' in name for name in leaked), leaked
-
-
-def test_list_and_set_node_parameters(bridge, fixture_servers):
-    node = fixture_servers.node
-    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
-
-    def list_params():
-        holder = {}
-        done = threading.Event()
-
-        def on_done(params, error):
-            holder['params'], holder['error'] = params, error
-            done.set()
-
-        bridge.list_node_parameters(full_name, on_done)
-        done.wait(timeout=5.0)
-        return holder.get('params'), holder.get('error')
-
-    def test_param_value():
-        params, _error = list_params()
-        if params is None:
-            return None
-        return next((value for name, _type, value in params if name == 'test_param'), None)
-
-    # Poll until the node's parameter services are discovered and report the declared value.
-    assert wait_for(lambda: test_param_value() == 0, timeout=15.0), (
-        f'test_param never listed as 0: {list_params()}'
-    )
-
-    def set_param(value):
-        result = {}
-        done = threading.Event()
-
-        def on_set(error):
-            result['error'] = error
-            done.set()
-
-        bridge.set_node_parameter(full_name, 'test_param', value, on_set)
-        assert done.wait(timeout=5.0), 'set_node_parameter never completed'
-        return result.get('error')
-
-    # Set it through the bridge and confirm success (no error string back), then restore
-    # the declared value — fixture_servers is module-scoped, so leaking 42 would make
-    # order-dependent runs of sibling tests see the wrong value.
-    try:
-        assert set_param('42') is None
-        assert wait_for(lambda: test_param_value() == 42, timeout=10.0)
-    finally:
-        set_param('0')
-
-
-def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
-    node = fixture_servers.node
-    full_name = f'{node.get_namespace().rstrip("/")}/{node.get_name()}'
-    result = {}
-    done = threading.Event()
-
-    def on_set(error):
-        result['error'] = error
-        done.set()
-
-    bridge.set_node_parameter(full_name, 'no_such_param', '1', on_set)
-    assert done.wait(timeout=10.0), 'set_node_parameter never completed'
-    assert result['error'] is not None  # undeclared parameter is rejected by the node.
 
 
 class _FakeFuture:
@@ -448,20 +185,15 @@ def test_call_then_marks_client_in_use_until_response(bridge):
     handled = []
 
     # Dispatch on the ROS thread, exactly as the real parameter paths do.
-    bridge.submit(lambda: bridge._call_then(client, object(), handled.append)).result(timeout=2.0)
+    bridge.submit(lambda: bridge._call_then(client, object(), handled.append)).result(timeout=EVENTUALLY_S)
 
     # While the response is pending, the client is busy and cannot be chosen as a victim.
-    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is True
+    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=EVENTUALLY_S) is True
 
     # The response lands: the client is released and the handler is re-submitted to run.
-    bridge.submit(future.fire).result(timeout=2.0)
-    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=2.0) is False
-    assert wait_for(lambda: bool(handled), timeout=2.0), 'handle was never invoked'
-
-
-def on_ros_thread(bridge, fn):
-    """Run `fn` on the bridge's ROS thread (the only one that may touch its entities)."""
-    return bridge.submit(fn).result(timeout=2.0)
+    bridge.submit(future.fire).result(timeout=EVENTUALLY_S)
+    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=EVENTUALLY_S) is False
+    assert wait_for(lambda: bool(handled)), 'handle was never invoked'
 
 
 def test_housekeeping_dispatches_fails_or_keeps_each_wait_for_a_server(bridge):
@@ -536,4 +268,104 @@ def test_shutdown_fails_every_request_still_awaiting_its_response(bridge):
     on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([untracked, tracked]))
     bridge.shutdown()
     with pytest.raises(RuntimeError, match='ROS bridge shut down'):
-        tracked.outer.result(timeout=2.0)
+        tracked.outer.result(timeout=EVENTUALLY_S)
+
+
+# ---------------------------------------------------------------- smoke: talking to other nodes over DDS
+
+
+@pytest.fixture(scope='module')
+def peer(ros_domain, fixture_servers):
+    """One bridge for all the smoke tests: DDS discovery of a new node takes seconds, so pay it once."""
+    ros_bridge = RosBridge(node_name='ros_tui_smoke')
+    ros_bridge.start()
+    yield ros_bridge
+    ros_bridge.shutdown()
+
+
+def test_graph_lists_fixture_entities(peer, fixture_servers):
+    def fixture_entities_visible():
+        graph = peer.latest_graph
+        return (
+            any(entry.name == FIBONACCI_ACTION for entry in graph.actions)
+            and any(entry.name == ADD_TWO_INTS_SERVICE for entry in graph.services)
+            and any(entry.name == CHATTER_TOPIC for entry in graph.topics)
+        )
+
+    assert wait_for(fixture_entities_visible)
+    graph = peer.latest_graph
+    action = next(entry for entry in graph.actions if entry.name == FIBONACCI_ACTION)
+    assert action.types == (FIBONACCI_TYPE,)
+    service = next(entry for entry in graph.services if entry.name == ADD_TWO_INTS_SERVICE)
+    assert service.types == (ADD_TWO_INTS_TYPE,)
+    assert next(entry for entry in graph.topics if entry.name == CHATTER_TOPIC).publishers >= 1
+    all_names = [
+        entry.name for group in (graph.actions, graph.services, graph.topics) for entry in group
+    ]
+    assert not any('/_' in name for name in all_names), all_names
+
+
+def test_service_call_roundtrip(peer, fixture_servers):
+    future = peer.call_service(
+        ADD_TWO_INTS_SERVICE, ADD_TWO_INTS_TYPE, AddTwoInts.Request(a=2, b=3)
+    )
+    assert future.result(timeout=EVENTUALLY_S).sum == 5
+
+
+def test_publish_once_received_by_fixture(peer, fixture_servers):
+    fixture_servers.inbox_messages.clear()
+
+    def published_and_received():
+        # A message published before discovery matched the fixture's subscription is lost: publish
+        # again until one arrives.
+        peer.publish_once(INBOX_TOPIC, STRING_TYPE, String(data='hello')).result(timeout=EVENTUALLY_S)
+        return wait_for(lambda: 'hello' in fixture_servers.inbox_messages, timeout=0.5)
+
+    assert wait_for(published_and_received), fixture_servers.inbox_messages
+
+
+def test_subscribe_receives_chatter(peer, fixture_servers):
+    buffer = EchoBuffer()
+    received = []
+    peer.subscribe(CHATTER_TOPIC, STRING_TYPE, buffer).result(timeout=EVENTUALLY_S)
+    assert wait_for(lambda: received.extend(buffer.drain()[0]) or len(received) >= 3)
+    numbers = [int(message.data.removeprefix('chatter ')) for message in received]
+    assert numbers == sorted(numbers), numbers  # In the order they were published.
+
+
+def test_action_goal_feedback_result(peer, fixture_servers):
+    events = []
+    peer.send_goal(FIBONACCI_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=5), events.append)
+    assert wait_for(lambda: terminal_event(events)), event_kinds(events)
+    kinds = event_kinds(events)
+    # Feedback may overtake the goal response on the wire, so only assert relative order.
+    assert ActionEventKind.ACCEPTED in kinds
+    assert kinds.index(ActionEventKind.ACCEPTED) < kinds.index(ActionEventKind.RESULT)
+    assert ActionEventKind.FEEDBACK in kinds
+    result_event = terminal_event(events)
+    from action_msgs.msg import GoalStatus
+
+    assert result_event.status == GoalStatus.STATUS_SUCCEEDED
+    assert list(result_event.payload.sequence) == [0, 1, 1, 2, 3, 5]
+
+
+def test_list_and_set_node_parameters(peer, fixture_servers):
+    declared = fixture_servers.node.get_parameter('test_param').value
+
+    def test_param_value():
+        params, _error = answer_of(peer.list_node_parameters, FIXTURE_NODE) or (None, None)
+        return next((value for name, _type, value in params or () if name == 'test_param'), None)
+
+    def set_param(value):
+        answer = answer_of(peer.set_node_parameter, FIXTURE_NODE, 'test_param', str(value))
+        assert answer is not None, 'set_node_parameter never completed'
+        return answer[0]  # The error, None on success.
+
+    # Poll until the node's parameter services are discovered and report its value.
+    assert wait_for(lambda: test_param_value() == declared), f'test_param never listed as {declared}'
+    # Set it and confirm success, then put the value back: fixture_servers lives for the whole run.
+    try:
+        assert set_param(declared + 42) is None
+        assert wait_for(lambda: test_param_value() == declared + 42)
+    finally:
+        set_param(declared)

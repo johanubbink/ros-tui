@@ -16,7 +16,8 @@
 # One command for agents (and humans): flake8 as CI runs it, then pytest with screenshots on,
 # inside the Docker playground image. Arguments go to pytest. See docs/agentic-dev.md.
 #
-#   scripts/agent_check.sh                          # lint + the whole suite
+#   scripts/agent_check.sh                          # lint + the whole suite (both tiers)
+#   scripts/agent_check.sh --fast                   # lint + the fast tier only, as CI runs it
 #   scripts/agent_check.sh -m shots                 # lint + only the screenshot scenarios
 #   scripts/agent_check.sh test/ui/test_topic.py -q
 #   ROS_TUI_SHOTS=0 scripts/agent_check.sh          # same, but write no artifacts
@@ -28,6 +29,10 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 mkdir -p test/artifacts
+if [ "${1:-}" = "--fast" ]; then
+    shift
+    set -- -m "not offline" "$@"
+fi
 marker="$(mktemp)"
 trap 'rm -f "$marker"' EXIT
 
