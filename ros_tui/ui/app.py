@@ -44,6 +44,7 @@ from textual.message import Message
 from textual.screen import Screen
 
 from ros_tui.constants import UI_TICK_PERIOD_S
+from ros_tui.ros.contract import Bridge
 from ros_tui.ros.graph import GraphSnapshot
 from ros_tui.ui import theme
 from ros_tui.ui.entries.kinds import entry_factory
@@ -98,7 +99,7 @@ class RosTuiApp(App, inherit_bindings=False):
     }
     """
 
-    def __init__(self, bridge):
+    def __init__(self, bridge: Bridge):
         super().__init__()
         self._bridge = bridge
         self.nav = NavState(entry_factory(bridge, lambda fn: self.post_message(UiCall(fn)), self._work),
@@ -178,9 +179,12 @@ class RosTuiApp(App, inherit_bindings=False):
                     view.refresh()
 
     def refresh_views(self) -> None:
+        homes, bodies = self.query(HomeList), self.query(EntryBody)
+        if not homes or not bodies:
+            return  # The views are gone (the app is shutting down); a late bridge answer still reached the model.
         nav = self.nav
         home = nav.tab is None
-        shows = {self.query_one(HomeList): home, self.query_one(EntryBody): not home}
+        shows = {homes.first(): home, bodies.first(): not home}
         self.screen.set_class(isinstance(nav.overlay, (Search, LogView)), '-veiled')
         for overlay in self.query(Overlay):
             spot = overlay.place(*overlay.parent.content_size)

@@ -81,7 +81,8 @@ upgrade may need fixes here.**
 ## The fake world
 
 [`test/harness/fake_bridge.py`](../test/harness/fake_bridge.py) has
-`FakeBridge`, the bridge contract without rclpy. It records every call.
+`FakeBridge`, the bridge contract ([`ros_tui/ros/contract.py`](../ros_tui/ros/contract.py))
+without rclpy. It records every call.
 
 - `FakeBridge()` is canned: nothing happens on its own; node requests answer at
   once and a test sends action events by hand.
