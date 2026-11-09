@@ -19,8 +19,11 @@
 clock moves, the ◐◓◑◒ spinner in the tab, the top bar and the Here column), a second goal is blocked
 on another action and on the same one, s cancels (CANCELED with the last feedback), a goal that
 succeeds and one that aborts. u with nothing to undo says "nothing to undo here", a goal keeps
-running when its tab closes (u reopens it), and a long result wraps.
+running when its tab closes (u reopens it), and a long result wraps. While the graph lacks the
+action its header says so.
 """
+
+from dataclasses import replace
 
 import pytest
 from harness.fake_bridge import ROTATE_ACTION, rotate_demo
@@ -129,3 +132,15 @@ async def test_action_entry():
         await s.shot('action-wrapped', expect='u reopened /fibonacci and its order-12 goal succeeded; inside RESULT (blue '
                      'border) the long sequence wraps onto a second, indented line ("55, 89, 144]"), and the current-row '
                      'band covers both lines')
+
+
+async def test_action_gone_from_the_graph():
+    bridge = rotate_demo()
+    graph = bridge.latest_graph
+    async with ui_session(bridge=bridge) as s:
+        await s.keys('slash', *'fib', 'enter')
+        bridge.listener(replace(graph, actions=tuple(a for a in graph.actions if a.name != FIB)))
+        await s.idle()
+        assert s.line_with('▷ ACTION', FIB, 'example_interfaces/action/Fibonacci', '⚠ not in the ROS graph')
+        await s.shot('action-gone', expect='the /fibonacci server left the graph: the header keeps '
+                     '"example_interfaces/action/Fibonacci" and adds a yellow "⚠ not in the ROS graph" badge')

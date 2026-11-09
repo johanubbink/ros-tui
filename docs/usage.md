@@ -11,6 +11,10 @@ depend on focus: what a key does depends only on the layer you're on, and the
 footer always says where you are and what `esc` and `enter` will do. `?` lists
 every key that works right now.
 
+The list follows the graph as it changes. When an open tab's entry leaves the
+graph (its node stopped), its header shows **⚠ not in the ROS graph** next to
+the last known type; the warning goes away when the entry comes back.
+
 ## The layers
 
 The screen is a stack of layers. **`esc` always goes up one layer and `enter`

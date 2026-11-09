@@ -114,7 +114,9 @@ one, so an idle system costs no redraws. Names ROS treats as hidden (any
 `_`-prefixed part) and the services every node creates for itself
 (parameters, type description) are left out. Each topic carries its publisher
 and subscriber counts (our own node's endpoints not counted), which decide
-whether it opens in Echo and fill its header.
+whether it opens in Echo and fill its header. An open entry missing from the
+current snapshot keeps its tab; its header warns "not in the ROS graph" until a
+snapshot has it again.
 
 ## Fast data: echo and feedback
 
