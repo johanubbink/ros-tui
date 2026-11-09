@@ -220,7 +220,9 @@ together.
   keys and the `NavState` action they run (with an optional argument: a step
   of ±1, or the name of the entry verb for the generic `verb` action), and the
   label the footer, `?` and [usage.md](usage.md) show. `NavState.handle_key`
-  looks a key up there and runs its action from `nav.ACTIONS`.
+  looks a key up there and runs its action from `nav.ACTIONS`. The views name
+  the keys they show (buttons, hints, the footer, the log and toasts) through
+  `keymap.key_for`, so a key is bound in one place.
 - **One key router.** [`app.py`](../ros_tui/ui/app.py)'s `RosTuiApp` has a
   single `on_key` that hands every key to `NavState.handle_key`, then redraws.
   Nothing takes focus, and textual's own bindings (focus cycling, the command

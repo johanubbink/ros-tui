@@ -23,6 +23,7 @@ the window scrolls to keep the picked one in view. A click on a match opens it.
 from rich.text import Text
 
 from ros_tui.ui.fields import short_type
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import Search
 from ros_tui.ui.theme import KINDS
 from ros_tui.ui.widgets.base import (BODY_TOP, Overlay, band, clickable, cursor_bar, cursor_cell, glyph, here, rule,
@@ -31,8 +32,9 @@ from ros_tui.ui.widgets.base import (BODY_TOP, Overlay, band, clickable, cursor_
 WIDTH = 84  # Cells.
 MAX_ROWS = 13  # Matches shown at once.
 PLACEHOLDER = 'any topic, service, action or node'
-NO_MATCHES = 'no matches — backspace to change the search'
-HINT = '↑↓ picks · enter opens in a tab · esc closes'
+NO_MATCHES = f"no matches — {key_for('search_back', mode='search')} to change the search"
+HINT = (f"{key_for('search_step', -1, 'search')}{key_for('search_step', 1, 'search')} picks · "
+        f"{key_for('search_enter', mode='search')} opens in a tab · {key_for('close_overlay', mode='search')} closes")
 
 
 def _short_type(kind: str, type_name: str) -> str:
@@ -71,7 +73,8 @@ class SearchPopup(Overlay):
         nav = self.nav
         query = nav.overlay.q
         rows = nav.catalog.search(query)
-        typed = Text.assemble(' ', ('/', style('key', bold=True)), ' ', (query, style('bright')), cursor_cell())
+        typed = Text.assemble(' ', (key_for('search_open'), style('key', bold=True)), ' ', (query, style('bright')),
+                              cursor_cell())
         if not query:
             typed.append(' ' + PLACEHOLDER, style('dim'))
         lines = [spread(typed, Text(f'{len(rows)} ', style('dim')), width), rule(width)]

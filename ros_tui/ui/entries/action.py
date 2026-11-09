@@ -42,11 +42,10 @@ from ros_tui.constants import ACTION_SPINNER_HZ, FEEDBACK_BUFFER_MAXLEN
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent, ActionEventKind, goal_status_name
 from ros_tui.ros.message_yaml import class_structure, message_to_display
-from ros_tui.ui.entries.base import Area, Context, Host, Running, Tab, Verb
-from ros_tui.ui.entries.message import EDITOR, MessageEntry, Received
+from ros_tui.ui.entries.base import EDITOR, OUT, Area, Context, Host, Running, Tab, Verb
+from ros_tui.ui.entries.message import MessageEntry, Received
 from ros_tui.ui.fields import Row, flat_rows
 
-RESULT = 'out'  # The area id of RESULT.
 SPINNER = '◐◓◑◒'
 SENDING, EXECUTING = 'SENDING', 'EXECUTING'  # A goal's states while it runs; then the result's status.
 SUCCEEDED, CANCELED, REJECTED, FAILED = 'SUCCEEDED', 'CANCELED', 'REJECTED', 'FAILED'
@@ -112,7 +111,7 @@ class ActionEntry(MessageEntry):
 
     KIND = 'action'
     ROLE = 'goal'
-    AREAS = (Area(EDITOR, 'GOAL', 'edit', True, folds=True, helpers=True), Area(RESULT, 'RESULT'))
+    AREAS = (Area(EDITOR, 'GOAL', 'edit', True, folds=True, helpers=True), Area(OUT, 'RESULT'))
 
     def __init__(self, tab: Tab, ctx: Context | None = None):
         super().__init__(tab, ctx)
@@ -169,7 +168,7 @@ class ActionEntry(MessageEntry):
         return '', []
 
     def row_count(self, area: Area) -> int:
-        if area.id == RESULT:
+        if area.id == OUT:
             return len(self.result_rows()[1])
         return super().row_count(area)
 

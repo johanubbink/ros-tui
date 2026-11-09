@@ -104,13 +104,25 @@ The keys do everything; a left click is a shortcut to what a key does, and logs
    footer, `?` (`keys_now`) and the `g…` popup (`which_key_items`) are generated
    from it, and the key tables in [usage.md](usage.md) must match it
    (`test_keymap.py`). A key not in the table doesn't exist.
-5. **Reserved keys** mean the same everywhere they apply:
+5. **Views name keys through the keymap.** A button, a panel hint, a toolbar,
+   the footer, a popup's hint line and the log, toast and refusal text get the
+   key they show from `keymap.key_for(action, arg, mode)`: how the leading key
+   of the run that dispatches that action reads (`space`, `esc`, `[`, `↑`); a
+   run's other keys are alternatives. So rebinding a key is one change in
+   `KEYMAP`, and everything that names it follows. A button names the verb a
+   click runs (`button('▶ Call', 'primary', look)`), and `key_for` gives its key.
+   `test_keymap.py` checks that every row running one action leads with the
+   same key and that no `keyed()` or `hint()` spells out a key. Spelled out are
+   only the keys a helper interprets itself (`tab`, `↑↓`, `j k`, digits, in
+   `helpers/__init__.py`) and insert's `esc`, which `NavState` tells apart from
+   `enter` on a value that doesn't parse.
+6. **Reserved keys** mean the same everywhere they apply:
    - layers `esc` `enter`; sending `space` `^s` `r` `s`
    - moving `h` `j` `k` `l`, arrows, `tab` `shift+tab`, `gg` `G`
    - tabs `0`–`9` `H` `L` `gt` `gT` `x`
    - editing `u` `y` `p` `i` `a` `c` `f` `e` `R` `[` `]`, and `o` `d` on field rows
    - overlays `/` `^f` `:` `?` `g`; quitting `:q`
-6. **Undo is per entry.** `u` undoes your last change in this entry (edits,
+7. **Undo is per entry.** `u` undoes your last change in this entry (edits,
    pastes, rate and parameter changes, applied helpers), or reopens the tab you
    just closed (any tab can). Switching tabs never undoes something elsewhere.
    With nothing to undo: `nothing to undo here`.
@@ -338,7 +350,7 @@ keys.
 - **Pills** (`theme.TONES`): `calling…` / `EXECUTING` in `live`; `✓ OK` /
   `SUCCEEDED` in `ok`; `CANCELED` in `warn`; `✗ FAILED`, `ABORTED`, `REJECTED`
   in `bad`; each followed by its timing.
-- **Buttons** carry their key (`base.button(label, key, look)`): `pri`
+- **Buttons** carry their verb's key (`base.button(label, verb, look)`): `pri`
   (`▶ Publish once space`), `stop` (`■ Stop echo space`), plain (`↻ Repeat at
   10 Hz r`), `off` (disabled, with the reason next to it).
 - **Flash**: a send turns the primary button `bright` on `accent` for
@@ -395,7 +407,11 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
     entry. Overlays and insert swallow keys they don't use.
 - **Entries own their kind.** `entries/base.py` is the contract: `Entry`,
   `Area` (with `editable`, `folds`, `helpers`, so the keymap asks the area, not
-  its id), `Editing`, `Commit`, `UndoEntry`, `Running`, `Context`, and `Host`.
+  its id), `Editing`, `Commit`, `UndoEntry`, `Running`, `Context`, and `Host`;
+  and the names both sides share: the layers (`TABS`, `IN`, `AREA`, `EDIT`) and
+  the area ids (`EDITOR`, `OUT`, `IFS`, `PARAM`, and `RATE` for the rate
+  editor). Entries, views and the keymap's predicates use these constants; no
+  area id is spelled out anywhere else.
   `nav.entry(tab)` makes one per tab on first use (through `new_entry`,
   `kinds.entry_factory` in the app) and keeps it after the tab closes, so edits,
   history and echo survive a reopen.
