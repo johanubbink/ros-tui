@@ -31,12 +31,15 @@ enum's completion instead of the hint); a value the last send check rejected is 
 
 from rich.text import Text
 
+from ros_tui.ros.schema import within
 from ros_tui.ui.entries.base import Area, Editing
 from ros_tui.ui.entries.message import MessageEntry
-from ros_tui.ui.fields import FieldRows, Row, enum_matches, flat_text, within
+from ros_tui.ui.fields import FieldRows, Row, flat_text
 from ros_tui.ui.helpers import helper_name
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import AREA, NavState
-from ros_tui.ui.widgets.base import edit_value, keyed, style
+from ros_tui.ui.values import enum_matches
+from ros_tui.ui.widgets.base import HISTORY_KEYS, edit_value, keyed, style
 from ros_tui.ui.widgets.panel import Panel, hint, waiting
 
 NUMBER_WIDTH = 3  # The row number column.
@@ -92,7 +95,7 @@ def _row_tail(row: Row, typing: Editing | None, editable: bool, on: bool) -> Tex
 def helper_badge(name: str, on: bool) -> Text:
     """A row's "[f Quaternion]": brighter on the row under the cursor."""
     edge, text = ('key', 'bright') if on else ('hb-edge', 'hb-text')
-    badge = Text.assemble(('[', style(edge)), ('f', style('key', bold=True)), (f' {name}', style(text)),
+    badge = Text.assemble(('[', style(edge)), (key_for('helper'), style('key', bold=True)), (f' {name}', style(text)),
                           (']', style(edge)))
     if on:
         badge.stylize(style(bg='hb-on'))
@@ -101,7 +104,7 @@ def helper_badge(name: str, on: bool) -> Text:
 
 def helper_hint(name: str) -> Text:
     """The panel title's "f opens the Quaternion helper", while inside the area on such a row."""
-    return keyed('f', f'opens the {name} helper', 'bright')
+    return keyed(key_for('helper'), f'opens the {name} helper', 'bright')
 
 
 def shown_value(row: Row) -> Text:
@@ -117,7 +120,7 @@ def editor_panel(nav: NavState, entry: MessageEntry, area: Area) -> Panel:
     """The message editor as a panel: its rows, the history and the keys in the title, its errline."""
     count = len(entry.history)
     history = f'history #{entry.hpos + 1}/{count}' if entry.hpos >= 0 else f'history ({count})'
-    parts = ((('[ ]', history),) if count else ()) + (('i', 'edit'), ('p', 'paste'))
+    parts = (((HISTORY_KEYS, history),) if count else ()) + ((key_for('edit'), 'edit'), (key_for('verb', 'paste'), 'paste'))
     inside = nav.layer == AREA and nav.area() == area
     helper = nav.helper_name() if inside else None
     title = Text.assemble(helper_hint(helper), '  ') if helper else Text()

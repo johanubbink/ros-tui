@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The one table of keys. Dispatch (nav.py), the footer, `?`, the `g…` popup and docs/usage.md read it.
+"""The one table of keys. Dispatch (nav.py), the footer, `?`, the `g…` popup and docs/usage.md read it,
+and the views and the log's prose name every key they show through `key_for`.
 
 Pure Python: no textual, no rclpy. Each `Binding` is one row of the "Keys right now" list (`?`),
 with the keys it dispatches. Rows with an empty `show` only dispatch; rows without `run` are only
@@ -28,6 +29,8 @@ in a symbol as its character; `normalize_key` also reads a symbol's unicode name
 import unicodedata
 from dataclasses import dataclass
 from typing import NamedTuple
+
+from ros_tui.ui.entries.base import EDITOR, IFS, OUT, PARAM, RATE
 
 TYPE = 'type'  # Pseudo key: any printable character (space included).
 ANY = '*'  # Pseudo key: any key at all.
@@ -74,7 +77,7 @@ def key_display(key: str) -> str:
 
 
 class Run(NamedTuple):
-    keys: tuple[str, ...]
+    keys: tuple[str, ...]  # The first is the one the views name (`key_for`); the rest are alternatives.
     action: str  # A NavState action (nav.ACTIONS).
     arg: object = None  # Handed to the action: a step (1 / -1), a verb's name, ...
 
@@ -114,8 +117,8 @@ PREDICATES = {
     'entry': lambda nav: nav.tab is not None,
     'areas2': lambda nav: len(nav.areas()) > 1,
     'editable': lambda nav: bool(nav.area() and nav.area().editable),
-    'ifs': lambda nav: _area_id(nav) == 'ifs',
-    'out': lambda nav: _area_id(nav) == 'out',
+    'ifs': lambda nav: _area_id(nav) == IFS,
+    'out': lambda nav: _area_id(nav) == OUT,
     'topic': lambda nav: _kind(nav) == 'topics',
     'service': lambda nav: _kind(nav) == 'services',
     'action': lambda nav: _kind(nav) == 'actions',
@@ -126,9 +129,9 @@ PREDICATES = {
     # An area of field rows that fold (fields.py): a message being edited or a service response.
     'fields': lambda nav: bool(nav.area() and nav.area().folds),
     'enum_helper': lambda nav: getattr(nav.overlay, 'kind', None) == 'enum',  # Only a Helper has a kind.
-    'rate_edit': lambda nav: nav.editing_in('rate') is not None,
-    'field_edit': lambda nav: nav.editing_in('msg') is not None,
-    'param_edit': lambda nav: nav.editing_in('par') is not None,
+    'rate_edit': lambda nav: nav.editing_in(RATE) is not None,
+    'field_edit': lambda nav: nav.editing_in(EDITOR) is not None,
+    'param_edit': lambda nav: nav.editing_in(PARAM) is not None,
 }
 
 SEND = 'Do (only these send)'
@@ -176,7 +179,7 @@ KEYMAP = (
     _b('insert', 'Insert', '^s', 'keep it and set it', when='param_edit'),
     _b('insert', 'Insert', '^s', 'keep it and send', when='!rate_edit !param_edit'),
     _b('insert', '', '', 'insert keys', run=[
-        ('escape enter', 'edit_keep'), ('ctrl+s', 'primary'), ('backspace', 'edit_back'), (TYPE, 'edit_type')]),
+        ('enter escape', 'edit_keep'), ('ctrl+s', 'primary'), ('backspace', 'edit_back'), (TYPE, 'edit_type')]),
 
     _b('g', 'Go', 'gg', 'to the top', run=[('g', 'move_end', False)]),
     _b('g', 'Go', 'gt', 'next tab', run=[('t', 'step_tab', 1)]),
@@ -252,6 +255,21 @@ KEYMAP = (
 
     _b('normal', 'Help', '?', 'all keys right now', run=[('?', 'which_key')]),
 )
+
+
+_GLYPHS = {'up': '↑', 'down': '↓', 'left': '←', 'right': '→'}  # How the arrows read in a hint.
+
+
+def key_for(action: str, arg: object = None, mode: str = 'normal') -> str:
+    """How the key that runs `action` (with `arg`) in `mode` reads in a hint: 'space', 'esc', '[', '↑'.
+    It is the first of the run's keys; every row that runs the action in that mode leads with the same
+    key (test_keymap checks this). Buttons, hints, the footer and the log's prose name their keys
+    through it, so a key bound here shows wherever it is named. KeyError if no key runs it."""
+    key = next((run.keys[0] for binding in KEYMAP if binding.mode == mode for run in binding.run
+                if run.action == action and run.arg == arg), None)
+    if key is None:
+        raise KeyError(f'no key runs {action} {arg!r} in {mode} mode')
+    return _GLYPHS.get(key, key_display(key))
 
 
 class KeyRow(NamedTuple):

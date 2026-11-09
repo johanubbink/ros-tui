@@ -24,7 +24,8 @@ from harness.fake_bridge import DEMO_PARAMS, SERVICE_DELAY_S, FakeBridge
 from harness.live_world import live_nav, press
 from ros_tui.ui.entries.base import Entry
 from ros_tui.ui.entries.action import ActionEntry
-from ros_tui.ui.entries.node import NodeEntry, Param, parse_value, render_value
+from ros_tui.ros.parameters import Param
+from ros_tui.ui.entries.node import NodeEntry, parse_value, render_value
 from ros_tui.ui.nav import AREA, EDIT, IN, Tab
 
 NODE = '/ros_tui_demo_servers'
@@ -47,7 +48,8 @@ def node_data(nav):
     ('int', '5', 5), ('int', '-3', -3),
     ('double', '5', 5.0), ('double', '1e-3', 0.001), ('double', '-2.5', -2.5),
     ('string', 'odom', 'odom'), ('string', '42', '42'),
-    ('int[]', '[1, 2]', [1, 2]),
+    ('int[]', '[1, 2]', [1, 2]), ('double[]', '[1, 2.5]', [1.0, 2.5]), ('string[]', '[]', []),
+    ('byte[]', '[1, 255]', [1, 255]),
 ])
 def test_parse_value(kind, text, value):
     parsed = parse_value(Param('p', kind, None), text)
@@ -61,6 +63,11 @@ def test_parse_value(kind, text, value):
     (Param('publish_rate', 'double', 10.0), '', 'publish_rate needs a number, got ""'),
     (Param('count', 'int', 3), '2.5', 'count needs a whole number, got "2.5"'),
     (Param('ids', 'int[]', [1]), '7', 'ids needs a list like [1, 2], got "7"'),
+    (Param('ids', 'int[]', [1]), '[1, a]', 'ids needs a value of type int[], got "[1, a]"'),
+    (Param('ids', 'int[]', [1]), '[1, true]', 'ids needs a value of type int[], got "[1, true]"'),
+    (Param('count', 'int', 3), str(2**63), f'count needs a value of type int, got "{2**63}"'),
+    (Param('key', 'byte[]', [1]), '[256]', 'key needs a value of type byte[], got "[256]"'),
+    (Param('key', 'byte[]', [1]), '[-1]', 'key needs a value of type byte[], got "[-1]"'),
 ])
 def test_parse_value_errors_name_the_parameter(param, text, message):
     with pytest.raises(ValueError) as error:
@@ -185,7 +192,7 @@ def test_space_sets_the_changed_parameters():
     assert nav.summary()['toast'] == ['change a value first (enter edits it)', 'bad']
     assert bridge.set_param_calls == []
     press(nav, 'l', 'enter', 'enter', *'true', 'enter', 'j', 'c', '5', 'enter', 'space')
-    assert bridge.set_param_calls == [(NODE, 'use_sim_time', 'true'), (NODE, 'publish_rate', '5.0')]
+    assert bridge.set_param_calls == [(NODE, 'use_sim_time', True, 'bool'), (NODE, 'publish_rate', 5.0, 'double')]
     assert [line.text for line in nav.feedback.activity] == ['✓ set publish_rate = 5.0', '✓ set use_sim_time = true']
     data = node_data(nav)
     assert data.changes == {} and [p.value for p in data.params] == [True, 5.0, 'map']
@@ -194,7 +201,7 @@ def test_space_sets_the_changed_parameters():
 
 def test_ctrl_s_in_insert_keeps_and_sets():
     nav, bridge = node_nav(*OPEN_NODE, *TO_RATE, 'c', '2', 'ctrl+s')
-    assert nav.layer == AREA and bridge.set_param_calls == [(NODE, 'publish_rate', '2.0')]
+    assert nav.layer == AREA and bridge.set_param_calls == [(NODE, 'publish_rate', 2.0, 'double')]
 
 
 def test_a_failed_set_keeps_the_change():

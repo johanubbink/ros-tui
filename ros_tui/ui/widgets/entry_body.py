@@ -29,6 +29,7 @@ from typing import Any, Callable
 from rich.text import Text
 
 from ros_tui.ui.entries.base import Entry
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import NavState
 from ros_tui.ui.theme import KINDS
 from ros_tui.ui.widgets.action_entry import action_panels, action_toolbar
@@ -84,7 +85,7 @@ class EntryBody(NavView):
         if not entry.modes():
             return fit(left, width)
         modes = switch(*((mode.capitalize(), mode == entry.mode, ('mode', mode)) for mode in entry.modes()))
-        return spread(left, modes + Text.assemble(' ', ('e', style('key', bold=True))), width)
+        return spread(left, modes + Text.assemble(' ', (key_for('switch_mode'), style('key', bold=True))), width)
 
     def lines(self, width, height):
         nav = self.nav

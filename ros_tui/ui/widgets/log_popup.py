@@ -21,12 +21,14 @@ scrolls to keep the picked line in the middle.
 
 from rich.text import Text
 
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import LogView
 from ros_tui.ui.widgets.activity_strip import activity_row
 from ros_tui.ui.widgets.base import BODY_TOP, Overlay, band, cursor_bar, keyed, rule, scroll_top, style
 
 SIDE = 10  # Cells left free on each side.
 BOTTOM = 3  # Rows left free above the bottom of the screen (the footer and some of the strip).
+MOVE_KEYS = f"{key_for('log_step', 1, 'activity')} {key_for('log_step', -1, 'activity')}"  # "j k"
 
 
 class LogPopup(Overlay):
@@ -43,7 +45,8 @@ class LogPopup(Overlay):
         nav = self.nav
         activity = nav.feedback.activity
         title = Text.assemble(' ', (f'All activity ({len(activity)})', style('bright', bold=True)), '   ',
-                              keyed('j k', 'move'), ('  ·  ', style('dim')), keyed('enter', 'goes there'))
+                              keyed(MOVE_KEYS, 'move'), ('  ·  ', style('dim')),
+                              keyed(key_for('log_enter', mode='activity'), 'goes there'))
         lines = [title, rule(width)]
         if not activity:
             return lines + [Text(' nothing yet', style('dim'))]

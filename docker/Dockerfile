@@ -8,8 +8,8 @@ ARG ROS_DISTRO
 # ---- Dependencies -----------------------------------------------------------
 # package.xml is the one list of ROS and Python dependencies: rosdep installs them, as CI does.
 # Only package.xml is copied in, so this layer is rebuilt only when it changes. The base image
-# already has colcon and rosdep. textual comes bundled with ros_tui (ros_tui/_vendor), so there
-# is no pip step.
+# already has colcon and rosdep. textual is not installed here: the entrypoint unpacks ros_tui's
+# bundled copy (scripts/vendor.py, no pip) into the mounted source.
 # Outside rosdep, as in CI: flake8 for scripts/agent_check.sh, and librsvg2-bin +
 # fonts-jetbrains-mono, with which the harness turns screenshot SVGs into PNGs in the design's
 # monospace font. sudo lets the playground user install extra tools (docs/testing.md: ffmpeg).

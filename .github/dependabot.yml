@@ -1,0 +1,20 @@
+# Weekly version bumps as pull requests. The pip entry watches the lock of the bundled textual stack
+# (ros_tui/_vendor/requirements.txt, unpacked by scripts/vendor.py); all of it moves in one PR, so
+# a textual release that needs a newer rich arrives together with it.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /ros_tui/_vendor
+    schedule:
+      interval: weekly
+    groups:
+      vendored:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

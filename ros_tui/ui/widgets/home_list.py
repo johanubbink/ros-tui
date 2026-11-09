@@ -25,6 +25,7 @@ in view.
 
 from rich.text import Text
 
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import IN, KINDS as NAV_KINDS, Tab
 from ros_tui.ui.theme import KINDS
 from ros_tui.ui.widgets.base import (NavView, clickable, column_width, cursor_bar, fit, glyph, here, scroll_top, style,
@@ -46,7 +47,7 @@ class HomeList(NavView):
     def chips(self, width: int) -> Text:
         """"tab: All 12  ≋ Topics 6 …", the chip that filters the list on."""
         nav = self.nav
-        line = Text.assemble(('tab: ', style('dim')))
+        line = Text.assemble((f"{key_for('step_chip', 1)}: ", style('dim')))
         for index in range(-1, len(NAV_KINDS)):
             kind = NAV_KINDS[index] if index >= 0 else None
             on = nav.chip == index

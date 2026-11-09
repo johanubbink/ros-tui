@@ -32,9 +32,23 @@ The code:
     may ask of ROS: each request, how it answers and on which thread.
   - [`bridge.py`](../ros_tui/ros/bridge.py): `RosBridge`, the thread that owns
     rclpy and implements `Bridge` ([The bridge](#the-bridge)).
+  - [`inflight.py`](../ros_tui/ros/inflight.py): `Inflight`, the bridge's
+    requests in flight (waits for a server, awaited responses, goals) and when
+    each one fails. No rclpy.
+  - [`entity_cache.py`](../ros_tui/ros/entity_cache.py): `EntityCache`, the
+    bounded cache of clients and publishers that never evicts a busy one. No
+    rclpy.
   - [`graph.py`](../ros_tui/ros/graph.py): immutable `GraphSnapshot`s of the
     topics, services, actions and nodes, and `NodeInfo` (a node's endpoints,
     like `ros2 node info`).
+  - [`parameters.py`](../ros_tui/ros/parameters.py): `Param`, the parameter
+    type labels, and the `ParameterValue` a value is read from or sent as, by
+    the type the parameter was declared with. Imports rcl_interfaces only to
+    read or build one.
+  - [`schema.py`](../ros_tui/ros/schema.py): the type labels and field paths
+    of messages as plain strings (the array grammar, `points[1].x`, the
+    stamp-at-send words) and `FieldNode`. Imports no ROS, so the UI reads
+    labels and paths with it.
   - [`message_yaml.py`](../ros_tui/ros/message_yaml.py): loading interface
     types, the structure of a message, and checked plain data ↔ message
     conversion ([Messages](#messages)).
@@ -54,7 +68,10 @@ The code:
     (`base.py`), one `Entry` subclass per entry kind (topic, service, action,
     node) and `kinds.py`, which maps a kind to its class.
   - [`fields.py`](../ros_tui/ui/fields.py): `FieldRows`, the model of a message
-    as editable field rows.
+    as editable field rows, and an echo's flat rows.
+  - [`values.py`](../ros_tui/ui/values.py): one value as text: shown as flow
+    YAML, and typed text read back by its type label, with the error the user
+    sees.
   - [`helpers/`](../ros_tui/ui/helpers/): the field helpers (Quaternion,
     Header, Time, Enum) and their maths.
   - [`register.py`](../ros_tui/ui/register.py): the typed copy / paste register.
@@ -65,9 +82,15 @@ The code:
 - [`ros_tui/output.py`](../ros_tui/output.py): sends what ROS prints (fds 1
   and 2) to a log file while the UI runs, so RMW warnings never land on screen.
 - [`ros_tui/_vendor/`](../ros_tui/_vendor/): ros_tui's own copy of textual and
-  its dependencies, pinned in `vendor.lock` and rebuilt by
-  [`scripts/vendor.py`](../scripts/vendor.py). Importing `ros_tui` puts it first
-  on `sys.path`, so neither apt nor colcon users need pip.
+  its dependencies. Git holds only the lock, `requirements.txt` (a pip
+  requirements file with hashes, bumped by Dependabot);
+  [`scripts/vendor.py`](../scripts/vendor.py) downloads the pinned pure-Python
+  wheels from PyPI with the standard library and unpacks them, and stamps the
+  copy with the lock's hash (`requirements.sha256`). Everything that builds
+  ros_tui runs it first: `scripts/build_pyz.sh`, the CI test job and the Docker
+  entrypoint; `setup.py` refuses to build without a copy matching the lock.
+  Importing `ros_tui` puts the copy first on `sys.path`, so neither apt nor
+  colcon users need pip.
 - [`docker/demo_servers.py`](../docker/demo_servers.py): the example servers used
   by the Docker playground and the GIF. Not part of the installed package.
 
@@ -100,12 +123,20 @@ Results come back in one of two ways:
 `wait_for_service`. A request whose server isn't up yet is parked, and a
 **housekeeping timer** (4 Hz) checks parked requests and in-flight calls: a
 server must appear within 5 s, and a response must arrive within 30 s, or the
-request fails with a timeout.
+request fails with a timeout. That holds for a service call and for each call
+of a node's parameter request alike, and shutdown fails both the same way. A
+goal whose action server is gone for 5 s ends with an error. `Inflight` ([`inflight.py`](../ros_tui/ros/inflight.py)) keeps
+these records and decides each of these outcomes; `RosBridge` tells it what
+was sent, accepted or ended and asks it what is busy. It holds no rclpy, so
+its tests run on a hand-driven clock with fake entities.
 
 **Clients and publishers are cached** per (name, type), so calling a service
-twice reuses its client. The cache holds 8 entries and evicts the least
-recently used one, skipping any entity still in use, so a long session doesn't
-pile up DDS resources.
+twice reuses its client. The cache
+([`entity_cache.py`](../ros_tui/ros/entity_cache.py)) holds 8 entries and
+evicts the least recently used one, skipping any entity still in use (a
+request, response or goal in `Inflight`, or a periodic publisher) and the one
+it just made, so a long session doesn't pile up DDS resources. When all are in
+use it grows past 8 rather than break a call.
 
 **Periodic publishing** is a timer per topic on the ROS thread. It keeps
 running while the UI shows other topics, and the bridge destroys them all on
@@ -196,7 +227,9 @@ together.
   keys and the `NavState` action they run (with an optional argument: a step
   of ±1, or the name of the entry verb for the generic `verb` action), and the
   label the footer, `?` and [usage.md](usage.md) show. `NavState.handle_key`
-  looks a key up there and runs its action from `nav.ACTIONS`.
+  looks a key up there and runs its action from `nav.ACTIONS`. The views name
+  the keys they show (buttons, hints, the footer, the log and toasts) through
+  `keymap.key_for`, so a key is bound in one place.
 - **One key router.** [`app.py`](../ros_tui/ui/app.py)'s `RosTuiApp` has a
   single `on_key` that hands every key to `NavState.handle_key`, then redraws.
   Nothing takes focus, and textual's own bindings (focus cycling, the command
@@ -246,8 +279,9 @@ together.
 That clears the bridge's running flag (so `submit()` refuses new work) and
 wakes the executor. The ROS thread leaves its spin loop and tears down: queued
 commands are cancelled, and parked and in-flight requests fail with "ROS
-bridge shut down". Then every running goal is canceled, as `ros2 action
-send_goal` does on ctrl+c, so nothing keeps acting on the robot after you quit:
+bridge shut down" (a reply that still lands for one of them is ignored). Then
+every running goal is canceled, as `ros2 action send_goal` does on ctrl+c, so
+nothing keeps acting on the robot after you quit:
 the thread spins for at most `SHUTDOWN_CANCEL_TIMEOUT_S` (1 s) until each
 server answered the cancel (a goal still waiting for acceptance is canceled
 when it is accepted). Then every timer (including periodic publishers),

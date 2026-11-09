@@ -30,13 +30,14 @@ from harness.fake_bridge import CAMERA_INFO_SERVICE, DEMO_GRAPH, FakeBridge, cam
 from harness.live_world import live_nav
 from ros_tui.ros.graph import InterfaceEntry
 from ros_tui.ros.message_yaml import message_structure
-from ros_tui.ui.fields import FieldRows, enum_matches, enum_value
+from ros_tui.ui.fields import FieldRows
 from ros_tui.ui.helpers import ENUM, HEADER, QUAT, TIME, Helper, helper_kind, helper_name
 from ros_tui.ui.helpers.header import parse_header
 from ros_tui.ui.helpers.quaternion import clean_quat, normalize_quat, quat_about_axis, quat_from_euler
 from ros_tui.ui.helpers.time import parse_time, seconds_str_to_stamp, stamp_to_seconds_str
 from ros_tui.ui.keymap import KeyRow, key_char, keys_now
 from ros_tui.ui.nav import AREA, EDIT, Tab
+from ros_tui.ui.values import enum_matches, enum_value
 from ros_tui.ui.widgets.entry_body import row_line
 
 YAW_90 = {'x': 0.0, 'y': 0.0, 'z': 0.707107, 'w': 0.707107}

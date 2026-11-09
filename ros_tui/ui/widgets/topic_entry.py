@@ -26,11 +26,13 @@ TopicEntry (entries/topic.py).
 from rich.style import Style
 from rich.text import Text
 
-from ros_tui.ui.entries.base import Area
-from ros_tui.ui.entries.topic import ECHO, RATE, RATE_RANGE, TopicEntry, rate_text
+from ros_tui.ui.entries.base import OUT, RATE, Area
+from ros_tui.ui.entries.topic import RATE_RANGE, TopicEntry, rate_text
 from ros_tui.ui.fields import Row
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import NavState
-from ros_tui.ui.widgets.base import button, clickable, column_width, edit_value, keyed, primary_look, spread, style
+from ros_tui.ui.widgets.base import (HISTORY_KEYS, button, clickable, column_width, edit_value, keyed, primary_look, spread,
+                                     style)
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, hint, pill, waiting
 
@@ -50,9 +52,10 @@ def topic_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
 def echo_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
     """The echo's start / stop button and the keys of the latest message."""
     look = primary_look(nav, entry.tab, 'stop' if entry.echo else 'pri')
-    left = button('■ Stop echo' if entry.echo else '▶ Start echo', 'space', look)
-    return spread(left, hint(('enter', 'freezes the values'), ('y', 'copies'), ('e', 'publish'), color='dim'), width,
-                  optional=True)
+    left = button('■ Stop echo' if entry.echo else '▶ Start echo', 'primary', look)
+    keys = hint((key_for('go_down'), 'freezes the values'), (key_for('verb', 'yank'), 'copies'),
+                (key_for('switch_mode'), 'publish'), color='dim')
+    return spread(left, keys, width, optional=True)
 
 
 def echo_counts(entry: TopicEntry) -> Text:
@@ -73,15 +76,15 @@ def publish_toolbar(nav: NavState, entry: TopicEntry, width: int) -> Text:
     rate = edit_value(editing.value, editing.fresh) if editing else clickable(Text(
         rate_text(repeat.rate if repeat else entry.rate()), Style(underline=True)), ('verb', 'rate'))
     label = Text.assemble('■ Stop repeating at ' if repeat else '↻ Repeat at ', rate, ' Hz')
-    left = Text.assemble(button('▶ Publish once', 'space', primary_look(nav, entry.tab, 'pri')), ' ',
-                         button(label, 's' if repeat else 'r', 'stop' if repeat else ''), '  ')
+    left = Text.assemble(button('▶ Publish once', 'primary', primary_look(nav, entry.tab, 'pri')), ' ',
+                         button(label, 'secondary' if repeat else 'repeat', 'stop' if repeat else ''), '  ')
     if editing:
-        left.append(f'type a rate · enter keeps · {RATE_RANGE}', style('dim'))
+        left.append(f"type a rate · {key_for('edit_keep', mode='insert')} keeps · {RATE_RANGE}", style('dim'))
     else:
-        left.append_text(hint(entry.rate_note(), ('R', 'changes it'), color='dim'))
+        left.append_text(hint(entry.rate_note(), (key_for('verb', 'rate'), 'changes it'), color='dim'))
     if repeat:
         left.append(f'  {repeat.sent(nav.feedback.clock())} sent', style('ok'))
-    return spread(left, keyed('[ ]', 'earlier messages', 'dim'), width, optional=True)
+    return spread(left, keyed(HISTORY_KEYS, 'earlier messages', 'dim'), width, optional=True)
 
 
 def latest_panel(nav: NavState, entry: TopicEntry, area: Area) -> Panel:
@@ -105,11 +108,11 @@ def latest_panel(nav: NavState, entry: TopicEntry, area: Area) -> Panel:
 def _echo_hint(nav: NavState, entry: TopicEntry) -> Text:
     """LATEST MESSAGE's title hint: not echoing, frozen (with how many came in since) or live."""
     if entry.echo is None:
-        return hint('not echoing', ('space', 'starts'))
+        return hint('not echoing', (key_for('primary'), 'starts'))
     if entry.frozen(nav):
         return Text.assemble(pill('❄ FROZEN', 'warn'), ' ', (f'+{entry.new_since} new since', style('warn')), '  ',
-                             hint(('esc', 'goes live'), ('enter', 'shows / hides a field')))
-    return Text.assemble(('● live', style('ok')), ' · ', hint(('enter', 'freezes it')))
+                             hint((key_for('go_up'), 'goes live'), (key_for('go_down'), 'shows / hides a field')))
+    return Text.assemble(('● live', style('ok')), ' · ', hint((key_for('go_down'), 'freezes it')))
 
 
 def _echo_value(entry: TopicEntry, row: Row, nobody: bool) -> Text:
@@ -124,5 +127,5 @@ def _echo_value(entry: TopicEntry, row: Row, nobody: bool) -> Text:
 
 def topic_panels(nav: NavState, entry: TopicEntry) -> list[Panel]:
     """LATEST MESSAGE (Echo) or MESSAGE (Publish), as the entry's one area."""
-    return [latest_panel(nav, entry, area) if area.id == ECHO else editor_panel(nav, entry, area)
+    return [latest_panel(nav, entry, area) if area.id == OUT else editor_panel(nav, entry, area)
             for area in entry.areas()]

@@ -38,11 +38,6 @@ ECHO_HZ_WINDOW = 64
 ECHO_DISPLAY_DIGITS = 6  # Significant digits of an echoed float on screen (the value keeps them all).
 FEEDBACK_BUFFER_MAXLEN = 200
 
-# Stamp-at-send words: a field holding one is stamped with the time the message is sent
-# (message_yaml.build_message). An editor seeds a nested header with HEADER_AUTO.
-HEADER_AUTO = 'auto'  # A std_msgs/Header: stamped, with an empty frame_id.
-TIME_NOW = 'now'  # A builtin_interfaces/Time, such as a header's stamp.
-
 # Topic publishing.
 PUBLISH_RATE_MIN_HZ = 0.1
 PUBLISH_RATE_MAX_HZ = 100.0

@@ -51,10 +51,10 @@ from nav_msgs.srv import GetPlan
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo, TopicInfo
 from ros_tui.ros.message_yaml import import_type
+from ros_tui.ros.parameters import BOOL, DOUBLE, STRING, Param, parameter_value, read_parameters
 from sensor_msgs.srv import SetCameraInfo
 from std_msgs.msg import Int32, String
 from test_msgs.action import NestedMessage
-import yaml
 
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
@@ -118,7 +118,7 @@ DEMO_NODE_INFOS = {
         action_clients=(),
     ),
 }
-DEMO_PARAMS = [('use_sim_time', 'bool', False), ('publish_rate', 'double', 10.0), ('frame_id', 'string', 'map')]
+DEMO_PARAMS = [Param('use_sim_time', BOOL, False), Param('publish_rate', DOUBLE, 10.0), Param('frame_id', STRING, 'map')]
 
 _DIAGNOSTIC_LEVELS = (
     (DiagnosticStatus.OK, 'OK'),
@@ -341,7 +341,7 @@ class FakeBridge:
         live: bool = False,
         clock: ManualClock | None = None,
         node_infos: dict[str, NodeInfo] | None = None,
-        params: list[tuple[str, str, Any]] | None = None,
+        params: list[Param] | None = None,
         feeds: dict[str, TopicFeed] | None = None,
         responders: dict[str, Callable[[Any], Any]] | None = None,
         action_scripts: dict[str, ActionScript] | None = None,
@@ -370,7 +370,7 @@ class FakeBridge:
         self.failing_services: dict[str, str] = {}  # Service name -> why calling it fails (a TimeoutError).
         # Live: action name -> how its goals fail: 'rejected', 'aborted' (halfway), else why sending fails.
         self.failing_actions: dict[str, str] = {}
-        self._node_params: dict[str, list[tuple[str, str, Any]]] = {}  # Live: params after sets.
+        self._node_params: dict[str, list[Param]] = {}  # Live: params after sets.
         self._feed_timers: dict[str, _Timer] = {}
         self._periodic_timers: dict[str, _Timer] = {}  # Live: the repeating publishes.
         self.periodic_sent: dict[str, int] = {}  # Live: how many each repeating publish sent.
@@ -413,15 +413,20 @@ class FakeBridge:
         self.param_list_requests.append(node_name)
         self._answer_later(lambda: on_done(list(self._node_params.get(node_name, self.params)), None))
 
-    def set_node_parameter(self, node_name, name, value_yaml, on_done):
-        """Recorded; a name in ``rejected_params`` fails with its reason. Live, a set that succeeds
-        changes what ``list_node_parameters`` answers for that node from then on."""
-        self.set_param_calls.append((node_name, name, value_yaml))
+    def set_node_parameter(self, node_name, name, value, type_label, on_done):
+        """Recorded; a name in ``rejected_params`` fails with its reason. The value is built as a
+        real ParameterValue of ``type_label`` and read back, as a node would store it, so a value
+        that type can't hold fails as on RosBridge. Live, a set that succeeds changes what
+        ``list_node_parameters`` answers for that node from then on."""
+        self.set_param_calls.append((node_name, name, value, type_label))
         reason = self.rejected_params.get(name)
+        try:
+            stored = read_parameters([name], [parameter_value(value, type_label)])[0]
+        except ValueError as error:
+            reason = str(error)
         if reason is None and self.live:
-            value = yaml.safe_load(value_yaml)
             params = self._node_params.setdefault(node_name, list(self.params))
-            params[:] = [(n, kind, value if n == name else old) for n, kind, old in params]
+            params[:] = [stored if param.name == name else param for param in params]
         self._answer_later(lambda: on_done(reason))
 
     def _answer_later(self, answer: Callable[[], Any]) -> None:

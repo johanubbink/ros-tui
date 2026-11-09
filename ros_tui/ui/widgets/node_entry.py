@@ -18,7 +18,9 @@ PARAMETERS. Everything shown comes from the NodeEntry (entries/node.py)."""
 
 from rich.text import Text
 
-from ros_tui.ui.entries.node import PARAM, NodeEntry, render_value
+from ros_tui.ui.entries.base import IFS, PARAM
+from ros_tui.ui.entries.node import NodeEntry, render_value
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.nav import NavState
 from ros_tui.ui.widgets.base import column_width, edit_value, glyph, style
 from ros_tui.ui.widgets.panel import Panel, hint, waiting
@@ -28,7 +30,7 @@ TYPE_WIDTH = 8
 
 
 def interfaces_panel(nav: NavState, entry: NodeEntry, title: str, row: int) -> Panel:
-    panel = Panel(title, hint=hint('enter opens it in a tab'))
+    panel = Panel(title, hint=hint(f"{key_for('go_down')} opens it in a tab"))
     if entry.groups is None:
         panel.lines = waiting(entry.info_error)
         return panel
@@ -47,8 +49,9 @@ def interfaces_panel(nav: NavState, entry: NodeEntry, title: str, row: int) -> P
 
 
 def parameters_panel(nav: NavState, entry: NodeEntry, title: str, row: int) -> Panel:
-    panel = Panel(title, hint=hint('● changed', ('space', 'sets'), color='warn') if entry.changes
-                  else hint(('enter', 'edits'), ('space', 'sets')), errline=nav.feedback.errline(entry.tab), edits=True)
+    sets = (key_for('primary'), 'sets')
+    panel = Panel(title, hint=hint('● changed', sets, color='warn') if entry.changes
+                  else hint((key_for('go_down'), 'edits'), sets), errline=nav.feedback.errline(entry.tab), edits=True)
     if entry.params is None:
         panel.lines = waiting(entry.params_error)
         return panel
@@ -74,5 +77,5 @@ def parameters_panel(nav: NavState, entry: NodeEntry, title: str, row: int) -> P
 
 def node_panels(nav: NavState, entry: NodeEntry) -> list[Panel]:
     """INTERFACES and PARAMETERS, in the order of the entry's areas."""
-    makers = {'ifs': interfaces_panel, PARAM: parameters_panel}
+    makers = {IFS: interfaces_panel, PARAM: parameters_panel}
     return [makers[area.id](nav, entry, area.title, nav.row_index(area)) for area in entry.areas()]

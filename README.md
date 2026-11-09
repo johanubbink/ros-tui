@@ -25,8 +25,17 @@ If `ros_tui` isn't found afterwards, `~/.local/bin` isn't on your `PATH` yet.
 Log out and back in, or add it to your `PATH`.
 
 Prefer a system-wide install? Use `/usr/local/bin` with `sudo` instead. To
-build from source, clone the repo into a colcon workspace and
-`colcon build --packages-select ros_tui`.
+build from source, clone the repo into a colcon workspace, unpack the bundled
+textual, then build:
+
+```bash
+git clone https://github.com/johanubbink/ros-tui.git src/ros_tui
+src/ros_tui/scripts/vendor.py    # downloads the pinned wheels from PyPI (no pip needed)
+colcon build --packages-select ros_tui
+```
+
+Run `scripts/vendor.py` again after a pull that changes
+`ros_tui/_vendor/requirements.txt`; the build stops and says so if you forget.
 
 ## Use it
 
@@ -69,4 +78,6 @@ See [docs/docker.md](docs/docker.md) for what to try.
 ## License
 
 Apache 2.0, see [LICENSE](LICENSE). Bundled dependencies (textual and
-friends) in [`ros_tui/_vendor`](ros_tui/_vendor) keep their own licenses.
+friends, pinned in
+[`ros_tui/_vendor/requirements.txt`](ros_tui/_vendor/requirements.txt)) keep
+their own licenses.

@@ -14,9 +14,10 @@
 
 """ros_tui's own copy of textual and its dependencies (rich, pygments, ...).
 
-The distro packages of textual are too old (or missing), so the pinned wheels listed in
-vendor.lock are unpacked next to this file by scripts/vendor.py. Importing this package puts this
-directory first on sys.path, so a plain ``import textual`` anywhere in ros_tui finds this copy.
+The distro packages of textual are too old (or missing), so the wheels pinned in requirements.txt
+are unpacked next to this file by scripts/vendor.py (git keeps only this file and the lock).
+Importing this package puts this directory first on sys.path, so a plain ``import textual``
+anywhere in ros_tui finds this copy.
 """
 
 import os

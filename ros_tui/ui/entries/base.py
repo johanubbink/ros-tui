@@ -38,6 +38,14 @@ if TYPE_CHECKING:
 # the rows of one area › typing into one value. An entry names one only as `Editing.back`.
 TABS, IN, AREA, EDIT = ('tabs', 'in', 'area', 'edit')
 
+# The area ids (`Area.id`, `Editing.area`). The keymap's predicates and the views ask for an area by
+# these, never by its title.
+EDITOR = 'msg'  # A message editor: a topic's MESSAGE, a service's REQUEST, an action's GOAL.
+OUT = 'out'  # What came back: a topic's LATEST MESSAGE, a service's RESPONSE, an action's RESULT.
+IFS = 'ifs'  # A node's INTERFACES.
+PARAM = 'par'  # A node's PARAMETERS; its undo steps are tagged with the parameter's name.
+RATE = 'rate'  # Not an area: the `Editing.area` of a topic's repeat-rate editor.
+
 Post = Callable[[Callable[[], None]], None]
 Work = Post
 Verb = Callable[['Host', str, Any], None]  # (nav, how the key reads in the log, the argument or None).
@@ -51,7 +59,7 @@ class Tab:
 
 @dataclass(frozen=True)
 class Area:
-    """One panel of an entry. Ids: msg, out, ifs, par."""
+    """One panel of an entry; its id is one of the area ids above."""
 
     id: str
     title: str  # In capitals; the breadcrumb shows it in lower case.
@@ -65,7 +73,7 @@ class Area:
 class Editing:
     """The value being typed in the EDIT layer."""
 
-    area: str  # The area id it belongs to, or an editor's own id outside the areas ('rate').
+    area: str  # The area id it belongs to, or an editor's own id outside the areas (RATE).
     row: int
     value: str
     old: str = ''

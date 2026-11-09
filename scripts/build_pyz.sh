@@ -25,6 +25,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 
+python3 "$repo/scripts/vendor.py" --if-stale  # The bundled textual, unpacked from its lock.
 cp -r "$repo/ros_tui" "$staging/ros_tui"
 find "$staging" -name __pycache__ -type d -prune -exec rm -rf {} +
 cat > "$staging/__main__.py" <<'PY'
