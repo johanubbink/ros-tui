@@ -49,6 +49,7 @@ def node_data(nav):
     ('double', '5', 5.0), ('double', '1e-3', 0.001), ('double', '-2.5', -2.5),
     ('string', 'odom', 'odom'), ('string', '42', '42'),
     ('int[]', '[1, 2]', [1, 2]), ('double[]', '[1, 2.5]', [1.0, 2.5]), ('string[]', '[]', []),
+    ('byte[]', '[1, 255]', [1, 255]),
 ])
 def test_parse_value(kind, text, value):
     parsed = parse_value(Param('p', kind, None), text)
@@ -65,6 +66,8 @@ def test_parse_value(kind, text, value):
     (Param('ids', 'int[]', [1]), '[1, a]', 'ids needs a value of type int[], got "[1, a]"'),
     (Param('ids', 'int[]', [1]), '[1, true]', 'ids needs a value of type int[], got "[1, true]"'),
     (Param('count', 'int', 3), str(2**63), f'count needs a value of type int, got "{2**63}"'),
+    (Param('key', 'byte[]', [1]), '[256]', 'key needs a value of type byte[], got "[256]"'),
+    (Param('key', 'byte[]', [1]), '[-1]', 'key needs a value of type byte[], got "[-1]"'),
 ])
 def test_parse_value_errors_name_the_parameter(param, text, message):
     with pytest.raises(ValueError) as error:

@@ -541,20 +541,23 @@ def test_list_and_set_node_parameters(bridge, fixture_servers):
         set_param(bridge, full_name, 'test_param', 0, 'int')
 
 
-@pytest.mark.parametrize('name, type_label, sent, declared, received', [
-    ('test_doubles', 'double[]', [1, 2], [0.5], [1.0, 2.0]),  # Whole numbers, sent as doubles.
-    ('test_doubles', 'double[]', [], [0.5], []),
-    ('test_names', 'string[]', [], ['a'], []),
+@pytest.mark.parametrize('name, type_label, sent, declared, held, received', [
+    # Whole numbers, sent as doubles.
+    ('test_doubles', 'double[]', [1, 2], [0.5], [1.0, 2.0], [1.0, 2.0]),
+    ('test_doubles', 'double[]', [], [0.5], [], []),
+    ('test_names', 'string[]', [], ['a'], [], []),
+    # A byte array is sent and read as ints; the node holds it as bytes.
+    ('test_bytes', 'byte[]', [1, 255], [b'\x01'], [b'\x01', b'\xff'], [1, 255]),
 ])
 def test_set_an_array_parameter_by_its_declared_type(
-    bridge, fixture_servers, name, type_label, sent, declared, received,
+    bridge, fixture_servers, name, type_label, sent, declared, held, received,
 ):
     full_name = fixture_node_name(fixture_servers)
     node = fixture_servers.node
     assert wait_for(lambda: param_value(bridge, full_name, name) is not None, timeout=15.0)
     try:
         assert set_param(bridge, full_name, name, sent, type_label) is None
-        assert list(node.get_parameter(name).value) == received
+        assert list(node.get_parameter(name).value) == held
         assert param_value(bridge, full_name, name) == received
     finally:
         node.set_parameters([Parameter(name, value=declared)])
