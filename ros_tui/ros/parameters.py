@@ -18,7 +18,8 @@ A node's parameters: their type labels, and the rcl_interfaces ParameterValue th
 
 A parameter is a `Param(name, type, value)`. Its type is one of the labels in `TYPES` (bool,
 int, double, string and their arrays), or `UNKNOWN` with value None for a type that can't be read.
-A value is plain Python: bool, int, float, str or a list of them (bytes for a byte[] element).
+A value is plain Python: bool, int, float, str or a list of them; a byte[] is a list of ints in
+0..255, never the bytes elements rcl holds it as.
 
 `read_parameters` turns the values a node answered with into Params; `parameter_value` builds the
 ParameterValue to set one, by the type the parameter was declared with, never by what the Python
@@ -36,6 +37,7 @@ BOOL = 'bool'
 INT = 'int'
 DOUBLE = 'double'
 STRING = 'string'
+BYTES = 'byte[]'
 UNKNOWN = '?'  # A type the bridge can't read; such a parameter is shown but can't be set.
 
 # label -> (rcl_interfaces ParameterType constant, ParameterValue field, Python type of a value or
@@ -45,7 +47,7 @@ _FIELDS = {
     INT: ('PARAMETER_INTEGER', 'integer_value', int),
     DOUBLE: ('PARAMETER_DOUBLE', 'double_value', float),
     STRING: ('PARAMETER_STRING', 'string_value', str),
-    'byte[]': ('PARAMETER_BYTE_ARRAY', 'byte_array_value', bytes),
+    BYTES: ('PARAMETER_BYTE_ARRAY', 'byte_array_value', int),
     'bool[]': ('PARAMETER_BOOL_ARRAY', 'bool_array_value', bool),
     'int[]': ('PARAMETER_INTEGER_ARRAY', 'integer_array_value', int),
     'double[]': ('PARAMETER_DOUBLE_ARRAY', 'double_array_value', float),
@@ -76,34 +78,32 @@ def read_parameters(names: list[str], values: list[Any]) -> list[Param]:
         value = None if label == UNKNOWN else getattr(raw, _FIELDS[label][1])
         if hasattr(value, 'tolist'):  # Number arrays come back as array.array / numpy.
             value = value.tolist()
+        elif label == BYTES:  # A list of one-byte bytes.
+            value = [item[0] for item in value]
         params.append(Param(name, label, value))
     return params
 
 
 _INT64 = range(-2**63, 2**63)
+_BYTE = range(256)
 
 
-def _coerced(item: Any, element: type) -> Any:
+def _coerced(item: Any, element: type, whole: range) -> Any:
     """One value (or array element) as a field of Python type `element` holds it; ValueError if it
-    can't. A whole number for a double becomes a float, an int for a byte becomes that byte, and an
-    int must fit in 64 bits."""
+    can't. A whole number for a double becomes a float, and an int must be in `whole`."""
     if element is float and type(item) is int:
         try:
             return float(item)
         except OverflowError:
             raise ValueError from None
-    if element is bytes and type(item) is int:
-        return bytes([item])  # ValueError outside 0..255.
-    if type(item) is not element or (element is bytes and len(item) != 1):
-        raise ValueError
-    if element is int and item not in _INT64:
+    if type(item) is not element or (element is int and item not in whole):
         raise ValueError
     return item
 
 
 def checked(value: Any, label: str) -> Any:
-    """`value` as a parameter declared as `label` holds it: whole numbers for a double as floats,
-    ints for a byte[] as bytes. No ROS import, so the UI checks a typed value with it.
+    """`value` as a parameter declared as `label` holds it: whole numbers for a double as floats.
+    No ROS import, so the UI checks a typed value with it.
 
     Raises ValueError for a label not in TYPES, or a value that type can't hold: a str for an int,
     a list for a scalar, an int in a string[] (bools are not ints here), an int outside int64, a
@@ -112,12 +112,13 @@ def checked(value: Any, label: str) -> Any:
     if label not in _FIELDS:
         raise ValueError(f'cannot set a parameter of type {label}')
     element = _FIELDS[label][2]
+    whole = _BYTE if label == BYTES else _INT64
     try:
         if not label.endswith('[]'):
-            return _coerced(value, element)
+            return _coerced(value, element, whole)
         if type(value) is not list:
             raise ValueError
-        return [_coerced(item, element) for item in value]
+        return [_coerced(item, element, whole) for item in value]
     except ValueError:
         raise ValueError(f'{value!r} does not fit type {label}') from None
 
@@ -126,6 +127,8 @@ def parameter_value(value: Any, label: str) -> Any:
     """The rcl_interfaces ParameterValue that sets a parameter declared as `label` to `value`.
     ValueError as `checked`."""
     built = checked(value, label)
+    if label == BYTES:
+        built = [bytes([item]) for item in built]  # As rcl holds it: a list of ints aborts.
     constant, field, _ = _FIELDS[label]
     from rcl_interfaces.msg import ParameterType, ParameterValue  # noqa: PLC0415
     parameter = ParameterValue(type=getattr(ParameterType, constant))

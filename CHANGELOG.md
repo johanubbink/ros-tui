@@ -15,6 +15,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A parameter value that doesn't fit its declared type** (a word in an
   `int[]`, an `int` past 64 bits) is refused while typing, with an errline
   naming the parameter, instead of failing only when it is set.
+- **A `byte[]` parameter** shows and is typed as numbers, `[1, 255]`, instead
+  of YAML binary (`[!!binary "AQ==", …]`).
 
 ## [0.2.0] - 2026-10-08
 

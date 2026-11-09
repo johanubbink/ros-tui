@@ -34,8 +34,7 @@ from ros_tui.ros.parameters import TYPES, UNKNOWN, Param, parameter_value, read_
     ('int[]', [1, 2], [1, 2]),
     ('double[]', [1, 2.5], [1.0, 2.5]),
     ('string[]', ['a', 'b'], ['a', 'b']),
-    ('byte[]', [1, 255], [b'\x01', b'\xff']),
-    ('byte[]', [b'\x07'], [b'\x07']),
+    ('byte[]', [1, 255], [1, 255]),  # A byte array is read and written as ints, not bytes.
     ('int', 2**63 - 1, 2**63 - 1), ('int[]', [-2**63], [-2**63]),
 ] + [(label, [], []) for label in TYPES if label.endswith('[]')])  # An empty list keeps its type.
 def test_a_value_round_trips_as_its_declared_type(label, value, read_back):
@@ -50,9 +49,15 @@ def test_the_type_sent_is_the_declared_one_not_the_value_s():
     assert parameter_value([], 'string[]').type == ParameterType.PARAMETER_STRING_ARRAY
 
 
+def test_a_byte_array_is_sent_as_one_byte_bytes():
+    # rclpy aborts the process, without raising, when it sends ints as a byte array.
+    assert list(parameter_value([1, 255], 'byte[]').byte_array_value) == [b'\x01', b'\xff']
+
+
 @pytest.mark.parametrize('label, value', [
     ('int', 'ten'), ('int', True), ('int', 2.5), ('bool', 'yes'), ('double', [1.0]), ('string[]', [1]),
-    ('int[]', 3), ('byte[]', [256]), ('byte[]', [-1]), ('byte[]', [b'ab']), (UNKNOWN, 1), ('float', 1.0),
+    ('int[]', 3), (UNKNOWN, 1), ('float', 1.0),
+    ('byte[]', [256]), ('byte[]', [-1]), ('byte[]', [b'\x07']), ('byte[]', [True]),
     ('int', 2**63), ('int[]', [-2**63 - 1]), ('double', 10**400), ('double[]', [10**400]),
 ])
 def test_a_value_the_type_cannot_hold_raises(label, value):

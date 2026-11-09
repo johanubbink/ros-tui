@@ -67,6 +67,7 @@ class FixtureServers:
         self.node.declare_parameter('test_param', 0)
         self.node.declare_parameter('test_doubles', [0.5])
         self.node.declare_parameter('test_names', ['a'])
+        self.node.declare_parameter('test_bytes', [b'\x01'])
         self.inbox_messages: list[str] = []
         self.canceled_goals = 0  # Goals the Fibonacci server ended as canceled.
         callback_group = ReentrantCallbackGroup()
