@@ -5,6 +5,11 @@
 #   docker compose exec ros_tui bash # in a 2nd terminal, then: ros2 run ros_tui ros_tui
 services:
   ros_tui:
+    # One image per distro and user, shared by every clone and worktree of the repo (the default
+    # name would follow the folder). The UID/GID is in the tag because it is baked into the image:
+    # a build from a folder without .env makes its own 1000:1000 image instead of replacing yours.
+    # The bind mount below is still this folder's source.
+    image: ros-tui-dev:${ROS_DISTRO:-jazzy}-${USER_ID:-1000}-${GROUP_ID:-1000}
     build:
       context: .
       dockerfile: docker/Dockerfile

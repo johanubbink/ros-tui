@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **The Docker playground image is `ros-tui-dev:<distro>-<uid>-<gid>`**, one
+  per ROS distro and user, shared by every clone and worktree of the repo. It
+  installs the dependencies in `package.xml` with rosdep, as CI does, so it is
+  smaller and builds faster. turtlesim is no longer needed: the demo servers' second
+  service is `/plan_to_pose` (`nav_msgs/srv/GetPlan`).
 - **The bundled textual is built, not stored.** Git keeps only its lock,
   `ros_tui/_vendor/requirements.txt` (a pip requirements file with hashes,
   bumped by Dependabot); `scripts/vendor.py` unpacks it before a build. From

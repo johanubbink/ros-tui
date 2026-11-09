@@ -17,13 +17,14 @@
 
 /add_two_ints: editing the request (insert, tab to the next field), calling it ("calling…", then
 "✓ OK" with sum: 42 and the time on the bridge's clock), a bad value with its errline, and [ ] through
-the earlier requests back to the draft. /set_pose (TeleportAbsolute) answers with an empty response,
-a failing service shows "✗ FAILED", and /camera/set_camera_info (not in the demo world) shows nested
+the earlier requests back to the draft. /plan_to_pose (GetPlan) takes a float and answers a nested
+path, /reset (std_srvs/srv/Empty, not in the demo world) answers with an empty response, a failing
+service shows "✗ FAILED", and /camera/set_camera_info (not in the demo world) shows nested
 messages and lists folding in place.
 """
 
 import pytest
-from harness.fake_bridge import SERVICE_DELAY_S, FakeBridge, camera_demo
+from harness.fake_bridge import SERVICE_DELAY_S, FakeBridge, camera_demo, reset_demo
 from harness.screens import ui_session
 
 pytestmark = [pytest.mark.ui, pytest.mark.shots]
@@ -93,15 +94,15 @@ async def test_service_entry():
         await s.keys('u')
         assert s.line_with('a: 5')
 
-        await s.keys('slash', *'set_pose', 'enter', 'enter', 'enter', '5', 'escape', 'space')
+        await s.keys('slash', *'plan', 'enter', 'enter', 'j', 'j', 'enter', *'0.5', 'escape', 'space')
         await s.advance(SERVICE_DELAY_S * 2)
-        assert s.state()['tabs'] == [ADD, '/set_pose']
-        assert s.line_with('x: 5.0', '# float') and s.line_with('theta: 0.0')
-        assert s.line_with('RESPONSE', '✓ OK') and 'empty response (no fields)' in s.text()
-        assert s.line_with('/set_pose', '▶ called · x: 5.0, y: 0.0, theta: 0.0')
-        await s.shot('set-pose-called', expect='/set_pose (turtlesim/srv/TeleportAbsolute) called with x 5.0: RESPONSE '
-                     '"✓ OK 50.0 ms" and "empty response (no fields)"; ACTIVITY shows the /set_pose call and '
-                     'response, the /add_two_ints lines dimmed')
+        assert s.state()['tabs'] == [ADD, '/plan_to_pose']
+        assert s.line_with('tolerance: 0.5', '# float') and s.line_with('▸ goal')
+        assert s.line_with('RESPONSE', '✓ OK') and s.line_with('▸ poses [3 items]')
+        assert s.line_with('/plan_to_pose', '▶ called · start:')
+        await s.shot('plan-called', expect='/plan_to_pose (nav_msgs/srv/GetPlan) called with tolerance 0.5, start and '
+                     'goal folded as {…}: RESPONSE "✓ OK 50.0 ms" and the plan with its header and "▸ poses [3 items]"; '
+                     'ACTIVITY shows the /plan_to_pose call and response, the /add_two_ints lines dimmed')
 
         await s.keys('1')
         assert s.line_with('a: 5') and s.line_with('1  sum: 28')  # Each entry keeps its own state.
@@ -118,6 +119,15 @@ async def test_failed_call():
         assert s.line_with(ADD, f'✗ call failed: service {ADD} not available (50.0 ms)')
         await s.shot('service-failed', expect='RESPONSE has a red "✗ FAILED" pill, 50.0 ms, and the red errline '
                      '"✗ call failed: service /add_two_ints not available"; the same in red in ACTIVITY')
+
+
+async def test_empty_response():
+    async with ui_session(bridge=reset_demo()) as s:
+        await s.keys('slash', *'reset', 'enter', 'space')
+        await s.advance(SERVICE_DELAY_S * 2)
+        assert s.line_with('RESPONSE', '✓ OK') and 'empty response (no fields)' in s.text()
+        await s.shot('service-empty-response', expect='/reset (std_srvs/srv/Empty) called: REQUEST says "(no fields)", '
+                     'RESPONSE "✓ OK 50.0 ms" and the dim "empty response (no fields)"')
 
 
 async def test_nested_request():

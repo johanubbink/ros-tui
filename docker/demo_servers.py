@@ -20,7 +20,8 @@ Brings up, on one node, something for each kind of entry:
 - Actions  — ``example_interfaces/Fibonacci`` on ``/fibonacci`` (streams feedback,
   honours cancellation), so a goal can be sent and watched until SUCCEEDED or CANCELED.
 - Services — ``example_interfaces/AddTwoInts`` on ``/add_two_ints``, and
-  ``turtlesim/TeleportAbsolute`` on ``/set_pose`` (logs the pose it is asked for).
+  ``nav_msgs/GetPlan`` on ``/plan_to_pose`` (answers a straight path from start to goal: a
+  nested request and response to browse).
 - Topics   — ``/chatter`` (``std_msgs/String`` @ ~1 Hz) for a calm echo, ``/counter``
   (``std_msgs/Int32`` @ ~50 Hz) to make the echo Hz/drop counters move, ``/localisation_pose``
   (``geometry_msgs/PoseWithCovarianceStamped`` @ ~2 Hz) as a richer, nested message type to
@@ -46,20 +47,16 @@ from diagnostic_msgs.msg import DiagnosticStatus
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from nav_msgs.srv import GetPlan
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Int32, String
 
-try:  # turtlesim's interfaces have their own package from Kilted on.
-    from turtlesim_msgs.srv import TeleportAbsolute
-except ImportError:
-    from turtlesim.srv import TeleportAbsolute
-
 FIBONACCI_ACTION = '/fibonacci'
 ADD_TWO_INTS_SERVICE = '/add_two_ints'
-SET_POSE_SERVICE = '/set_pose'
+PLAN_TO_POSE_SERVICE = '/plan_to_pose'
 CHATTER_TOPIC = '/chatter'
 COUNTER_TOPIC = '/counter'
 LOCALISATION_POSE_TOPIC = '/localisation_pose'
@@ -104,8 +101,8 @@ class DemoServers(Node):
         self._service = self.create_service(
             AddTwoInts, ADD_TWO_INTS_SERVICE, self._add_two_ints, callback_group=callback_group
         )
-        self._set_pose_service = self.create_service(
-            TeleportAbsolute, SET_POSE_SERVICE, self._set_pose, callback_group=callback_group
+        self._plan_service = self.create_service(
+            GetPlan, PLAN_TO_POSE_SERVICE, self._plan_to_pose, callback_group=callback_group
         )
 
         self._chatter_publisher = self.create_publisher(String, CHATTER_TOPIC, 10)
@@ -144,7 +141,7 @@ class DemoServers(Node):
             % (
                 FIBONACCI_ACTION,
                 ADD_TWO_INTS_SERVICE,
-                SET_POSE_SERVICE,
+                PLAN_TO_POSE_SERVICE,
                 CHATTER_TOPIC,
                 COUNTER_TOPIC,
                 LOCALISATION_POSE_TOPIC,
@@ -200,8 +197,15 @@ class DemoServers(Node):
             f'orientation ({orientation.x}, {orientation.y}, {orientation.z}, {orientation.w})'
         )
 
-    def _set_pose(self, request, response):
-        self.get_logger().info(f'/set_pose: x={request.x} y={request.y} theta={request.theta}')
+    def _plan_to_pose(self, request, response):
+        start, goal = request.start.pose.position, request.goal.pose.position
+        midpoint = PoseStamped()
+        midpoint.header = request.goal.header
+        midpoint.pose.position.x, midpoint.pose.position.y = (start.x + goal.x) / 2, (start.y + goal.y) / 2
+        midpoint.pose.orientation = request.goal.pose.orientation
+        response.plan.header = request.goal.header
+        response.plan.poses = [request.start, midpoint, request.goal]
+        self.get_logger().info(f'/plan_to_pose: ({start.x}, {start.y}) -> ({goal.x}, {goal.y})')
         return response
 
     def _add_two_ints(self, request, response):

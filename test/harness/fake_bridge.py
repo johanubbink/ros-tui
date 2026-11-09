@@ -46,20 +46,15 @@ from builtin_interfaces.msg import Time
 from diagnostic_msgs.msg import DiagnosticStatus
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from nav_msgs.srv import GetPlan
 from ros_tui.ros.events import ActionEvent, ActionEventKind
 from ros_tui.ros.graph import GraphSnapshot, InterfaceEntry, NodeInfo, TopicInfo
 from ros_tui.ros.message_yaml import import_type
 from ros_tui.ros.parameters import BOOL, DOUBLE, STRING, Param, parameter_value, read_parameters
 from sensor_msgs.srv import SetCameraInfo
 from std_msgs.msg import Int32, String
-
-try:  # turtlesim's interfaces have their own package from Kilted on.
-    from turtlesim_msgs.action import RotateAbsolute
-    TURTLESIM = 'turtlesim_msgs'
-except ImportError:
-    from turtlesim.action import RotateAbsolute
-    TURTLESIM = 'turtlesim'
+from test_msgs.action import NestedMessage
 
 SERVICE_DELAY_S = 0.05  # Live services answer this long after the call.
 ACTION_FEEDBACK_PERIOD_S = 0.3  # Live actions send one feedback per period (as the demo servers do).
@@ -80,7 +75,7 @@ DEMO_TOPICS = {
 }
 DEMO_SERVICES = {
     'add_two_ints': InterfaceEntry('/add_two_ints', ('example_interfaces/srv/AddTwoInts',)),
-    'set_pose': InterfaceEntry('/set_pose', (f'{TURTLESIM}/srv/TeleportAbsolute',)),
+    'plan_to_pose': InterfaceEntry('/plan_to_pose', ('nav_msgs/srv/GetPlan',)),
 }
 DEMO_ACTIONS = {
     'fibonacci': InterfaceEntry('/fibonacci', ('example_interfaces/action/Fibonacci',)),
@@ -187,8 +182,21 @@ def _add_two_ints(request):
     return AddTwoInts.Response(sum=request.a + request.b)
 
 
+def _plan_to_pose(request):
+    """A straight path: the start, the midpoint, the goal (as the demo servers answer)."""
+    start, goal = request.start.pose.position, request.goal.pose.position
+    mid = PoseStamped()
+    mid.header = request.goal.header
+    mid.pose.position.x, mid.pose.position.y = (start.x + goal.x) / 2, (start.y + goal.y) / 2
+    mid.pose.orientation = request.goal.pose.orientation
+    response = GetPlan.Response()
+    response.plan.header = request.goal.header
+    response.plan.poses = [request.start, mid, request.goal]
+    return response
+
+
 # name -> request -> response. Services without an entry answer with a default Response.
-DEMO_RESPONDERS = {'/add_two_ints': _add_two_ints}
+DEMO_RESPONDERS = {'/add_two_ints': _add_two_ints, '/plan_to_pose': _plan_to_pose}
 
 
 @dataclass(frozen=True)
@@ -235,20 +243,41 @@ def camera_demo() -> 'FakeBridge':
     return bridge
 
 
-# A second action, for the single-running-goal rule: turtlesim's own, with a float goal and feedback.
-# Not in DEMO_GRAPH: the demo servers don't have it.
-ROTATE_ACTION = InterfaceEntry('/turtle1/rotate_absolute', (f'{TURTLESIM}/action/RotateAbsolute',))
-ROTATE_STEPS = 5
+# A service whose response has no fields. Not in DEMO_GRAPH: the demo servers don't have it.
+RESET_SERVICE = InterfaceEntry('/reset', ('std_srvs/srv/Empty',))
 
 
-def rotate_demo() -> 'FakeBridge':
-    """FakeBridge.demo() plus ROTATE_ACTION, which turns to theta in ROTATE_STEPS feedbacks."""
+def reset_demo() -> 'FakeBridge':
+    """FakeBridge.demo() plus RESET_SERVICE, which answers with the default (empty) response."""
     bridge = FakeBridge.demo()
-    bridge.latest_graph = replace(DEMO_GRAPH, actions=DEMO_GRAPH.actions + (ROTATE_ACTION,))
-    bridge.action_scripts = {**bridge.action_scripts, ROTATE_ACTION.name: ActionScript(
-        steps=lambda goal: ROTATE_STEPS,
-        feedback=lambda goal, step: RotateAbsolute.Feedback(remaining=goal.theta * (1 - step / ROTATE_STEPS)),
-        result=lambda goal, done: RotateAbsolute.Result(delta=goal.theta * done / ROTATE_STEPS))}
+    bridge.latest_graph = replace(DEMO_GRAPH, services=DEMO_GRAPH.services + (RESET_SERVICE,))
+    return bridge
+
+
+# A second action, for the single-running-goal rule: a nested goal with a float, and feedback.
+# Not in DEMO_GRAPH: the demo servers don't have it.
+NESTED_ACTION = InterfaceEntry('/nested', ('test_msgs/action/NestedMessage',))
+NESTED_STEPS = 5
+
+
+def _nested_float(cls, value: float):
+    message = cls()
+    message.nested_field.float32_value = value
+    return message
+
+
+def nested_demo() -> 'FakeBridge':
+    """FakeBridge.demo() plus NESTED_ACTION: float32_value counts down to 0 in NESTED_STEPS feedbacks."""
+    bridge = FakeBridge.demo()
+    bridge.latest_graph = replace(DEMO_GRAPH, actions=DEMO_GRAPH.actions + (NESTED_ACTION,))
+
+    def remaining(goal, step):
+        return goal.nested_field.float32_value * (1 - step / NESTED_STEPS)
+
+    bridge.action_scripts = {**bridge.action_scripts, NESTED_ACTION.name: ActionScript(
+        steps=lambda goal: NESTED_STEPS,
+        feedback=lambda goal, step: _nested_float(NestedMessage.Feedback, remaining(goal, step)),
+        result=lambda goal, done: _nested_float(NestedMessage.Result, remaining(goal, done)))}
     return bridge
 
 

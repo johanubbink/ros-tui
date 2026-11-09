@@ -41,7 +41,7 @@ async def test_node_entry():
         assert s.where() == ('in', 'normal', ['tabs', NODE], 'ifs', 0)
         text = s.text()
         for expected in ('◆ NODE', 'namespace /', 'INTERFACES  enter opens it in a tab', '▾ Publishes',
-                         '≋ /chatter', '▾ Subscribes', '≋ /goal_pose', '▾ Serves', '⇄ /add_two_ints', '⇄ /set_pose',
+                         '≋ /chatter', '▾ Subscribes', '≋ /goal_pose', '▾ Serves', '⇄ /add_two_ints', '⇄ /plan_to_pose',
                          '▾ Action server', '▷ /fibonacci', 'PARAMETERS  enter edits · space sets'):
             assert expected in text, expected
         assert 'Calls' not in text and 'Action client' not in text  # Empty groups aren't listed.
@@ -50,7 +50,7 @@ async def test_node_entry():
         assert 'esc tab row' in s.footer() and 'enter into interfaces' in s.footer()
         await s.shot('node-open', expect='◆ NODE /ros_tui_demo_servers namespace /; INTERFACES (selected: white '
                      'border, title on a lighter band) lists ▾ Publishes /chatter /counter /diagnostic_status '
-                     '/localisation_pose, ▾ Subscribes /inbox /goal_pose, ▾ Serves /add_two_ints /set_pose, ▾ Action '
+                     '/localisation_pose, ▾ Subscribes /inbox /goal_pose, ▾ Serves /add_two_ints /plan_to_pose, ▾ Action '
                      'server /fibonacci with their kind glyphs; PARAMETERS at rest: use_sim_time bool false, '
                      'publish_rate double 10.0, frame_id string map; footer NORMAL tabs › /ros_tui_demo_servers, '
                      'esc tab row, enter into interfaces')

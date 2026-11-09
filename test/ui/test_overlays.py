@@ -50,11 +50,11 @@ async def test_search():
         text = boxed(s)
         assert s.line_with('/ pose', ' 3')
         for expected in ('/localisation_pose', 'PoseWithCovarianceStamped', '/goal_pose', 'PoseStamped',
-                         '/set_pose', 'TeleportAbsolute', 'TOPICS', 'SERVICES'):
+                         '/plan_to_pose', 'GetPlan', 'TOPICS', 'SERVICES'):
             assert expected in text, expected
         assert '/chatter' not in text and 'ACTIONS' not in text
         await s.shot('search-typed', expect='query "pose", 3 matches: ≋ TOPICS /localisation_pose '
-                     'PoseWithCovarianceStamped and /goal_pose PoseStamped, ⇄ SERVICES /set_pose TeleportAbsolute; '
+                     'PoseWithCovarianceStamped and /goal_pose PoseStamped, ⇄ SERVICES /plan_to_pose GetPlan; '
                      '"pose" highlighted in each name, the cursor on /localisation_pose')
 
         await s.keys('down', 'down', 'up', 'ctrl+n')  # ctrl+n is not a search key: swallowed.

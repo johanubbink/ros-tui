@@ -90,7 +90,7 @@ def test_open_loads_interfaces_and_parameters():
     assert [(title, [i.name for i in rows]) for title, rows in data.groups] == [
         ('Publishes', ['/chatter', '/counter', '/diagnostic_status', '/localisation_pose']),
         ('Subscribes', ['/inbox', '/goal_pose']),
-        ('Serves', ['/add_two_ints', '/set_pose']),
+        ('Serves', ['/add_two_ints', '/plan_to_pose']),
         ('Action server', ['/fibonacci']),
     ]
     assert [p.name for p in data.params] == ['use_sim_time', 'publish_rate', 'frame_id']
