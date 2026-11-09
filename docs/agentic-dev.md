@@ -124,3 +124,36 @@ Look at every new or changed PNG next to its `expect` text and `.txt` dump.
 Missing information, the wrong layer or mode, and wrong key behaviour are bugs;
 small differences in spacing usually aren't. Assert the important strings in
 the test as well, so it fails even when nobody looks at the pictures.
+
+## Cognitive complexity
+
+[`scripts/complexity.py`](../scripts/complexity.py) measures the cognitive
+complexity of ros_tui's own Python with
+[complexipy](https://github.com/rohaquinlop/complexipy) (tests and `_vendor/`
+are not measured). It runs on the host and needs complexipy on `PATH`, or `uv`.
+
+```bash
+scripts/complexity.py              # every function over the limit (15): refactor candidates
+scripts/complexity.py --diff main  # fail if a changed function is over 15 and new or worse
+```
+
+The `--diff` form is a ratchet: an existing hotspot may stay, but a change
+must not make it worse. Split a function along a real seam (a helper that
+hides one decision, a table instead of a branch ladder, a dispatch on type),
+not just to move the number.
+
+## Implementer and reviewer agents
+
+[`.claude/agents/`](../.claude/agents/) holds two Claude Code agents that build
+a change in two passes:
+
+- **`implementer`** makes it work: tests first, then the code, verified with
+  `scripts/agent_check.sh` and the screenshots.
+- **`reviewer`** owns the code quality: it reviews the diff for bugs, docs
+  drift and test quality (each new test must fail without the change), checks
+  the screenshots against [design-principles.md](design-principles.md), and
+  simplifies toward deep modules with narrow interfaces until
+  `scripts/complexity.py --diff main` passes.
+
+Plan the change first, give `implementer` the whole plan, check its result,
+then give `reviewer` the branch and what the implementer reported.
