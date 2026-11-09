@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **The bundled textual is built, not stored.** Git keeps only its lock,
+  `ros_tui/_vendor/requirements.txt` (a pip requirements file with hashes,
+  bumped by Dependabot); `scripts/vendor.py` unpacks it before a build. From
+  source: run `scripts/vendor.py` before `colcon build`.
+
 ### Fixed
 - **Setting an array parameter** sends it as the type the node declared: whole
   numbers for a `double[]` (`[1, 2]`) and an empty list `[]` are no longer

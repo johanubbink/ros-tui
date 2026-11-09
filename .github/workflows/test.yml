@@ -21,14 +21,17 @@ jobs:
       with:
         path: src/ros_tui
 
-    # Everything comes from package.xml through rosdep (textual is bundled, so no pip), plus
-    # the screenshot tooling and flake8.
+    # Everything comes from package.xml through rosdep, plus the screenshot tooling and flake8.
+    # textual is bundled: scripts/vendor.py unpacks it from its lock (no pip) before the build.
     - name: Install dependencies
       run: |
         apt-get update -qq
         rosdep update --rosdistro ${{ inputs.distro }}
         rosdep install --from-paths src --ignore-src -y --rosdistro ${{ inputs.distro }}
         apt-get install -y --no-install-recommends python3-flake8 librsvg2-bin fonts-jetbrains-mono
+
+    - name: Unpack the bundled textual
+      run: python3 src/ros_tui/scripts/vendor.py
 
     - name: Lint with flake8
       working-directory: src/ros_tui

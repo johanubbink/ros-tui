@@ -82,9 +82,15 @@ The code:
 - [`ros_tui/output.py`](../ros_tui/output.py): sends what ROS prints (fds 1
   and 2) to a log file while the UI runs, so RMW warnings never land on screen.
 - [`ros_tui/_vendor/`](../ros_tui/_vendor/): ros_tui's own copy of textual and
-  its dependencies, pinned in `vendor.lock` and rebuilt by
-  [`scripts/vendor.py`](../scripts/vendor.py). Importing `ros_tui` puts it first
-  on `sys.path`, so neither apt nor colcon users need pip.
+  its dependencies. Git holds only the lock, `requirements.txt` (a pip
+  requirements file with hashes, bumped by Dependabot);
+  [`scripts/vendor.py`](../scripts/vendor.py) downloads the pinned pure-Python
+  wheels from PyPI with the standard library and unpacks them, and stamps the
+  copy with the lock's hash (`requirements.sha256`). Everything that builds
+  ros_tui runs it first: `scripts/build_pyz.sh`, the CI test job and the Docker
+  entrypoint; `setup.py` refuses to build without a copy matching the lock.
+  Importing `ros_tui` puts the copy first on `sys.path`, so neither apt nor
+  colcon users need pip.
 - [`docker/demo_servers.py`](../docker/demo_servers.py): the example servers used
   by the Docker playground and the GIF. Not part of the installed package.
 
