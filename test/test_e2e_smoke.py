@@ -18,7 +18,8 @@ Full-stack smoke: the real app over a real RosBridge and the in-process fixture 
 
 The tests drive the app with keys, as a user would, against the fixture servers in
 ``test/conftest.py`` (which mirror the demo node in ``docker/demo_servers.py``), and wait in
-real time. With ``ROS_TUI_SHOTS=1`` each takes a shot of where it ends.
+real time: on what the app shows or holds, never for a fixed time. With ``ROS_TUI_SHOTS=1`` each takes
+a shot of where it ends. They are in the offline tier (see docs/testing.md).
 
 Manual checklist against the Docker demo playground (see docs/docker.md):
 
@@ -40,16 +41,12 @@ Manual checklist against the Docker demo playground (see docs/docker.md):
     and set it with space.
 """
 
-import time
-
 import pytest
-from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, FIBONACCI_ACTION, INBOX_TOPIC
+from conftest import ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, EVENTUALLY_S, FIBONACCI_ACTION, FIXTURE_NODE, INBOX_TOPIC
 from harness.screens import ui_session
+from rclpy.parameter import Parameter
 
-pytestmark = pytest.mark.e2e
-
-FIXTURE_NODE = '/tui_test_fixtures'
-GRAPH_TIMEOUT_S = 10.0
+pytestmark = [pytest.mark.e2e, pytest.mark.offline]
 
 
 async def open_entry(s, kind: str, name: str, query: str, published: bool = False) -> None:
@@ -60,7 +57,7 @@ async def open_entry(s, kind: str, name: str, query: str, published: bool = Fals
         item = next((item for item in s.app.nav.catalog[kind] if item.name == name), None)
         return item is not None and (item.publishers > 0 or not published)
 
-    assert await s.wait_until(listed, timeout=GRAPH_TIMEOUT_S), f'{name} never appeared in {kind}'
+    assert await s.wait_until(listed, timeout=EVENTUALLY_S), f'{name} never appeared in {kind}'
     await s.keys('slash', *query, 'enter')
     assert s.state()['path'] == ['tabs', name], s.state()['path']
 
@@ -69,7 +66,7 @@ async def test_action_round_trip_through_ui(bridge, fixture_servers):
     async with ui_session(bridge=bridge) as s:
         await open_entry(s, 'actions', FIBONACCI_ACTION, FIBONACCI_ACTION[1:])
         await s.keys('enter', 'enter', '6', 'escape', 'space')
-        assert await s.wait_until(lambda: 'SUCCEEDED' in s.text(), timeout=15.0), s.text()
+        assert await s.wait_until(lambda: 'SUCCEEDED' in s.text(), timeout=EVENTUALLY_S), s.text()
         assert 'sequence: [0, 1, 1, 2, 3, 5, 8]' in s.text()
         await s.shot('goal-succeeded', expect='RESULT ✓ SUCCEEDED with sequence: [0, 1, 1, 2, 3, 5, 8]')
 
@@ -78,7 +75,7 @@ async def test_service_round_trip_through_ui(bridge, fixture_servers):
     async with ui_session(bridge=bridge) as s:
         await open_entry(s, 'services', ADD_TWO_INTS_SERVICE, ADD_TWO_INTS_SERVICE[1:])
         await s.keys('enter', 'enter', '1', '9', 'tab', '2', '3', 'escape', 'space')
-        assert await s.wait_until(lambda: '✓ OK' in s.text(), timeout=10.0), s.text()
+        assert await s.wait_until(lambda: '✓ OK' in s.text(), timeout=EVENTUALLY_S), s.text()
         assert 'sum: 42' in s.text()
         await s.shot('called', expect='RESPONSE ✓ OK with sum: 42')
 
@@ -88,31 +85,42 @@ async def test_topic_echo_and_publish_through_ui(bridge, fixture_servers):
         await open_entry(s, 'topics', CHATTER_TOPIC, CHATTER_TOPIC[1:], published=True)
         assert s.app.nav.entry_mode() == 'echo'
         await s.keys('space')
-        assert await s.wait_until(lambda: "'chatter " in s.text() and ' Hz' in s.text(), timeout=10.0), s.text()
+        assert await s.wait_until(lambda: "'chatter " in s.text() and ' Hz' in s.text(), timeout=EVENTUALLY_S), s.text()
         await s.shot('echo-live', expect="the echo of the 100 Hz chatter: N received · ~100 Hz, data 'chatter N'")
         await s.keys('space')  # Stop the echo.
 
         await open_entry(s, 'topics', INBOX_TOPIC, INBOX_TOPIC[1:])
         assert s.app.nav.entry_mode() == 'publish'
         await s.keys('enter', 'enter', *'fromtui', 'escape')
-        deadline = time.monotonic() + 10.0
-        while 'fromtui' not in fixture_servers.inbox_messages:
+
+        async def published_and_received():
             await s.keys('space')  # Publish again until DDS discovery lets one through.
-            await s.pilot.pause(0.2)
-            assert time.monotonic() < deadline, 'the published message never arrived'
+            return await s.wait_until(lambda: 'fromtui' in fixture_servers.inbox_messages, timeout=0.5)
+
+        for _ in range(int(EVENTUALLY_S / 0.5)):
+            if await published_and_received():
+                break
+        assert 'fromtui' in fixture_servers.inbox_messages, 'the published message never arrived'
 
 
 async def test_node_parameter_set_through_ui(bridge, fixture_servers):
-    async with ui_session(bridge=bridge) as s:
-        await open_entry(s, 'nodes', FIXTURE_NODE, FIXTURE_NODE.lstrip('/'))
-        entry = s.app.nav.entry(s.app.nav.tab)
+    node = fixture_servers.node
+    declared = node.get_parameter('test_param').value
+    try:
+        async with ui_session(bridge=bridge) as s:
+            await open_entry(s, 'nodes', FIXTURE_NODE, FIXTURE_NODE.lstrip('/'))
+            entry = s.app.nav.entry(s.app.nav.tab)
 
-        def params():
-            return entry.params
+            def params():
+                return entry.params
 
-        assert await s.wait_until(params, timeout=GRAPH_TIMEOUT_S), 'the parameters never loaded'
-        row = [param.name for param in params()].index('test_param')
-        await s.keys('l', 'enter', *['j'] * row, 'c', '7', 'enter', 'space')
-        node = fixture_servers.node
-        assert await s.wait_until(lambda: node.get_parameter('test_param').value == 7, timeout=10.0)
-        await s.shot('param-set', expect='PARAMETERS: test_param int 7, set on the node')
+            assert await s.wait_until(params, timeout=EVENTUALLY_S), 'the parameters never loaded'
+            row = [param.name for param in params()].index('test_param')
+            await s.keys('l', 'enter', *['j'] * row, 'c', '7', 'enter', 'space')
+            assert await s.wait_until(lambda: node.get_parameter('test_param').value == 7, timeout=EVENTUALLY_S)
+            # The node has it; wait for the app to hear back that the set succeeded before the shot.
+            assert await s.wait_until(lambda: not entry.changes, timeout=EVENTUALLY_S), entry.changes
+            assert entry.param_named('test_param').value == 7
+            await s.shot('param-set', expect='PARAMETERS: test_param int 7, set on the node')
+    finally:
+        node.set_parameters([Parameter('test_param', value=declared)])  # fixture_servers serves the whole run.

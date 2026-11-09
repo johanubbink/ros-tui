@@ -36,7 +36,10 @@ Read every changed hunk with enough context to judge it. In order:
 4. **Tests**: does each new or changed test fail without the change? Check
    that for **new or changed tests only**, by briefly reverting the code hunk
    (mutation). Tests extend existing tables and scenarios, are named by
-   behaviour, and are not duplicated elsewhere.
+   behaviour, and are not duplicated elsewhere. A test over real ROS asserts
+   only outcomes that eventually arrive, and sits in the right tier
+   (`docs/testing.md`): flag rates, elapsed-time bounds, "nothing within X s"
+   and sleeps used for ordering.
 5. **Design**: deep modules with narrow interfaces. Flag shallow wrappers,
    helpers the caller must call in a fixed order, knowledge of one decision
    spread across modules, parameters that leak internals, dead code, names
@@ -50,9 +53,12 @@ Read every changed hunk with enough context to judge it. In order:
   doesn't count; neither does a helper whose name restates its body.
 - A touched hotspot is fair game; untouched code isn't.
 - Don't chase the metric below the limit unless the code also reads better.
-- Re-run what covers your changes with `scripts/agent_check.sh <files>`, the
-  whole suite once at the end, and `scripts/complexity.py --diff main` until
-  it passes. No flake loops: rerun a flaky test once and report it.
+- Re-run what covers your changes with `scripts/agent_check.sh <files>`, and
+  `scripts/complexity.py --diff main` until it passes.
+- Before you pass the change, run both tiers once: `scripts/agent_check.sh`
+  with no arguments. CI runs only the fast tier, so this is the offline
+  tier's only run before merge. No flake loops: rerun a failing test once and
+  report both runs.
 - Don't commit unless told to.
 
 ## Report

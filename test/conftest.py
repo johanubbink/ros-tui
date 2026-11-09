@@ -28,16 +28,21 @@ from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from ros_tui.ros.bridge import RosBridge
+from ros_tui.ros.events import ActionEventKind
 from std_msgs.msg import String
 
 FIBONACCI_ACTION = '/tui_test_fibonacci'
 ADD_TWO_INTS_SERVICE = '/tui_test_add_two_ints'
 CHATTER_TOPIC = '/tui_test_chatter'
 INBOX_TOPIC = '/tui_test_inbox'
+FIXTURE_NODE = '/tui_test_fixtures'
 FIBONACCI_FEEDBACK_PERIOD_S = 0.05
+# How long a real-ROS test waits for an outcome. Generous on purpose: a loaded machine only makes
+# DDS slow, and a passing test never waits this long.
+EVENTUALLY_S = 15.0
 
 
-def wait_for(predicate, timeout=5.0, period=0.02):
+def wait_for(predicate, timeout=EVENTUALLY_S, period=0.02):
     """Poll ``predicate`` until truthy or the timeout elapses; returns its last value."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -46,6 +51,43 @@ def wait_for(predicate, timeout=5.0, period=0.02):
             return result
         time.sleep(period)
     return predicate()
+
+
+def answer_of(start, *args, timeout=EVENTUALLY_S):
+    """Call a bridge method that answers through a callback, ``start(*args, on_done)``, and wait
+    for the answer: the tuple the callback got, or None if it never came."""
+    answers = []
+    done = threading.Event()
+
+    def on_done(*answer):
+        answers.append(answer)
+        done.set()
+
+    start(*args, on_done)
+    done.wait(timeout)
+    return answers[0] if answers else None
+
+
+def listed_param(bridge, name, node_name=FIXTURE_NODE):
+    """The value ``list_node_parameters`` reports for parameter ``name``, or None (also while the
+    node's parameter services are still being discovered)."""
+    params, _error = answer_of(bridge.list_node_parameters, node_name) or (None, None)
+    return next((value for listed, _type, value in params or () if listed == name), None)
+
+
+def set_param(bridge, name, value, type_label, node_name=FIXTURE_NODE):
+    """The error ``set_node_parameter`` answered with: None when the node took the value."""
+    answer = answer_of(bridge.set_node_parameter, node_name, name, value, type_label)
+    assert answer is not None, 'set_node_parameter never answered'
+    return answer[0]
+
+
+def event_kinds(events):
+    return [event.kind for event in events]
+
+
+def terminal_event(events):
+    return next((event for event in events if event.kind == ActionEventKind.RESULT), None)
 
 
 @pytest.fixture(scope='session')
@@ -61,7 +103,7 @@ class FixtureServers:
     """One node with a Fibonacci action, AddTwoInts service, 100 Hz chatter, inbox sub."""
 
     def __init__(self, context):
-        self.node = rclpy.create_node('tui_test_fixtures', context=context)
+        self.node = rclpy.create_node(FIXTURE_NODE.lstrip('/'), context=context)
         # Declared parameters the bridge param tests can list and set without touching
         # use_sim_time (which would freeze this node's timers and break sibling tests).
         self.node.declare_parameter('test_param', 0)
@@ -115,7 +157,9 @@ class FixtureServers:
         return Fibonacci.Result(sequence=sequence)
 
 
-@pytest.fixture(scope='module')
+# One instance for the whole run: a node re-created under the same name confuses DDS discovery
+# (the new one's endpoints and action server go unseen for a long time).
+@pytest.fixture(scope='session')
 def fixture_servers(ros_domain):
     context = rclpy.Context()
     rclpy.init(context=context)
@@ -139,6 +183,16 @@ def bridge(ros_domain):
     # Unique node name per test: rapid create/destroy of same-named nodes confuses
     # DDS discovery and made action servers intermittently unreachable.
     ros_bridge = RosBridge(node_name=f'ros_tui_under_test_{next(_bridge_counter)}')
+    ros_bridge.start()
+    yield ros_bridge
+    ros_bridge.shutdown()
+
+
+@pytest.fixture(scope='session')
+def peer(ros_domain, fixture_servers):
+    """One bridge for every test that talks to the fixture servers and leaves the bridge running:
+    DDS discovery of a new node takes seconds, so the run pays it once."""
+    ros_bridge = RosBridge(node_name='ros_tui_peer')
     ros_bridge.start()
     yield ros_bridge
     ros_bridge.shutdown()

@@ -423,10 +423,6 @@ class RosBridge:
     def stop_periodic_publish(self, name: str) -> Future:
         return self.submit(functools.partial(self._stop_periodic, name))
 
-    def periodic_topics(self) -> tuple[str, ...]:
-        """The topics publishing periodically (test_bridge checks that stop and shutdown clear it)."""
-        return tuple(self._entities.periodic)  # Snapshot read; safe from any thread.
-
     def subscribe(self, name: str, type_name: str, buffer: EchoBuffer) -> Future:
         def command() -> None:
             if name in self._entities.subscriptions:

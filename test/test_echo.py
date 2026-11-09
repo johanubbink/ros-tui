@@ -15,6 +15,8 @@
 
 """Pure unit tests for the echo hand-off buffer."""
 
+import pytest
+from harness.fake_bridge import ManualClock
 from ros_tui.ros.echo import EchoBuffer
 
 
@@ -51,16 +53,27 @@ def test_drain_twice_accumulates_counts():
     assert dropped == 0
 
 
-def test_rate_estimate_positive_after_bursts():
-    buffer = EchoBuffer(maxlen=5, hz_window=8)
-    for value in range(8):
-        buffer.push(value)
-    _, _, _, rate_hz = buffer.drain()
-    assert rate_hz > 0.0
+def pushed_at(stamps, hz_window=8, drained_at=None):
+    """A buffer that received one message at each of ``stamps`` (seconds on a manual clock), and its
+    rate when drained at ``drained_at`` (default: the last stamp)."""
+    clock = ManualClock()
+    buffer = EchoBuffer(hz_window=hz_window, clock=lambda: clock.now)
+    for stamp in stamps:
+        clock.advance(stamp - clock.now)
+        buffer.push(stamp)
+    if drained_at is not None:
+        clock.advance(drained_at - clock.now)
+    return buffer.drain()[3]
 
 
-def test_rate_zero_with_single_message():
-    buffer = EchoBuffer()
-    buffer.push('only')
-    _, _, _, rate_hz = buffer.drain()
-    assert rate_hz == 0.0
+@pytest.mark.parametrize('stamps, hz_window, drained_at, rate_hz', [
+    ([index * 0.01 for index in range(20)], 8, None, 100.0),       # 100 Hz
+    ([index * 0.5 for index in range(5)], 8, None, 2.0),           # 2 Hz
+    ([0.0, 0.1, 0.2, 1.2, 2.2, 3.2], 4, None, 1.0),                # Only the last hz_window arrivals count.
+    ([0.0, 1.0, 2.0], 8, 3.9, 1.0),                                # Still fresh 1.9 s after the last arrival.
+    ([0.0, 1.0, 2.0], 8, 4.1, 0.0),                                # Stale: nothing for over 2 s.
+    ([0.0], 8, None, 0.0),                                         # One message gives no rate.
+    ([1.0, 1.0, 1.0], 8, None, 0.0),                               # Arrivals at one instant give no rate.
+])
+def test_rate_over_the_last_arrivals(stamps, hz_window, drained_at, rate_hz):
+    assert pushed_at(stamps, hz_window, drained_at) == pytest.approx(rate_hz)
