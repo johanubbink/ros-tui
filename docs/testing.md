@@ -12,7 +12,11 @@ three selected with markers (see [`pytest.ini`](../pytest.ini)):
 | end to end  | `e2e`       | `test_e2e_smoke.py`                                             | The real app, driven by keys, over the real bridge and the fixture servers: echo, publish, call, send a goal, set a parameter. |
 
 The ROS tests run on an isolated `ROS_DOMAIN_ID` (from `domain_coordinator`),
-so they don't see or disturb other ROS nodes on the machine. The fixture
+so they don't see or disturb other ROS nodes on the machine.
+`scripts/agent_check.sh` also keeps discovery inside its container
+(`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`): `domain_coordinator` picks a free
+domain only within one container, and parallel runs share the compose network,
+so without it two runs can pick the same domain and answer each other. The fixture
 servers are in [`test/conftest.py`](../test/conftest.py) and mirror the demo
 node.
 
