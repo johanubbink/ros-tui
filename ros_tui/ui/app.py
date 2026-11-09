@@ -178,9 +178,12 @@ class RosTuiApp(App, inherit_bindings=False):
                     view.refresh()
 
     def refresh_views(self) -> None:
+        homes, bodies = self.query(HomeList), self.query(EntryBody)
+        if not homes or not bodies:
+            return  # The views are gone (the app is shutting down); a late bridge answer still reached the model.
         nav = self.nav
         home = nav.tab is None
-        shows = {self.query_one(HomeList): home, self.query_one(EntryBody): not home}
+        shows = {homes.first(): home, bodies.first(): not home}
         self.screen.set_class(isinstance(nav.overlay, (Search, LogView)), '-veiled')
         for overlay in self.query(Overlay):
             spot = overlay.place(*overlay.parent.content_size)
