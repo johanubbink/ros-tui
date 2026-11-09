@@ -18,6 +18,7 @@ copied and what is running."""
 
 from rich.text import Text
 
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.widgets.base import NavView, clickable, glyph, spread, style
 
 
@@ -27,7 +28,7 @@ class TopBar(NavView):
     """
 
     def lines(self, width, height):
-        search = clickable(Text.assemble((' / ', style('key', 'term', bold=True)),
+        search = clickable(Text.assemble((f" {key_for('search_open')} ", style('key', 'term', bold=True)),
                                          ('search everything ', style('head', 'term'))), ('search', None))
         left = Text.assemble((' ros_tui ', style('brand', bold=True)), ' ', search)
         register = self.nav.register

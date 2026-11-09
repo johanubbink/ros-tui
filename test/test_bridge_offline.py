@@ -194,17 +194,22 @@ def test_get_node_info_lists_node_endpoints(peer, fixture_servers):
 # ---------------------------------------------------------------- parameters
 
 
-@pytest.mark.parametrize('name, type_label, sent, declared, received', [
-    ('test_doubles', 'double[]', [1, 2], [0.5], [1.0, 2.0]),  # Whole numbers, sent as doubles.
-    ('test_doubles', 'double[]', [], [0.5], []),
-    ('test_names', 'string[]', [], ['a'], []),
+@pytest.mark.parametrize('name, type_label, sent, declared, held, received', [
+    # Whole numbers, sent as doubles.
+    ('test_doubles', 'double[]', [1, 2], [0.5], [1.0, 2.0], [1.0, 2.0]),
+    ('test_doubles', 'double[]', [], [0.5], [], []),
+    ('test_names', 'string[]', [], ['a'], [], []),
+    # A byte array is sent and read as ints; the node holds it as bytes.
+    ('test_bytes', 'byte[]', [1, 255], [b'\x01'], [b'\x01', b'\xff'], [1, 255]),
 ])
-def test_set_an_array_parameter_by_its_declared_type(peer, fixture_servers, name, type_label, sent, declared, received):
+def test_set_an_array_parameter_by_its_declared_type(
+    peer, fixture_servers, name, type_label, sent, declared, held, received,
+):
     node = fixture_servers.node
     assert wait_for(lambda: listed_param(peer, name) is not None)
     try:
         assert set_param(peer, name, sent, type_label) is None
-        assert list(node.get_parameter(name).value) == received
+        assert list(node.get_parameter(name).value) == held
         assert listed_param(peer, name) == received
     finally:
         node.set_parameters([Parameter(name, value=declared)])

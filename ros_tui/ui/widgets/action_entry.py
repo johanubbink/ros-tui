@@ -24,10 +24,9 @@ Everything shown comes from the ActionEntry (entries/action.py).
 from rich.text import Text
 
 from ros_tui.ui.entries.action import CANCELED, EXECUTING, SENDING, SUCCEEDED, ActionEntry
-from ros_tui.ui.entries.base import Area
-from ros_tui.ui.entries.message import EDITOR
+from ros_tui.ui.entries.base import EDITOR, Area
 from ros_tui.ui.nav import NavState
-from ros_tui.ui.widgets.base import button, keyed, primary_look, spread, style
+from ros_tui.ui.widgets.base import HISTORY_KEYS, button, keyed, primary_look, spread, style
 from ros_tui.ui.widgets.field_rows import editor_panel, shown_value
 from ros_tui.ui.widgets.panel import Panel, pill, waiting
 
@@ -43,12 +42,12 @@ def action_toolbar(nav: NavState, entry: ActionEntry, width: int) -> Text:
     """Send goal and Cancel goal, as the single-running-goal rule allows them."""
     running = entry.executing()
     here = running == entry.tab
-    left = button('▶ Send goal', 'space', primary_look(nav, entry.tab, 'off' if running else 'pri'))
+    left = button('▶ Send goal', 'primary', primary_look(nav, entry.tab, 'off' if running else 'pri'))
     if running and not here:
         left.append(f' a goal is running on {running.name}', style('dim'))
     left.append(' ')
-    left.append_text(button('■ Cancel goal', 's', 'stop' if here else 'off'))
-    return spread(left, keyed('[ ]', 'earlier goals', 'dim'), width, optional=True)
+    left.append_text(button('■ Cancel goal', 'secondary', 'stop' if here else 'off'))
+    return spread(left, keyed(HISTORY_KEYS, 'earlier goals', 'dim'), width, optional=True)
 
 
 def result_panel(nav: NavState, entry: ActionEntry, area: Area) -> Panel:

@@ -29,7 +29,7 @@ WIDTH = 82  # Cells.
 G_WIDTH = 48  # The narrow g… popup.
 KEY_WIDTH = 5  # The key column of a cell, at least.
 GAP = 2  # Between the two columns.
-TITLES = {'all': 'Keys right now · any key closes', 'g': 'g …  waiting for the next key'}
+TITLES = {'all': 'Keys right now · any key closes', 'g': f"{keymap.key_for('g_prefix')} …  waiting for the next key"}
 
 
 class WhichKeyPopup(Overlay):

@@ -43,12 +43,14 @@ from typing import Any, Callable
 from ros_tui.constants import SEND_HISTORY_MAX, SUMMARY_MAX_CHARS
 from ros_tui.ros.message_yaml import (build_message, import_type, message_structure, message_to_display,
                                       message_to_plain, request_class)
-from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
-from ros_tui.ui.fields import FieldRows, Row, describe, flow_yaml, path_text, summary
+from ros_tui.ros.schema import path_text
+from ros_tui.ui.entries.base import EDITOR, Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
+from ros_tui.ui.fields import FieldRows, Row
 from ros_tui.ui.helpers import Helper, helper_name
+from ros_tui.ui.keymap import key_for
 from ros_tui.ui.register import Register
+from ros_tui.ui.values import describe, flow_yaml, summary
 
-EDITOR = 'msg'  # The area id of the editor.
 
 Build = Callable[[dict], tuple[Any, list]]  # Plain values -> (message, time setters); raises FieldError.
 
@@ -183,7 +185,7 @@ class MessageEntry(Entry):
             shown, undo = self._write(editing.field, editing.value, 'the edit of')
         except ValueError as error:
             return Commit(False, str(error))
-        return Commit(True, f'kept {editing.field} = {shown}' + (' (u undoes)' if undo else ''), undo)
+        return Commit(True, f'kept {editing.field} = {shown}' + (f" ({key_for('undo')} undoes)" if undo else ''), undo)
 
     def _write(self, field: str, text: str, what: str) -> tuple[str, UndoEntry | None]:
         """Keep `text` as the value of `field` (by field: rows can fold meanwhile): (the value as
@@ -233,14 +235,14 @@ class MessageEntry(Entry):
             return
         nav.copy(Register.of(self.type, self.ROLE, self.tab.name, editor.to_plain()))
         nav.feedback.show_toast(f'copied the {self.ROLE}', 'info')
-        nav.feedback.log_line(how, f'copied the {self.ROLE} of {self.tab.name} — p pastes it')
+        nav.feedback.log_line(how, f"copied the {self.ROLE} of {self.tab.name} — {key_for('verb', 'paste')} pastes it")
 
     def _paste(self, nav: Host, how: str) -> None:
         """p: replace the editor's message with the register's, if it is the same type and role, as
         one undo step."""
         register = nav.register
         if register is None:
-            nav.feedback.refuse(how, 'nothing copied yet (y copies)', 'nothing copied yet')
+            nav.feedback.refuse(how, f"nothing copied yet ({key_for('verb', 'yank')} copies)", 'nothing copied yet')
             return
         editor = self._loaded_editor(nav, how)
         if editor is None:
@@ -258,8 +260,8 @@ class MessageEntry(Entry):
             nav.feedback.log_line(how, f'pasted from {register.source}: nothing changed')
             return
         nav.push_undo(self._undo_step(f'the paste from {register.source}', before))
-        nav.feedback.show_toast(f'pasted from {register.source} · u undoes', 'info')
-        nav.feedback.log_line(how, f'pasted the {register.label} from {register.source} (u undoes)')
+        nav.feedback.show_toast(f"pasted from {register.source} · {key_for('undo')} undoes", 'info')
+        nav.feedback.log_line(how, f"pasted the {register.label} from {register.source} ({key_for('undo')} undoes)")
 
     # ---------- field helpers ----------
     def _open_helper(self, nav: Host, how: str) -> None:
@@ -288,7 +290,7 @@ class MessageEntry(Entry):
         nav.feedback.clear_error(self.tab)
         if undo:
             nav.push_undo(undo)
-        nav.feedback.log_line(how, f'filled {helper.field} = {shown}' + (' (u undoes)' if undo else ''))
+        nav.feedback.log_line(how, f'filled {helper.field} = {shown}' + (f" ({key_for('undo')} undoes)" if undo else ''))
 
     def _fold(self, nav: Host, how: str, unfold: bool) -> None:
         area = nav.area()
@@ -296,7 +298,8 @@ class MessageEntry(Entry):
         index = nav.row_index(area)
         moved = (form.unfold(index) if unfold else form.fold(index)) if form else None
         if moved is None:
-            nav.feedback.log_line(how, 'nothing to unfold here' if unfold else 'already at the top — esc goes back up')
+            nav.feedback.log_line(how, 'nothing to unfold here' if unfold
+                                  else f"already at the top — {key_for('go_up')} goes back up")
             return
         nav.set_row(moved[0], area)
         nav.feedback.log_line(how, moved[1])
@@ -319,7 +322,7 @@ class MessageEntry(Entry):
             return
         nav.push_undo(self._undo_step(f'{"adding" if add else "deleting"} {path_text(path)}', before))
         nav.set_row(form.index_of(target), area)
-        nav.feedback.log_line(how, f'{"added" if add else "deleted"} {path_text(path)} (u undoes)')
+        nav.feedback.log_line(how, f'{"added" if add else "deleted"} {path_text(path)} ({key_for("undo")} undoes)')
         if add:
             nav.start_edit(how)
 

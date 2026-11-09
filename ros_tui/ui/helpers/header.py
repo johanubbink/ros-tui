@@ -22,7 +22,7 @@ A header is written as one of three values, which all go through ``build_message
 
 from typing import Any
 
-from ros_tui.constants import TIME_NOW
+from ros_tui.ros.schema import TIME_NOW
 
 
 def parse_header(value: Any) -> tuple[str, str, Any]:

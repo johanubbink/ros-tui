@@ -16,7 +16,8 @@
 """The UI's two contracts. The bridge (ros_tui/ros/contract.py): RosBridge and FakeBridge both
 implement every member with the same parameters, and the UI calls nothing on a bridge outside it.
 The entry host (`Host`, ros_tui/ui/entries/base.py): NavState implements it, and the entries use
-nothing of NavState outside it."""
+nothing of NavState outside it. And the tables that must agree: the `:` commands the command line
+suggests and those NavState runs, and the kinds every per-kind table knows."""
 
 import inspect
 import re
@@ -26,8 +27,11 @@ import pytest
 from harness.fake_bridge import FakeBridge
 from ros_tui.ros.bridge import RosBridge
 from ros_tui.ros.contract import Bridge
+from ros_tui.ui import catalog, command_line, nav, theme
+from ros_tui.ui.entries import kinds
 from ros_tui.ui.entries.base import Host
 from ros_tui.ui.nav import NavState
+from ros_tui.ui.widgets.entry_body import VIEWS
 
 UI = Path(__file__).resolve().parents[1] / 'ros_tui' / 'ui'
 ENTRIES = UI / 'entries'
@@ -92,3 +96,17 @@ def test_the_entries_use_only_host_members_on_nav():
 def test_the_entries_assign_nothing_through_nav():
     assigned = [(path.name, line) for path in ENTRIES.glob('*.py') for line in NAV_ASSIGN.findall(path.read_text())]
     assert assigned == []
+
+
+ALIASES = {'messages': 'log', 'quit': 'q'}  # `:` commands the command line doesn't suggest -> what they run.
+
+
+def test_the_command_line_suggests_every_command_but_the_aliases():
+    suggested = {name.strip() for name, _ in command_line.COMMANDS}
+    assert suggested == set(nav.COMMANDS) - set(ALIASES)
+    assert {alias: nav.COMMANDS[alias] for alias in ALIASES} == {alias: nav.COMMANDS[name]
+                                                                 for alias, name in ALIASES.items()}
+
+
+def test_every_per_kind_table_has_the_same_kinds():
+    assert set(catalog.KINDS) == set(theme.KINDS) == set(kinds.KINDS) == set(VIEWS)

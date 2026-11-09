@@ -15,6 +15,7 @@
 
 """The keymap table (ros_tui/ui/keymap.py): its contract with nav.py and with docs/usage.md."""
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -23,10 +24,11 @@ import pytest
 from harness.nav_world import RowsWorld, nav_after
 from ros_tui.ui import keymap
 from ros_tui.ui.entries.kinds import KINDS
-from ros_tui.ui.keymap import ANY, KEYMAP, PREDICATES, TYPE, KeyRow, keys_now, normalize_key, which_key_items
+from ros_tui.ui.keymap import ANY, KEYMAP, PREDICATES, TYPE, KeyRow, key_for, keys_now, normalize_key, which_key_items
 from ros_tui.ui.nav import ACTIONS, Tab
 
 REPO = Path(__file__).resolve().parents[1]
+WIDGETS = REPO / 'ros_tui' / 'ui' / 'widgets'
 INBOX = ['j', 'j', 'j', 'enter']
 
 
@@ -59,6 +61,47 @@ def test_every_verb_a_key_runs_is_offered_by_some_entry():
             entry.mode = mode
             offered |= set(entry.verbs())
     assert run - offered == set()
+
+
+@pytest.mark.parametrize('action, arg, mode, key', [
+    ('primary', None, 'normal', 'space'), ('verb', 'secondary', 'normal', 's'), ('verb', 'repeat', 'normal', 'r'),
+    ('verb', 'history_older', 'normal', '['), ('go_up', None, 'normal', 'esc'), ('edit', None, 'normal', 'i'),
+    ('search_step', -1, 'search', '↑'), ('log_step', 1, 'activity', 'j'),
+])
+def test_key_for_names_the_first_key_that_runs_an_action(action, arg, mode, key):
+    assert key_for(action, arg, mode) == key
+
+
+def test_key_for_refuses_an_action_no_key_runs():
+    with pytest.raises(KeyError):
+        key_for('verb', 'no_such_verb')
+
+
+def test_every_row_that_runs_an_action_leads_with_the_same_key():
+    """key_for names the first key of the first row; it must not depend on which row comes first."""
+    leading = {}
+    for binding in KEYMAP:
+        for run in binding.run:
+            leading.setdefault((binding.mode, run.action, repr(run.arg)), set()).add(run.keys[0])
+    assert {what: keys for what, keys in leading.items() if len(keys) > 1} == {}
+
+
+def _calls(name):
+    """(file, call) for every call of `name` in the widgets."""
+    for path in sorted(WIDGETS.glob('*.py')):
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            if isinstance(node, ast.Call) and getattr(node.func, 'id', None) == name:
+                yield path.name, node
+
+
+def test_hints_take_their_keys_from_the_keymap():
+    """A key is named once, in KEYMAP: no keyed('enter', …) or hint(('enter', …)) in the views. (A
+    button names its verb, and `button` raises on a verb no key runs.)"""
+    keys = [(file, call.args[0]) for file, call in _calls('keyed') if call.args]
+    keys += [(file, part.elts[0]) for file, call in _calls('hint') for part in call.args
+             if isinstance(part, ast.Tuple) and part.elts]
+    assert keys  # The pattern still finds the hints.
+    assert [(file, key.value) for file, key in keys if isinstance(key, ast.Constant)] == []
 
 
 SAMPLE_STATES = [

@@ -104,13 +104,25 @@ The keys do everything; a left click is a shortcut to what a key does, and logs
    footer, `?` (`keys_now`) and the `g…` popup (`which_key_items`) are generated
    from it, and the key tables in [usage.md](usage.md) must match it
    (`test_keymap.py`). A key not in the table doesn't exist.
-5. **Reserved keys** mean the same everywhere they apply:
+5. **Views name keys through the keymap.** A button, a panel hint, a toolbar,
+   the footer, a popup's hint line and the log, toast and refusal text get the
+   key they show from `keymap.key_for(action, arg, mode)`: how the leading key
+   of the run that dispatches that action reads (`space`, `esc`, `[`, `↑`); a
+   run's other keys are alternatives. So rebinding a key is one change in
+   `KEYMAP`, and everything that names it follows. A button names the verb a
+   click runs (`button('▶ Call', 'primary', look)`), and `key_for` gives its key.
+   `test_keymap.py` checks that every row running one action leads with the
+   same key and that no `keyed()` or `hint()` spells out a key. Spelled out are
+   only the keys a helper interprets itself (`tab`, `↑↓`, `j k`, digits, in
+   `helpers/__init__.py`) and insert's `esc`, which `NavState` tells apart from
+   `enter` on a value that doesn't parse.
+6. **Reserved keys** mean the same everywhere they apply:
    - layers `esc` `enter`; sending `space` `^s` `r` `s`
    - moving `h` `j` `k` `l`, arrows, `tab` `shift+tab`, `gg` `G`
    - tabs `0`–`9` `H` `L` `gt` `gT` `x`
    - editing `u` `y` `p` `i` `a` `c` `f` `e` `R` `[` `]`, and `o` `d` on field rows
    - overlays `/` `^f` `:` `?` `g`; quitting `:q`
-6. **Undo is per entry.** `u` undoes your last change in this entry (edits,
+7. **Undo is per entry.** `u` undoes your last change in this entry (edits,
    pastes, rate and parameter changes, applied helpers), or reopens the tab you
    just closed (any tab can). Switching tabs never undoes something elsewhere.
    With nothing to undo: `nothing to undo here`.
@@ -197,7 +209,7 @@ applied by `MessageEntry`, so every message editor has them.
   an edit and is one undo step. While the fields make no value, enter keeps the
   popup open with `fix the highlighted values first`.
 - **Enums in insert** take a constant's name or prefix, any case, or a number
-  (`fields.enum_value`); the completion (`fields.enum_matches`, in `comp`)
+  (`values.enum_value`); the completion (`values.enum_matches`, in `comp`)
   replaces the type hint while typing. At rest: `level: 2 ERROR`.
 - A row with a helper shows a `[f Quaternion]` badge; `f` elsewhere says `no
   helper for this field — fields with one show [f …]`.
@@ -338,7 +350,7 @@ keys.
 - **Pills** (`theme.TONES`): `calling…` / `EXECUTING` in `live`; `✓ OK` /
   `SUCCEEDED` in `ok`; `CANCELED` in `warn`; `✗ FAILED`, `ABORTED`, `REJECTED`
   in `bad`; each followed by its timing.
-- **Buttons** carry their key (`base.button(label, key, look)`): `pri`
+- **Buttons** carry their verb's key (`base.button(label, verb, look)`): `pri`
   (`▶ Publish once space`), `stop` (`■ Stop echo space`), plain (`↻ Repeat at
   10 Hz r`), `off` (disabled, with the reason next to it).
 - **Flash**: a send turns the primary button `bright` on `accent` for
@@ -383,7 +395,7 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
 ## Code principles
 
 - **A pure model, thin widgets.** `nav.py`, `keymap.py`, `fields.py`,
-  `register.py`, `helpers/` and `entries/` are plain Python: no textual, no
+  `values.py`, `register.py`, `helpers/` and `entries/` are plain Python: no textual, no
   rclpy (`test_keymap.py` checks `nav`, `keymap` and `fields`). They are unit-tested on their own.
   - `NavState` (`nav.py`) holds the tabs, layer, cursors, kind chip, the one
     `overlay`, the undo stack and the register. What there is to open is its
@@ -395,7 +407,11 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
     entry. Overlays and insert swallow keys they don't use.
 - **Entries own their kind.** `entries/base.py` is the contract: `Entry`,
   `Area` (with `editable`, `folds`, `helpers`, so the keymap asks the area, not
-  its id), `Editing`, `Commit`, `UndoEntry`, `Running`, `Context`, and `Host`.
+  its id), `Editing`, `Commit`, `UndoEntry`, `Running`, `Context`, and `Host`;
+  and the names both sides share: the layers (`TABS`, `IN`, `AREA`, `EDIT`) and
+  the area ids (`EDITOR`, `OUT`, `IFS`, `PARAM`, and `RATE` for the rate
+  editor). Entries, views and the keymap's predicates use these constants; no
+  area id is spelled out anywhere else.
   `nav.entry(tab)` makes one per tab on first use (through `new_entry`,
   `kinds.entry_factory` in the app) and keeps it after the tab closes, so edits,
   history and echo survive a reopen.
@@ -447,11 +463,14 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
 - **Validation lives in one place**: `build_message` (`message_yaml.py`)
   reports `FieldError`s with the path; the UI maps the path to a row. Typed
   scalars, field rows and node parameters alike, go through
-  `fields.parse_scalar`. A node parameter's typed value is then checked
+  `values.parse_scalar`. A node parameter's typed value is then checked
   against its declared type by `parameters.checked`, the check the bridge
   runs before it sends.
-- **Every tunable number lives in `ros_tui/constants.py`**, with the
-  stamp-at-send words (`HEADER_AUTO`, `TIME_NOW`).
+- **Every tunable number lives in `ros_tui/constants.py`.**
+- **The message type labels have one owner**: `ros/schema.py` (no ROS
+  import) reads the array grammar, writes and parses field paths
+  (`points[1].x`) and holds the stamp-at-send words (`HEADER_AUTO`,
+  `TIME_NOW`); `message_yaml.py`, the field rows and the helpers all use it.
 - **Time comes from an injectable clock.** `Feedback.clock` is the bridge's
   `now()` and `Feedback.wall` its `time_of_day()` (a `ManualClock` under
   `FakeBridge`), so every shot is repeatable; nothing in the model reads real
@@ -463,8 +482,10 @@ comes from `cls`: `g` green, `r` red, `c` cyan, `y` yellow, `dim`.
   it for display only when shown. An idle app, or an echo in another tab, never
   redraws the body.
 - **No pip at install time.** A runtime dependency is a rosdep key in
-  `package.xml`, or a pure-Python wheel pinned in `ros_tui/_vendor/vendor.lock`
-  (`scripts/vendor.py`). Small maths is written out rather than pulled in.
+  `package.xml`, or a pure-Python wheel pinned with its hash in
+  `ros_tui/_vendor/requirements.txt`, which `scripts/vendor.py` unpacks at build
+  time (Dependabot proposes the bumps). Small maths is written out rather than
+  pulled in.
 - **Only the UI reaches the terminal.** While the app runs, fds 1 and 2 go to a
   log file (`output.py`); the UI draws on `sys.__stderr__`.
 - **Every UI change ships a scenario test with shots** (`test/ui/test_<what>.py`,

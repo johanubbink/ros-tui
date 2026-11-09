@@ -28,9 +28,10 @@ from typing import Any
 
 from ros_tui.constants import SUMMARY_MAX_CHARS
 from ros_tui.ros.message_yaml import class_structure, message_to_plain
-from ros_tui.ui.entries.base import Area, Context, Host, Tab, Verb
-from ros_tui.ui.entries.message import EDITOR, MessageEntry
-from ros_tui.ui.fields import FieldRows, summary
+from ros_tui.ui.entries.base import EDITOR, OUT, Area, Context, Host, Tab, Verb
+from ros_tui.ui.entries.message import MessageEntry
+from ros_tui.ui.fields import FieldRows
+from ros_tui.ui.values import summary
 
 
 @dataclass
@@ -49,7 +50,7 @@ class ServiceEntry(MessageEntry):
 
     KIND = 'srv'
     ROLE = 'request'
-    AREAS = (Area(EDITOR, 'REQUEST', 'edit', True, folds=True, helpers=True), Area('out', 'RESPONSE', folds=True))
+    AREAS = (Area(EDITOR, 'REQUEST', 'edit', True, folds=True, helpers=True), Area(OUT, 'RESPONSE', folds=True))
 
     def __init__(self, tab: Tab, ctx: Context | None = None):
         super().__init__(tab, ctx)
@@ -61,7 +62,7 @@ class ServiceEntry(MessageEntry):
         return class_structure(interface.Response)
 
     def form(self, area: Area | None) -> FieldRows | None:
-        if area is not None and area.id == 'out':
+        if area is not None and area.id == OUT:
             return self.response
         return super().form(area)
 
