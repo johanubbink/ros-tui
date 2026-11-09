@@ -30,11 +30,6 @@ jobs:
         rosdep install --from-paths src --ignore-src -y --rosdistro ${{ inputs.distro }}
         apt-get install -y --no-install-recommends python3-flake8
 
-    # Only the job that writes the screenshots (see "Test with pytest") renders them to PNG.
-    - name: Install screenshot tooling
-      if: github.event_name == 'pull_request' && inputs.distro == 'jazzy'
-      run: apt-get install -y --no-install-recommends librsvg2-bin fonts-jetbrains-mono
-
     - name: Unpack the bundled textual
       run: python3 src/ros_tui/scripts/vendor.py
 
@@ -58,21 +53,11 @@ jobs:
         cd /tmp && python3 -c "import ros_tui, textual; assert '/install/' in textual.__file__ and '_vendor' in textual.__file__, textual.__file__"
 
     # The fast tier: everything but the tests marked offline, which scripts/agent_check.sh runs
-    # (see docs/testing.md).
+    # (see docs/testing.md). The UI scenarios assert what they show; their screenshots are written
+    # only by scripts/agent_check.sh, for the agents and reviewers who look at them.
     - name: Test with pytest
       working-directory: src/ros_tui
       shell: bash
-      env:
-        # On pull requests the screenshot scenarios also write their shots (see docs/agentic-dev.md).
-        ROS_TUI_SHOTS: ${{ github.event_name == 'pull_request' && inputs.distro == 'jazzy' && '1' || '0' }}
       run: |
         . /opt/ros/${{ inputs.distro }}/setup.bash
         python3 -m pytest -m "not offline"
-
-    - name: Upload UI screenshots
-      if: always() && github.event_name == 'pull_request' && inputs.distro == 'jazzy'
-      uses: actions/upload-artifact@v7
-      with:
-        name: ui-screenshots
-        path: src/ros_tui/test/artifacts/
-        if-no-files-found: ignore
