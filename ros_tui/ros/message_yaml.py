@@ -247,30 +247,41 @@ def _build(message_class: type, values: Any, path: str, setters: list[TimeSetter
             raise FieldError(
                 field_path, f"'{field_name}' is not a field of {interface_label(message_class)}"
             )
-        slot = slots[field_name]
-        current = getattr(message, field_name)
-        qualified = f'{type(current).__module__}.{type(current).__name__}'
-        if qualified == _HEADER_CLASS and field_value == HEADER_AUTO:
-            setters.append(functools.partial(setattr, current, 'stamp'))
-            continue
-        if qualified == _TIME_CLASS and field_value == TIME_NOW:
-            setters.append(functools.partial(setattr, message, field_name))
+        setter = _time_magic(message, field_name, field_value)
+        if setter is not None:
+            setters.append(setter)
             continue
         try:
-            if isinstance(slot, AbstractNestedType):
-                value = _build_sequence(current, slot, field_value, field_path, setters)
-            elif hasattr(current, 'get_fields_and_field_types'):
-                value = _build(type(current), field_value, f'{field_path}.', setters)
-            elif isinstance(slot, BasicType) and slot.typename == 'octet':
-                value = _byte_value(field_value, field_path)
-            else:
-                value = _coerce_primitive(current, field_value)
+            current = getattr(message, field_name)
+            value = _build_field(current, slots[field_name], field_value, field_path, setters)
             setattr(message, field_name, value)
         except FieldError:
             raise
         except (AssertionError, ValueError, TypeError, OverflowError) as error:
             raise FieldError(field_path, str(error)) from error
     return message
+
+
+def _time_magic(message: Any, field_name: str, field_value: Any) -> TimeSetter | None:
+    """The deferred setter a ``header: auto`` or ``stamp: now`` value stands for, else None."""
+    current = getattr(message, field_name)
+    if _is_class(current, _HEADER_CLASS) and field_value == HEADER_AUTO:
+        return functools.partial(setattr, current, 'stamp')
+    if _is_class(current, _TIME_CLASS) and field_value == TIME_NOW:
+        return functools.partial(setattr, message, field_name)
+    return None
+
+
+def _build_field(current: Any, slot: Any, field_value: Any, field_path: str, setters: list[TimeSetter]) -> Any:
+    """``field_value`` converted for a field of the kind ``slot`` (sequence or array, nested
+    message, byte, other primitive); ``current`` is the field's default value."""
+    if isinstance(slot, AbstractNestedType):
+        return _build_sequence(current, slot, field_value, field_path, setters)
+    if hasattr(current, 'get_fields_and_field_types'):
+        return _build(type(current), field_value, f'{field_path}.', setters)
+    if _is_octet(slot):
+        return _byte_value(field_value, field_path)
+    return _coerce_primitive(current, field_value)
 
 
 def _build_sequence(
@@ -289,7 +300,7 @@ def _build_sequence(
             _build(element_class, item, f'{field_path}[{index}].', setters)
             for index, item in enumerate(field_value)
         ]
-    if isinstance(value_type, BasicType) and value_type.typename == 'octet':
+    if _is_octet(value_type):
         return [
             _byte_value(item, f'{field_path}[{index}]') for index, item in enumerate(field_value)
         ]
@@ -333,31 +344,45 @@ def _checked_numpy_array(current: numpy.ndarray, field_value: Any, field_path: s
 
 
 def _checked_numpy_element(dtype: numpy.dtype, item: Any, item_path: str) -> Any:
-    try:
-        if dtype.kind == 'b':
-            return bool(item)
-        if dtype.kind in 'iu':
-            if isinstance(item, bool) or not isinstance(item, (int, float)):
-                raise FieldError(item_path, f'expected an integer, got {item!r}')
-            if isinstance(item, float):
-                if not item.is_integer():
-                    raise FieldError(item_path, f'expected an integer, got {item}')
-                item = int(item)
-            bounds = numpy.iinfo(dtype)
-            if not bounds.min <= item <= bounds.max:
-                raise FieldError(
-                    item_path, f'must be an integer in [{bounds.min}, {bounds.max}], got {item}'
-                )
-            return item
-        if dtype.kind == 'f':
-            value = float(item)
-            limit = float(numpy.finfo(dtype).max)
-            if math.isfinite(value) and not -limit <= value <= limit:
-                raise FieldError(item_path, f'must be a float in [{-limit}, {limit}], got {item}')
-            return value
+    check = _NUMPY_CHECKS.get(dtype.kind)
+    if check is None:
         return item
+    try:
+        return check(dtype, item, item_path)
     except (TypeError, ValueError) as error:
         raise FieldError(item_path, str(error)) from error
+
+
+def _checked_numpy_integer(dtype: numpy.dtype, item: Any, item_path: str) -> int:
+    """A whole number (a whole float too, but never a bool) in the range of the integer ``dtype``."""
+    if isinstance(item, bool) or not isinstance(item, (int, float)):
+        raise FieldError(item_path, f'expected an integer, got {item!r}')
+    if isinstance(item, float):
+        if not item.is_integer():
+            raise FieldError(item_path, f'expected an integer, got {item}')
+        item = int(item)
+    bounds = numpy.iinfo(dtype)
+    if not bounds.min <= item <= bounds.max:
+        raise FieldError(item_path, f'must be an integer in [{bounds.min}, {bounds.max}], got {item}')
+    return item
+
+
+def _checked_numpy_float(dtype: numpy.dtype, item: Any, item_path: str) -> float:
+    """A float that the float ``dtype`` holds without overflowing (nan and inf pass)."""
+    value = float(item)
+    limit = float(numpy.finfo(dtype).max)
+    if math.isfinite(value) and not -limit <= value <= limit:
+        raise FieldError(item_path, f'must be a float in [{-limit}, {limit}], got {item}')
+    return value
+
+
+# The element check of a numpy array by its dtype.kind; any other kind is passed through.
+_NUMPY_CHECKS = {
+    'b': lambda dtype, item, item_path: bool(item),
+    'i': _checked_numpy_integer,
+    'u': _checked_numpy_integer,
+    'f': _checked_numpy_float,
+}
 
 
 def _coerce_primitive(current: Any, field_value: Any) -> Any:
@@ -391,21 +416,11 @@ def _plain_message(message: Any, max_array: int | None, max_str: int | None, see
 
 def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | None, seed: bool = False) -> Any:
     if isinstance(slot, AbstractNestedType):
-        total = len(value)
-        truncated = max_array is not None and total > max_array
-        items = value[:max_array] if truncated else value
-        if isinstance(slot.value_type, BasicType) and slot.value_type.typename == 'octet':
-            plain_items = [_byte_to_int(item) for item in items]
-        else:
-            plain_items = [_plain_value(item, slot.value_type, max_array, max_str, seed) for item in items]
-        if truncated:
-            plain_items.append(f'… ({total} total)')
-        return plain_items
-    if isinstance(slot, BasicType) and slot.typename == 'octet':
+        return _plain_sequence(value, slot.value_type, max_array, max_str, seed)
+    if _is_octet(slot):
         return _byte_to_int(value)
     if hasattr(value, 'get_fields_and_field_types'):
-        qualified = f'{type(value).__module__}.{type(value).__name__}'
-        if seed and qualified == _HEADER_CLASS:
+        if seed and _is_class(value, _HEADER_CLASS):
             return HEADER_AUTO  # Prefill the "stamp at send time" magic instead of a zeroed header.
         return _plain_message(value, max_array, max_str, seed)
     if isinstance(value, numpy.number):
@@ -415,5 +430,32 @@ def _plain_value(value: Any, slot: Any, max_array: int | None, max_str: int | No
     return value
 
 
+def _plain_sequence(
+    items: Any, value_type: Any, max_array: int | None, max_str: int | None, seed: bool
+) -> list:
+    """A sequence or array as a list; past ``max_array`` items it is cut, ending in '… (N total)'."""
+    total = len(items)
+    truncated = max_array is not None and total > max_array
+    shown = items[:max_array] if truncated else items
+    if _is_octet(value_type):
+        plain_items = [_byte_to_int(item) for item in shown]
+    else:
+        plain_items = [_plain_value(item, value_type, max_array, max_str, seed) for item in shown]
+    if truncated:
+        plain_items.append(f'… ({total} total)')
+    return plain_items
+
+
 def _byte_to_int(value: Any) -> int:
     return value[0] if isinstance(value, bytes) else int(value)
+
+
+def _is_octet(slot: Any) -> bool:
+    """Whether ``slot`` is the IDL ``byte``/``octet`` type: one ``bytes`` in Python, an int in plain data."""
+    return isinstance(slot, BasicType) and slot.typename == 'octet'
+
+
+def _is_class(value: Any, qualified: str) -> bool:
+    """Whether ``value`` is an instance of the class named ``qualified``, matched by name so that
+    std_msgs and builtin_interfaces are not imported here."""
+    return f'{type(value).__module__}.{type(value).__name__}' == qualified
