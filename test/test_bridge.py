@@ -27,18 +27,15 @@ The rest of the bridge's DDS behaviour is in test_bridge_offline.py (see docs/te
 """
 
 import threading
-import time
-from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
 from conftest import (ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, EVENTUALLY_S, FIBONACCI_ACTION, FIXTURE_NODE,
-                      INBOX_TOPIC, answer_of, event_kinds, terminal_event, wait_for)
+                      INBOX_TOPIC, answer_of, event_kinds, listed_param, set_param, terminal_event, wait_for)
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from ros_tui.constants import READY_TIMEOUT_S
-from ros_tui.ros.bridge import RosBridge, _ActiveGoal, _AwaitingResponse, _PendingReady, adapted_qos
+from ros_tui.ros.bridge import RosBridge, adapted_qos
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEventKind
 from std_msgs.msg import String
@@ -149,138 +146,7 @@ def test_adapted_qos_truth_table():
     assert adapted_qos([transient, reliable_volatile]).durability == DurabilityPolicy.VOLATILE
 
 
-class _FakeFuture:
-    """A call_async future whose done callback fires only when the test triggers it."""
-
-    def __init__(self):
-        self._callback = None
-
-    def add_done_callback(self, callback):
-        self._callback = callback
-
-    def fire(self):
-        self._callback(self)
-
-
-class _FakeClient:
-    srv_name = '/fake/set_parameters'
-
-    def __init__(self, future):
-        self._future = future
-
-    def call_async(self, _request):
-        return self._future
-
-
-def test_call_then_marks_client_in_use_until_response(bridge):
-    """An in-flight parameter call keeps its client out of LRU eviction (regression).
-
-    ``_call_then`` must register the client in ``awaiting_response`` so ``_client_in_use``
-    reports it busy for the call's lifetime — otherwise ``_get_or_create`` could evict and
-    ``destroy_client`` it mid-flight — then drop it once the response lands.
-    """
-    future = _FakeFuture()
-    client = _FakeClient(future)
-    key = (_FakeClient.srv_name, 'rcl_interfaces/srv/SetParameters')
-    handled = []
-
-    # Dispatch on the ROS thread, exactly as the real parameter paths do.
-    bridge.submit(lambda: bridge._call_then(client, object(), handled.append)).result(timeout=EVENTUALLY_S)
-
-    # While the response is pending, the client is busy and cannot be chosen as a victim.
-    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=EVENTUALLY_S) is True
-
-    # The response lands: the client is released and the handler is re-submitted to run.
-    bridge.submit(future.fire).result(timeout=EVENTUALLY_S)
-    assert bridge.submit(lambda: bridge._client_in_use(key, client)).result(timeout=EVENTUALLY_S) is False
-    assert wait_for(lambda: bool(handled)), 'handle was never invoked'
-
-
-def test_housekeeping_dispatches_fails_or_keeps_each_wait_for_a_server(bridge):
-    seen = []
-
-    def pending(label, is_ready, deadline):
-        return _PendingReady(entity=object(), is_ready=is_ready, dispatch=lambda: seen.append((label, 'sent')),
-                             fail=lambda error: seen.append((label, str(error))), deadline=deadline, label=label)
-
-    def broken():
-        raise RuntimeError('graph gone')
-
-    now = time.monotonic()
-    waits = [pending('/ready', lambda: True, now + 60), pending('/late', lambda: False, now - 1),
-             pending('/broken', broken, now + 60), pending('/waiting', lambda: False, now + 60)]
-    on_ros_thread(bridge, lambda: bridge._entities.pending_ready.extend(waits))
-    on_ros_thread(bridge, bridge._tick_pending)
-    left = on_ros_thread(bridge, lambda: [wait.label for wait in bridge._entities.pending_ready])
-    on_ros_thread(bridge, lambda: bridge._entities.pending_ready.clear())
-    assert seen == [('/ready', 'sent'), ('/late', '/late not available (no server found)'),
-                    ('/broken', 'graph gone')]
-    assert left == ['/waiting']
-
-
-def test_housekeeping_ends_a_goal_whose_server_vanished(bridge):
-    events = []
-
-    def goal(server_up, lost_since=None):
-        return _ActiveGoal(handle=None, on_event=events.append,
-                           client=SimpleNamespace(server_is_ready=lambda: server_up), server_lost_since=lost_since)
-
-    now = time.monotonic()
-    gone, lost, back = goal(False, now - READY_TIMEOUT_S - 1), goal(False), goal(True, now)
-
-    def track():
-        bridge._entities.active_goals.update({'/gone': gone, '/lost': lost, '/back': back})
-        bridge._entities.inflight_actions.add('/gone')
-
-    on_ros_thread(bridge, track)
-    on_ros_thread(bridge, bridge._tick_pending)
-    goals = on_ros_thread(bridge, lambda: sorted(bridge._entities.active_goals))
-    inflight = on_ros_thread(bridge, lambda: set(bridge._entities.inflight_actions))
-    on_ros_thread(bridge, lambda: bridge._entities.active_goals.clear())
-    assert goals == ['/back', '/lost'] and '/gone' not in inflight
-    assert [(event.action_name, event.kind, event.payload) for event in events] == [
-        ('/gone', ActionEventKind.ERROR, 'action server vanished while the goal was executing')]
-    assert lost.server_lost_since is not None and back.server_lost_since is None
-
-
-def test_housekeeping_times_out_a_request_without_response(bridge):
-    dropped = []
-    client = SimpleNamespace(remove_pending_request=dropped.append)
-    now = time.monotonic()
-    late = _AwaitingResponse(client, 'late future', now - 1, '/slow', Future())
-    untracked = _AwaitingResponse(client, 'parameter future', now - 1, '/param')  # No caller future.
-    fine = _AwaitingResponse(client, 'fine future', now + 60, '/fine', Future())
-    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([late, untracked, fine]))
-    on_ros_thread(bridge, bridge._tick_pending)
-    left = on_ros_thread(bridge, lambda: list(bridge._entities.awaiting_response))
-    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.clear())
-    assert left == [fine] and dropped == ['late future', 'parameter future']
-    with pytest.raises(TimeoutError, match='no response from /slow after 30 s'):
-        late.outer.result(timeout=0)
-    assert not fine.outer.done()
-
-
-def test_shutdown_fails_every_request_still_awaiting_its_response(bridge):
-    client = SimpleNamespace(remove_pending_request=lambda future: None)
-    later = time.monotonic() + 60
-    untracked = _AwaitingResponse(client, 'parameter future', later, '/param')  # No caller future.
-    tracked = _AwaitingResponse(client, 'call future', later, '/call', Future())
-    on_ros_thread(bridge, lambda: bridge._entities.awaiting_response.extend([untracked, tracked]))
-    bridge.shutdown()
-    with pytest.raises(RuntimeError, match='ROS bridge shut down'):
-        tracked.outer.result(timeout=EVENTUALLY_S)
-
-
 # ---------------------------------------------------------------- smoke: talking to other nodes over DDS
-
-
-@pytest.fixture(scope='module')
-def peer(ros_domain, fixture_servers):
-    """One bridge for all the smoke tests: DDS discovery of a new node takes seconds, so pay it once."""
-    ros_bridge = RosBridge(node_name='ros_tui_smoke')
-    ros_bridge.start()
-    yield ros_bridge
-    ros_bridge.shutdown()
 
 
 def test_graph_lists_fixture_entities(peer, fixture_servers):
@@ -312,16 +178,21 @@ def test_service_call_roundtrip(peer, fixture_servers):
     assert future.result(timeout=EVENTUALLY_S).sum == 5
 
 
-def test_publish_once_received_by_fixture(peer, fixture_servers):
-    fixture_servers.inbox_messages.clear()
+def test_publish_once_reaches_an_echo(peer):
+    # A topic of its own: a publisher the session-wide peer keeps would change how the app opens a
+    # fixture topic in the end-to-end tests.
+    topic = '/tui_test_loopback'
+    buffer = EchoBuffer()
+    peer.subscribe(topic, STRING_TYPE, buffer).result(timeout=EVENTUALLY_S)
+    received = []
 
     def published_and_received():
-        # A message published before discovery matched the fixture's subscription is lost: publish
-        # again until one arrives.
-        peer.publish_once(INBOX_TOPIC, STRING_TYPE, String(data='hello')).result(timeout=EVENTUALLY_S)
-        return wait_for(lambda: 'hello' in fixture_servers.inbox_messages, timeout=0.5)
+        # A message published before discovery matched the subscription is lost: publish again.
+        peer.publish_once(topic, STRING_TYPE, String(data='hello')).result(timeout=EVENTUALLY_S)
+        return wait_for(lambda: received.extend(buffer.drain()[0]) or received, timeout=0.5)
 
-    assert wait_for(published_and_received), fixture_servers.inbox_messages
+    assert wait_for(published_and_received)
+    assert received[-1].data == 'hello'
 
 
 def test_subscribe_receives_chatter(peer, fixture_servers):
@@ -351,21 +222,15 @@ def test_action_goal_feedback_result(peer, fixture_servers):
 
 def test_list_and_set_node_parameters(peer, fixture_servers):
     declared = fixture_servers.node.get_parameter('test_param').value
-
-    def test_param_value():
-        params, _error = answer_of(peer.list_node_parameters, FIXTURE_NODE) or (None, None)
-        return next((value for name, _type, value in params or () if name == 'test_param'), None)
-
-    def set_param(value):
-        answer = answer_of(peer.set_node_parameter, FIXTURE_NODE, 'test_param', str(value))
-        assert answer is not None, 'set_node_parameter never completed'
-        return answer[0]  # The error, None on success.
-
     # Poll until the node's parameter services are discovered and report its value.
-    assert wait_for(lambda: test_param_value() == declared), f'test_param never listed as {declared}'
+    assert wait_for(lambda: listed_param(peer, 'test_param') == declared), f'test_param never listed as {declared}'
+    params, _error = answer_of(peer.list_node_parameters, FIXTURE_NODE)
+    assert {(name, kind) for name, kind, _value in params} >= {
+        ('test_param', 'int'), ('test_doubles', 'double[]'), ('test_names', 'string[]'),
+    }
     # Set it and confirm success, then put the value back: fixture_servers lives for the whole run.
     try:
-        assert set_param(declared + 42) is None
-        assert wait_for(lambda: test_param_value() == declared + 42)
+        assert set_param(peer, 'test_param', declared + 42, 'int') is None
+        assert wait_for(lambda: listed_param(peer, 'test_param') == declared + 42)
     finally:
-        set_param(declared)
+        set_param(peer, 'test_param', declared, 'int')

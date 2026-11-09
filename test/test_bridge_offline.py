@@ -19,13 +19,22 @@ CI leaves these out; scripts/agent_check.sh runs them (see docs/testing.md). Lik
 they assert only outcomes that eventually arrive, never rates or how long something took.
 """
 
+import threading
 import time
 
 import pytest
+import rclpy
 from conftest import (ADD_TWO_INTS_SERVICE, CHATTER_TOPIC, EVENTUALLY_S, FIBONACCI_ACTION, FIXTURE_NODE,
-                      INBOX_TOPIC, answer_of, event_kinds, terminal_event, wait_for)
+                      INBOX_TOPIC, answer_of, event_kinds, listed_param, set_param, terminal_event, wait_for)
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
+from rcl_interfaces.srv import ListParameters
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.parameter import Parameter
+from ros_tui.ros import bridge as bridge_module
+from ros_tui.ros import inflight
 from ros_tui.ros.bridge import RosBridge
 from ros_tui.ros.events import ActionEventKind
 from std_msgs.msg import String
@@ -55,13 +64,15 @@ def test_service_unavailable_times_out(bridge):
         future.result(timeout=EVENTUALLY_S)
 
 
-def test_lru_overflow_with_pending_clients_does_not_crash(bridge):
+def test_more_parked_calls_than_the_client_cache_holds_each_time_out(bridge):
+    """Every cached client is busy, so the cache grows instead of destroying a client a
+    call still needs: each call ends with its own timeout."""
     futures = [
         bridge.call_service(f'/tui_missing_{index}', ADD_TWO_INTS_TYPE, AddTwoInts.Request())
         for index in range(10)
     ]
     for future in futures:
-        with pytest.raises((TimeoutError, RuntimeError)):
+        with pytest.raises(TimeoutError, match='not available'):
             future.result(timeout=EVENTUALLY_S)
 
 
@@ -99,6 +110,18 @@ def test_send_goal_to_missing_server_reports_error(bridge):
     assert wait_for(lambda: events)
     assert events[0].kind == ActionEventKind.ERROR
     assert 'not available' in events[0].payload
+
+
+def test_publish_once_received_by_fixture(bridge, fixture_servers):
+    fixture_servers.inbox_messages.clear()
+
+    def published_and_received():
+        # A message published before discovery matched the fixture's subscription is lost: publish
+        # again until one arrives.
+        bridge.publish_once(INBOX_TOPIC, STRING_TYPE, String(data='hello')).result(timeout=EVENTUALLY_S)
+        return wait_for(lambda: 'hello' in fixture_servers.inbox_messages, timeout=0.5)
+
+    assert wait_for(published_and_received), fixture_servers.inbox_messages
 
 
 def wait_until_quiet(messages, quiet_s, timeout=EVENTUALLY_S):
@@ -140,14 +163,14 @@ def test_bridge_shutdown_cancels_a_running_goal(fixture_servers, ros_domain):
     assert wait_for(lambda: fixture_servers.canceled_goals == canceled_before + 1)
 
 
-def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
+def test_get_node_info_lists_node_endpoints(peer, fixture_servers):
     def names(entries):
         return {entry.name for entry in entries}
 
     def discovered():
         # Until the bridge has discovered the fixture node, get_*_by_node raises
         # "nonexistent node" and get_node_info reports it as an error: keep polling.
-        info, _error = answer_of(bridge.get_node_info, FIXTURE_NODE) or (None, None)
+        info, _error = answer_of(peer.get_node_info, FIXTURE_NODE) or (None, None)
         if info is None:
             return None
         ready = (
@@ -159,7 +182,7 @@ def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
         return info if ready else None
 
     info = wait_for(discovered)
-    assert info is not None, f'fixture node endpoints were not discovered: {answer_of(bridge.get_node_info, FIXTURE_NODE)}'
+    assert info is not None, f'fixture node endpoints were not discovered: {answer_of(peer.get_node_info, FIXTURE_NODE)}'
     assert info.node_name == FIXTURE_NODE
     # The fixture node's own parameter services are hidden, as the ☰ list hides them.
     assert not any(name.endswith('/get_parameters') for name in names(info.service_servers))
@@ -168,7 +191,190 @@ def test_get_node_info_lists_node_endpoints(bridge, fixture_servers):
     assert not any('/_' in name for name in leaked), leaked
 
 
-def test_set_unknown_node_parameter_reports_error(bridge, fixture_servers):
-    answer = answer_of(bridge.set_node_parameter, FIXTURE_NODE, 'no_such_param', '1')
-    assert answer is not None, 'set_node_parameter never completed'
-    assert answer[0] is not None  # An undeclared parameter is rejected by the node.
+# ---------------------------------------------------------------- parameters
+
+
+@pytest.mark.parametrize('name, type_label, sent, declared, received', [
+    ('test_doubles', 'double[]', [1, 2], [0.5], [1.0, 2.0]),  # Whole numbers, sent as doubles.
+    ('test_doubles', 'double[]', [], [0.5], []),
+    ('test_names', 'string[]', [], ['a'], []),
+])
+def test_set_an_array_parameter_by_its_declared_type(peer, fixture_servers, name, type_label, sent, declared, received):
+    node = fixture_servers.node
+    assert wait_for(lambda: listed_param(peer, name) is not None)
+    try:
+        assert set_param(peer, name, sent, type_label) is None
+        assert list(node.get_parameter(name).value) == received
+        assert listed_param(peer, name) == received
+    finally:
+        node.set_parameters([Parameter(name, value=declared)])
+
+
+@pytest.mark.parametrize('ask', [
+    lambda bridge, node, on_done: bridge.list_node_parameters(node, on_done),
+    lambda bridge, node, on_done: bridge.set_node_parameter(node, 'test_param', 0, 'int', on_done),
+    lambda bridge, node, on_done: bridge.get_node_info(node, on_done),
+], ids=['list', 'set', 'info'])
+def test_a_node_request_callback_that_raises_is_not_called_again(peer, fixture_servers, ask):
+    assert wait_for(lambda: listed_param(peer, 'test_param') is not None)
+    calls = []
+
+    def on_done(*answer):
+        calls.append(answer)
+        raise RuntimeError('a bug in the caller')
+
+    ask(peer, FIXTURE_NODE, on_done)
+    assert wait_for(lambda: calls)
+    peer.submit(lambda: None).result(timeout=EVENTUALLY_S)  # The ROS thread is past the reply's handler.
+    assert len(calls) == 1 and calls[0][-1] is None, calls  # Answered once, without an error.
+
+
+def test_set_unknown_node_parameter_reports_error(peer, fixture_servers):
+    assert set_param(peer, 'no_such_param', 1, 'int') is not None  # The node rejects an undeclared parameter.
+
+
+# ---------------------------------------------------------------- servers that hold a request
+
+HELD_NODE = '/tui_held'
+HELD_ACTION = '/tui_held_goal'
+
+
+class HeldServers:
+    """A parameter list service and an action server that each hold a request until released."""
+
+    def __init__(self, context):
+        self.node = rclpy.create_node('tui_held_servers', context=context)
+        self.list_received, self.release_list, self.list_answered = threading.Event(), threading.Event(), threading.Event()
+        self.goal_received, self.release_goal = threading.Event(), threading.Event()
+        self.cancel_requests = 0
+        group = ReentrantCallbackGroup()
+        self.node.create_service(ListParameters, f'{HELD_NODE}/list_parameters', self._list,
+                                 callback_group=group)
+        self.action_server = ActionServer(
+            self.node, Fibonacci, HELD_ACTION, execute_callback=self._execute,
+            goal_callback=self._goal, cancel_callback=self._cancel, callback_group=group)
+
+    def reset(self):
+        for event in (self.list_received, self.release_list, self.list_answered, self.goal_received,
+                      self.release_goal):
+            event.clear()
+        self.cancel_requests = 0
+
+    def release_all(self):
+        self.release_list.set()
+        self.release_goal.set()
+
+    def _list(self, request, response):
+        self.list_received.set()
+        self.release_list.wait(timeout=EVENTUALLY_S)
+        self.list_answered.set()
+        return response
+
+    def _goal(self, goal_request):
+        self.goal_received.set()
+        self.release_goal.wait(timeout=EVENTUALLY_S)
+        return GoalResponse.ACCEPT
+
+    def _cancel(self, cancel_request):
+        self.cancel_requests += 1
+        return CancelResponse.ACCEPT
+
+    def _execute(self, goal_handle):
+        wait_for(lambda: goal_handle.is_cancel_requested, timeout=5.0)
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        else:
+            goal_handle.succeed()
+        return Fibonacci.Result()
+
+
+@pytest.fixture(scope='module')
+def held_node(ros_domain):
+    # One node for the module, reset for each test: a node re-created under the same name is slow
+    # to be discovered again.
+    context = rclpy.Context()
+    rclpy.init(context=context)
+    servers = HeldServers(context)
+    executor = MultiThreadedExecutor(num_threads=4, context=context)
+    executor.add_node(servers.node)
+    spin_thread = threading.Thread(target=executor.spin, name='held-spin', daemon=True)
+    spin_thread.start()
+    yield servers
+    servers.release_all()
+    executor.shutdown()
+    spin_thread.join(timeout=3.0)
+    servers.node.destroy_node()
+    rclpy.shutdown(context=context)
+
+
+@pytest.fixture
+def held_servers(held_node):
+    held_node.reset()
+    yield held_node
+    held_node.release_all()  # Let a request the test left held finish.
+
+
+def list_held_params(bridge, held_servers):
+    """Ask the held node for its parameters; returns the list the answers land in."""
+    answers = []
+    bridge.list_node_parameters(HELD_NODE, lambda params, error: answers.append((params, error)))
+    assert held_servers.list_received.wait(timeout=EVENTUALLY_S)
+    return answers
+
+
+def test_shutdown_cancels_a_goal_accepted_after_a_parameter_reply_landed(bridge, held_servers, monkeypatch):
+    """A parameter reply that lands while shutdown waits for the goals is ignored, so the wait
+    goes on and the goal, accepted only then, is still canceled."""
+    # Shutdown waits for a goal's acceptance only so long; here the test decides when it comes.
+    monkeypatch.setattr(bridge_module, 'SHUTDOWN_CANCEL_TIMEOUT_S', EVENTUALLY_S)
+    answers = list_held_params(bridge, held_servers)
+    events = []
+    bridge.send_goal(HELD_ACTION, FIBONACCI_TYPE, Fibonacci.Goal(order=5), events.append)
+    assert held_servers.goal_received.wait(timeout=EVENTUALLY_S)
+    stopping = threading.Thread(target=bridge.shutdown, kwargs={'timeout_s': EVENTUALLY_S})
+    stopping.start()
+    # Shutdown fails the parameter request, then waits for the goal's acceptance to cancel it.
+    assert wait_for(lambda: answers), 'shutdown never failed the parameter request'
+    held_servers.release_list.set()
+    assert held_servers.list_answered.wait(timeout=EVENTUALLY_S)  # Its reply is on the way.
+    held_servers.release_goal.set()
+    stopping.join(timeout=EVENTUALLY_S)
+    assert wait_for(lambda: held_servers.cancel_requests == 1), event_kinds(events)
+    assert answers == [(None, 'ROS bridge shut down')]  # The late reply was ignored.
+
+
+def test_shutdown_fails_a_call_still_awaiting_its_response(bridge, held_servers):
+    future = bridge.call_service(
+        f'{HELD_NODE}/list_parameters', 'rcl_interfaces/srv/ListParameters', ListParameters.Request()
+    )
+    assert held_servers.list_received.wait(timeout=EVENTUALLY_S)
+    bridge.shutdown()
+    with pytest.raises(RuntimeError, match='ROS bridge shut down'):
+        future.result(timeout=EVENTUALLY_S)
+
+
+def test_a_parameter_request_without_a_response_times_out(bridge, held_servers, monkeypatch):
+    monkeypatch.setattr(inflight, 'RESPONSE_TIMEOUT_S', 1.0)
+    answers = list_held_params(bridge, held_servers)
+    assert wait_for(lambda: answers)
+    assert answers == [(None, f'no response from {HELD_NODE}/list_parameters after 1 s')]
+
+
+def test_shutdown_fails_a_parameter_request_awaiting_its_response(bridge, held_servers):
+    answers = list_held_params(bridge, held_servers)
+    bridge.shutdown()
+    assert answers == [(None, 'ROS bridge shut down')]
+
+
+def test_a_parameter_reply_is_handled_once_the_bridge_refuses_new_commands(bridge, held_servers, monkeypatch):
+    """A reply that lands after shutdown() began but before the ROS thread stopped spinning is
+    handled where it lands: nothing raises in the spin loop, and on_done still runs."""
+    answers = list_held_params(bridge, held_servers)
+
+    def refuse(command):
+        raise RuntimeError('ROS bridge is not running')
+
+    monkeypatch.setattr(bridge, 'submit', refuse)  # What submit does once shutdown() began.
+    held_servers.release_list.set()
+    assert wait_for(lambda: answers)
+    assert answers == [([], None)]  # The held node lists no parameters.

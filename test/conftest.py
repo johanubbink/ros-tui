@@ -68,6 +68,20 @@ def answer_of(start, *args, timeout=EVENTUALLY_S):
     return answers[0] if answers else None
 
 
+def listed_param(bridge, name, node_name=FIXTURE_NODE):
+    """The value ``list_node_parameters`` reports for parameter ``name``, or None (also while the
+    node's parameter services are still being discovered)."""
+    params, _error = answer_of(bridge.list_node_parameters, node_name) or (None, None)
+    return next((value for listed, _type, value in params or () if listed == name), None)
+
+
+def set_param(bridge, name, value, type_label, node_name=FIXTURE_NODE):
+    """The error ``set_node_parameter`` answered with: None when the node took the value."""
+    answer = answer_of(bridge.set_node_parameter, node_name, name, value, type_label)
+    assert answer is not None, 'set_node_parameter never answered'
+    return answer[0]
+
+
 def event_kinds(events):
     return [event.kind for event in events]
 
@@ -90,9 +104,11 @@ class FixtureServers:
 
     def __init__(self, context):
         self.node = rclpy.create_node(FIXTURE_NODE.lstrip('/'), context=context)
-        # A declared parameter the bridge param tests can list and set without touching
+        # Declared parameters the bridge param tests can list and set without touching
         # use_sim_time (which would freeze this node's timers and break sibling tests).
         self.node.declare_parameter('test_param', 0)
+        self.node.declare_parameter('test_doubles', [0.5])
+        self.node.declare_parameter('test_names', ['a'])
         self.inbox_messages: list[str] = []
         self.canceled_goals = 0  # Goals the Fibonacci server ended as canceled.
         callback_group = ReentrantCallbackGroup()
@@ -166,6 +182,16 @@ def bridge(ros_domain):
     # Unique node name per test: rapid create/destroy of same-named nodes confuses
     # DDS discovery and made action servers intermittently unreachable.
     ros_bridge = RosBridge(node_name=f'ros_tui_under_test_{next(_bridge_counter)}')
+    ros_bridge.start()
+    yield ros_bridge
+    ros_bridge.shutdown()
+
+
+@pytest.fixture(scope='session')
+def peer(ros_domain, fixture_servers):
+    """One bridge for every test that talks to the fixture servers and leaves the bridge running:
+    DDS discovery of a new node takes seconds, so the run pays it once."""
+    ros_bridge = RosBridge(node_name='ros_tui_peer')
     ros_bridge.start()
     yield ros_bridge
     ros_bridge.shutdown()

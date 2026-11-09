@@ -6,8 +6,8 @@ three selected with markers (see [`pytest.ini`](../pytest.ini)):
 | Kind        | Marker      | Files                                                           | What                                                                     |
 | ----------- | ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | model       | (none)      | `test_nav.py`, `test_keymap.py`, `test_fields.py`, `test_entries_*.py`, `test_helpers.py`, `test_register.py`, `test_widgets.py`, `test_harness.py` | The UI's model without running the app: layers and overlays (`NavState` over a fixed catalog with stand-in entries, `harness/nav_world.py`), the keymap (and that `docs/usage.md` lists it), the field rows, each entry kind and the field helpers over a `FakeBridge` (`harness/live_world.py`: `live_nav`, `press`, `advance`), the widgets' pure layout helpers, the harness's clock. |
-| unit        | (none)      | `test_message_yaml.py`, `test_message_display.py`, `test_echo.py`, `test_graph.py`, `test_contract.py`, `test_vendor_script.py` | Pure logic, no rclpy node: message round trips over many interface types, range and size checks, `byte`/NaN edge cases, display truncation, the echo buffer, the graph, that `RosBridge` and `FakeBridge` both implement the bridge contract (and the UI calls nothing else), what `scripts/vendor.py` unpacks from a wheel. |
-| bridge      | `ros_graph` | `test_bridge.py`, `test_bridge_offline.py`                      | The real `RosBridge` against in-process fixture servers.                 |
+| unit        | (none)      | `test_message_yaml.py`, `test_message_display.py`, `test_echo.py`, `test_graph.py`, `test_inflight.py`, `test_entity_cache.py`, `test_parameters.py`, `test_contract.py`, `test_vendor_script.py` | Pure logic, no rclpy node: message round trips over many interface types, range and size checks, `byte`/NaN edge cases, display truncation, the echo buffer, the graph, the bridge's requests in flight (waits for a server, response timeouts, goals whose server vanished, shutdown) on a hand-driven clock, its entity cache, a node parameter's value built by its declared type and read back, that `RosBridge` and `FakeBridge` both implement the bridge contract (and the UI calls nothing else) and `NavState` the entries' `Host` (and the entries use nothing else of it), what `scripts/vendor.py` unpacks from a wheel. |
+| bridge      | `ros_graph` | `test_bridge.py`, `test_bridge_offline.py`                      | The real `RosBridge` against in-process fixture servers (and, for shutdown, servers that hold a request until the test releases it). |
 | UI          | `ui`, `shots` | `ui/test_*.py`                                                | Scenarios: the textual app headless, driven by keys against the live `FakeBridge.demo()` world (no rclpy), with named screenshots. |
 | end to end  | `e2e`       | `test_e2e_smoke.py`                                             | The real app, driven by keys, over the real bridge and the fixture servers: echo, publish, call, send a goal, set a parameter. |
 
@@ -19,14 +19,19 @@ domain only within one container, and parallel runs share the compose network,
 so without it two runs can pick the same domain and answer each other. The fixture
 servers are in [`test/conftest.py`](../test/conftest.py) and mirror the demo
 node; one instance serves the whole run, because a node re-created under the
-same name is slow to be discovered again.
+same name is slow to be discovered again (the servers that hold a request, in
+`test_bridge_offline.py`, are likewise one node reset for each test). A test
+that leaves its bridge running uses the session-wide `peer` bridge, so DDS
+discovers it once; whatever it creates lives for the run, so it publishes only
+on topics of its own. A test that shuts its bridge down takes a fresh one
+from the `bridge` fixture.
 
 ## Two tiers
 
 | Tier    | Selected by          | What                                                                                   | Who runs it |
 | ------- | -------------------- | -------------------------------------------------------------------------------------- | ----------- |
 | fast    | `-m "not offline"`   | model, unit and UI tests, and `test_bridge.py`: the bridge's handling of rclpy entities on its ROS thread, plus one smoke test per way it talks over DDS (graph, service, publish, subscribe, action, parameters) | CI, on every distro; the implementer while it works |
-| offline | the `offline` marker | `test_bridge_offline.py` (the rest of the bridge over DDS: timeouts, cancels, shutdown, node info) and `test_e2e_smoke.py` | `scripts/agent_check.sh` by default; the reviewer before it passes a change |
+| offline | the `offline` marker | `test_bridge_offline.py` (the rest of the bridge over DDS: timeouts, cancels, shutdown with requests in flight, node info, parameter types and callbacks) and `test_e2e_smoke.py` | `scripts/agent_check.sh` by default; the reviewer before it passes a change |
 
 The fast tier is deterministic: nothing in it depends on how fast the machine
 is, apart from the DDS smoke tests, which wait only for outcomes. A new
@@ -44,7 +49,10 @@ builds. So it:
 - never asserts a rate, an elapsed time, or that nothing happens within some
   seconds;
 - never sleeps to order things: wait for the state that should come first (on
-  the node, or in the app's model) before acting on it or taking a shot.
+  the node, in a server the test holds, or in the app's model) before acting on
+  it or taking a shot;
+- lifts a real-time limit of the bridge it doesn't test (`monkeypatch` the
+  constant to `EVENTUALLY_S`), so a slow machine can't run into it.
 
 Whatever is quantitative or about time is tested deterministically instead: on
 a clock the test controls (`EchoBuffer(clock=…)`, the `FakeBridge`'s

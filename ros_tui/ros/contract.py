@@ -39,13 +39,12 @@ settles it) and node requests answer before they return; live, answers wait for 
 
 On RosBridge, a request (any member that answers through a Future, on_done or on_event) made
 before `start()`, after `shutdown()` or after the ROS thread stopped raises RuntimeError at once.
-At shutdown, a request still waiting for its server fails with "ROS bridge shut down" (a Future
-gets the RuntimeError, an on_done the text, an on_event an ERROR event), and so does a
-call_service awaiting its response; a parameter request awaiting its response never runs its
-on_done. A request still queued for the ROS thread is dropped: call_service's Future fails with
-that RuntimeError, the other Futures are cancelled, and a callback never runs. A goal already
-sent gets no ERROR: shutdown cancels it, and its on_event sees the RESULT only if the server
-answers within SHUTDOWN_CANCEL_TIMEOUT_S.
+At shutdown, a request still waiting for its server or its response fails with "ROS bridge shut
+down" (a Future gets the RuntimeError, an on_done the text, an on_event an ERROR event). A request
+still queued for the ROS thread is dropped: call_service's Future fails with that RuntimeError,
+the other Futures are cancelled, and a callback never runs. A goal already sent gets no ERROR:
+shutdown cancels it, and its on_event sees the RESULT only if the server answers within
+SHUTDOWN_CANCEL_TIMEOUT_S.
 
 `time_setters` are the `stamp: now` / `header: auto` setters `message_yaml.build_message` returns;
 the bridge calls each with the current ROS time on the ROS thread right before every send.
@@ -58,13 +57,12 @@ from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.events import ActionEvent
 from ros_tui.ros.graph import GraphSnapshot, NodeInfo
 from ros_tui.ros.message_yaml import TimeSetter
+from ros_tui.ros.parameters import Param
 
 GraphListener = Callable[[GraphSnapshot], None]
 ActionEventCallback = Callable[[ActionEvent], None]
 NodeInfoDone = Callable[[NodeInfo | None, str | None], None]  # (info, error): exactly one is None.
-# (params, error): params is [(name, type label, value)], type labels as bool, int, double, string,
-# byte[], bool[], int[], double[], string[] ('?' with value None for a type the bridge can't read).
-ParametersDone = Callable[[list[tuple[str, str, Any]] | None, str | None], None]
+ParametersDone = Callable[[list[Param] | None, str | None], None]  # (params, error): one is None.
 SetParameterDone = Callable[[str | None], None]  # (error): None when the node accepted the value.
 
 
@@ -171,17 +169,20 @@ class Bridge(Protocol):
         ...
 
     def list_node_parameters(self, node_name: str, on_done: ParametersDone) -> None:
-        """Every parameter of `node_name` with its type and value (see ParametersDone).
-        on_done(params, None), or on_done(None, error) when the node's parameter services are not
-        there within READY_TIMEOUT_S or fail. A node that takes the request and never responds
-        leaves on_done unrun (the request is dropped after RESPONSE_TIMEOUT_S)."""
+        """Every parameter of `node_name` as a `Param` (ros/parameters.py: its name, type label
+        and value). on_done(params, None), or on_done(None, error) when the node's parameter
+        services are not there within READY_TIMEOUT_S, don't respond within RESPONSE_TIMEOUT_S,
+        or fail."""
         ...
 
-    def set_node_parameter(self, node_name: str, name: str, value_yaml: str, on_done: SetParameterDone) -> None:
-        """Set parameter `name` on `node_name` to the YAML text `value_yaml` (read with
-        yaml.safe_load). on_done(None) when the node accepted it, else on_done(error): the node's
-        reason, or why the request failed. As with list_node_parameters, a node that never
-        responds leaves on_done unrun."""
+    def set_node_parameter(
+        self, node_name: str, name: str, value: Any, type_label: str, on_done: SetParameterDone,
+    ) -> None:
+        """Set parameter `name` on `node_name` to `value`, sent as `type_label`: the type the
+        parameter was declared with (its `Param.type`), so [1, 2] for a double[] goes out as
+        doubles and [] as that array type. on_done(None) when the node accepted it, else
+        on_done(error): the node's reason, a value that type can't hold, or why the request failed
+        (as with list_node_parameters, including no response within RESPONSE_TIMEOUT_S)."""
         ...
 
     # ---------------------------------------------------------------- lifecycle

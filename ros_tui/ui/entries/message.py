@@ -43,10 +43,9 @@ from typing import Any, Callable
 from ros_tui.constants import SEND_HISTORY_MAX, SUMMARY_MAX_CHARS
 from ros_tui.ros.message_yaml import (build_message, import_type, message_structure, message_to_display,
                                       message_to_plain, request_class)
-from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Entry, Tab, UndoEntry, Verb
+from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
 from ros_tui.ui.fields import FieldRows, Row, describe, flow_yaml, path_text, summary
 from ros_tui.ui.helpers import Helper, helper_name
-from ros_tui.ui.nav import NavState
 from ros_tui.ui.register import Register
 
 EDITOR = 'msg'  # The area id of the editor.
@@ -106,7 +105,7 @@ class MessageEntry(Entry):
         return self.editor if area is not None and area.id == EDITOR else None
 
     # ---------- loading ----------
-    def on_open(self, nav: NavState) -> None:
+    def on_open(self, nav: Host) -> None:
         """Import the entry's type in a worker the first time its tab opens."""
         if self.editor is not None or self.loading:
             return
@@ -147,7 +146,7 @@ class MessageEntry(Entry):
         form = self.form(area)
         return len(form.rows()) if form else 0
 
-    def activate_row(self, nav: NavState, area: Area, row: int, how: str) -> bool:
+    def activate_row(self, nav: Host, area: Area, row: int, how: str) -> bool:
         """enter on a nested message or list folds or unfolds it."""
         form = self.form(area)
         text = form.toggle(row) if form else None
@@ -200,7 +199,7 @@ class MessageEntry(Entry):
 
     def _undo_step(self, what: str, before: dict) -> UndoEntry:
         """The undo step of a change to the editor: it loads `before` back."""
-        def revert(nav: NavState) -> str:
+        def revert(nav: Host) -> str:
             self.editor.load(before)
             return f'undid {what} on {self.tab.name}'
         return UndoEntry(self.tab, revert)
@@ -221,22 +220,22 @@ class MessageEntry(Entry):
         }
 
     # ---------- the register ----------
-    def _loaded_editor(self, nav: NavState, how: str) -> FieldRows | None:
+    def _loaded_editor(self, nav: Host, how: str) -> FieldRows | None:
         """The editor, or None (with a toast) while its type is still loading or failed to load."""
         if self.editor is None:
             nav.feedback.refuse(how, self.not_loaded())
         return self.editor
 
-    def _yank(self, nav: NavState, how: str) -> None:
+    def _yank(self, nav: Host, how: str) -> None:
         """y: copy what the editor holds."""
         editor = self._loaded_editor(nav, how)
         if editor is None:
             return
-        nav.register = Register.of(self.type, self.ROLE, self.tab.name, editor.to_plain())
+        nav.copy(Register.of(self.type, self.ROLE, self.tab.name, editor.to_plain()))
         nav.feedback.show_toast(f'copied the {self.ROLE}', 'info')
         nav.feedback.log_line(how, f'copied the {self.ROLE} of {self.tab.name} — p pastes it')
 
-    def _paste(self, nav: NavState, how: str) -> None:
+    def _paste(self, nav: Host, how: str) -> None:
         """p: replace the editor's message with the register's, if it is the same type and role, as
         one undo step."""
         register = nav.register
@@ -263,15 +262,15 @@ class MessageEntry(Entry):
         nav.feedback.log_line(how, f'pasted the {register.label} from {register.source} (u undoes)')
 
     # ---------- field helpers ----------
-    def _open_helper(self, nav: NavState, how: str) -> None:
+    def _open_helper(self, nav: Host, how: str) -> None:
         """f on a row with a helper opens its popup; NavState only asks on
         a row that has one (`helper_name`)."""
         helper = Helper.open(self._edit_row(nav.area(), nav.row_index()))
         if helper is not None:
-            nav.overlay = helper
+            nav.show(helper)
             nav.feedback.log_line(how, f'opened the {helper.name} helper for {helper.field}')
 
-    def _apply_helper(self, nav: NavState, how: str) -> None:
+    def _apply_helper(self, nav: Host, how: str) -> None:
         """enter in the helper writes its value into the row, as one undo step. While its fields make no
         value it stays open."""
         helper = nav.overlay
@@ -285,13 +284,13 @@ class MessageEntry(Entry):
         except ValueError as error:
             nav.feedback.refuse(how, str(error), f'✗ {error}')
             return
-        nav.overlay = None  # It opened on this row inside the area, so the cursor is where it was.
+        nav.close_overlay()  # It opened on this row inside the area, so the cursor is where it was.
         nav.feedback.clear_error(self.tab)
         if undo:
             nav.push_undo(undo)
         nav.feedback.log_line(how, f'filled {helper.field} = {shown}' + (' (u undoes)' if undo else ''))
 
-    def _fold(self, nav: NavState, how: str, unfold: bool) -> None:
+    def _fold(self, nav: Host, how: str, unfold: bool) -> None:
         area = nav.area()
         form = self.form(area)
         index = nav.row_index(area)
@@ -302,7 +301,7 @@ class MessageEntry(Entry):
         nav.set_row(moved[0], area)
         nav.feedback.log_line(how, moved[1])
 
-    def _change_list(self, nav: NavState, how: str, add: bool) -> None:
+    def _change_list(self, nav: Host, how: str, add: bool) -> None:
         """o / d: add an element after the cursor (and edit it), or delete the one under it."""
         area = nav.area()
         form = self.form(area)
@@ -325,7 +324,7 @@ class MessageEntry(Entry):
             nav.start_edit(how)
 
     # ---------- sending ----------
-    def _checked(self, nav: NavState, how: str) -> tuple[Any, list] | None:
+    def _checked(self, nav: Host, how: str) -> tuple[Any, list] | None:
         """The editor's message and its time setters, built and checked before a send. A bad value
         is revealed in the editor (the cursor goes to it) with an errline; nothing is sent."""
         form = self.editor
@@ -346,7 +345,7 @@ class MessageEntry(Entry):
             nav.feedback.refuse(how, 'fix the highlighted values first', f'✗ {message} — nothing sent')
             return None
 
-    def _ready(self, nav: NavState, how: str) -> tuple[Any, tuple, str] | None:
+    def _ready(self, nav: Host, how: str) -> tuple[Any, tuple, str] | None:
         """The start of every send (space / ^s, r): the checked message, which goes into the history
         and clears the errline. (message, time setters, the message summarised), or None when it
         doesn't check out (see `_checked`)."""
@@ -358,7 +357,7 @@ class MessageEntry(Entry):
         nav.feedback.clear_error(self.tab)
         return message, tuple(time_setters), sent
 
-    def _send(self, nav: NavState, how: str, line: str, cls: str, log: str) -> tuple[Any, tuple, str] | None:
+    def _send(self, nav: Host, how: str, line: str, cls: str, log: str) -> tuple[Any, tuple, str] | None:
         """space / ^s: `_ready`, then the primary button flashes, the activity line `line` (with
         the message summarised after it) and the log line `log`. The caller sends it."""
         ready = self._ready(nav, how)
@@ -376,7 +375,7 @@ class MessageEntry(Entry):
         self.hpos, self.draft = -1, None
         return values
 
-    def _step_history(self, nav: NavState, how: str, older: bool) -> None:
+    def _step_history(self, nav: Host, how: str, older: bool) -> None:
         """[ / ]: show an older / newer send in the editor; ] past the newest restores your edit."""
         history = self.history
         if not history or self.editor is None:

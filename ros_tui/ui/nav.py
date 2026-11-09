@@ -34,13 +34,12 @@ from typing import Any, Callable, NamedTuple
 from ros_tui.ui import keymap
 from ros_tui.ui.catalog import KINDS, Catalog
 from ros_tui.ui.command_line import CommandLine
-from ros_tui.ui.entries.base import Area, Editing, Entry, Running, Tab, UndoEntry
+from ros_tui.ui.entries.base import AREA, EDIT, IN, TABS, Area, Editing, Entry, Running, Tab, UndoEntry
 from ros_tui.ui.feedback import Feedback
 from ros_tui.ui.helpers import Helper
 from ros_tui.ui.keymap import key_char, key_display, normalize_key
 from ros_tui.ui.register import Register
 
-TABS, IN, AREA, EDIT = ('tabs', 'in', 'area', 'edit')
 NOTHING_TO_UNDO = 'nothing to undo here'
 
 
@@ -139,7 +138,7 @@ class NavState:
         else. A click while typing a value keeps it first, as esc does, except on the primary
         button: that sends, as ^s does in insert."""
         if self.overlay is not None and not on_popup:
-            self._close_overlay('click')
+            self._dismiss_overlay('click')
             return
         if target is None:
             return
@@ -322,7 +321,21 @@ class NavState:
             return self.entry(self.tab).enter_label(area, self.row_index(area)) or area.enter
         return 'keep it'
 
-    # ---------- what entries call ----------
+    # ---------- what entries call (entries.base.Host) ----------
+    def inside(self, area_id: str) -> bool:
+        """The cursor is in the rows of area `area_id` of the active tab, or typing into one."""
+        area = self.area()
+        return self.layer in (AREA, EDIT) and area is not None and area.id == area_id
+
+    def copy(self, register: Register) -> None:
+        self.register = register
+
+    def show(self, overlay: Overlay) -> None:
+        self.overlay = overlay
+
+    def close_overlay(self) -> None:
+        self.overlay = None
+
     def set_row(self, index: int, area: Area | None = None) -> None:
         area = area or self.area()
         self._row_idx[(self.tab, area.id)] = index
@@ -611,7 +624,7 @@ class NavState:
             self.set_row(_clamp(self.row_index() + delta, count - 1))
 
     # ---------- overlays ----------
-    def _close_overlay(self, how: str) -> None:
+    def _dismiss_overlay(self, how: str) -> None:
         """Close the overlay, as esc does there (a click outside it reads `how`)."""
         overlay, self.overlay = self.overlay, None
         if overlay == WhichKey('g'):
@@ -737,7 +750,7 @@ ACTIONS: dict[str, Callable[[NavState, Press], None]] = {
     'which_key': lambda nav, p: nav._open(WhichKey('all')),
     'g_prefix': lambda nav, p: nav._open(WhichKey('g')),
     'g_cancel': lambda nav, p: nav.feedback.log_line('esc', 'g canceled'),
-    'close_overlay': lambda nav, p: nav._close_overlay(p.how),
+    'close_overlay': lambda nav, p: nav._dismiss_overlay(p.how),
     # field helper: the entry opens it and writes its value (entries/message.py); its keys go to it
     'helper_key': lambda nav, p: nav.overlay.press(p.key, p.char),
     # command line

@@ -32,9 +32,19 @@ The code:
     may ask of ROS: each request, how it answers and on which thread.
   - [`bridge.py`](../ros_tui/ros/bridge.py): `RosBridge`, the thread that owns
     rclpy and implements `Bridge` ([The bridge](#the-bridge)).
+  - [`inflight.py`](../ros_tui/ros/inflight.py): `Inflight`, the bridge's
+    requests in flight (waits for a server, awaited responses, goals) and when
+    each one fails. No rclpy.
+  - [`entity_cache.py`](../ros_tui/ros/entity_cache.py): `EntityCache`, the
+    bounded cache of clients and publishers that never evicts a busy one. No
+    rclpy.
   - [`graph.py`](../ros_tui/ros/graph.py): immutable `GraphSnapshot`s of the
     topics, services, actions and nodes, and `NodeInfo` (a node's endpoints,
     like `ros2 node info`).
+  - [`parameters.py`](../ros_tui/ros/parameters.py): `Param`, the parameter
+    type labels, and the `ParameterValue` a value is read from or sent as, by
+    the type the parameter was declared with. Imports rcl_interfaces only to
+    read or build one.
   - [`message_yaml.py`](../ros_tui/ros/message_yaml.py): loading interface
     types, the structure of a message, and checked plain data ↔ message
     conversion ([Messages](#messages)).
@@ -100,12 +110,20 @@ Results come back in one of two ways:
 `wait_for_service`. A request whose server isn't up yet is parked, and a
 **housekeeping timer** (4 Hz) checks parked requests and in-flight calls: a
 server must appear within 5 s, and a response must arrive within 30 s, or the
-request fails with a timeout.
+request fails with a timeout. That holds for a service call and for each call
+of a node's parameter request alike, and shutdown fails both the same way. A
+goal whose action server is gone for 5 s ends with an error. `Inflight` ([`inflight.py`](../ros_tui/ros/inflight.py)) keeps
+these records and decides each of these outcomes; `RosBridge` tells it what
+was sent, accepted or ended and asks it what is busy. It holds no rclpy, so
+its tests run on a hand-driven clock with fake entities.
 
 **Clients and publishers are cached** per (name, type), so calling a service
-twice reuses its client. The cache holds 8 entries and evicts the least
-recently used one, skipping any entity still in use, so a long session doesn't
-pile up DDS resources.
+twice reuses its client. The cache
+([`entity_cache.py`](../ros_tui/ros/entity_cache.py)) holds 8 entries and
+evicts the least recently used one, skipping any entity still in use (a
+request, response or goal in `Inflight`, or a periodic publisher) and the one
+it just made, so a long session doesn't pile up DDS resources. When all are in
+use it grows past 8 rather than break a call.
 
 **Periodic publishing** is a timer per topic on the ROS thread. It keeps
 running while the UI shows other topics, and the bridge destroys them all on
@@ -182,7 +200,7 @@ together.
   by the tab it was made in) and the register. It is driven by `handle_key`,
   `click`, `tick` and `set_catalog`; the rest of its public surface is
   read-only queries for the views (`footer()`, `summary()` for the test
-  harness, `shown(Overlay type)`, …) and a few calls for entries. Three
+  harness, `shown(Overlay type)`, …) and the `Host` members for entries. Three
   self-contained pieces sit beside it: the `Catalog`
   ([`catalog.py`](../ros_tui/ui/catalog.py)), what the ☰ list and search show,
   filled from each `GraphSnapshot`; the `Feedback`
@@ -210,9 +228,15 @@ together.
   Publish), rows, edits, a table of verbs (space, `s`, `r`, `y`, `p`, …),
   running markers and tick. `NavState.entry(tab)` makes it the first time
   (through the factory it is given) and keeps it after the tab closes. An
-  entry talks back through `nav.feedback` (`refuse`, `report_error` /
-  `clear_error`, `add_activity`, …) and a few NavState calls (`push_undo` /
-  `drop_undo`, `begin_edit`, `set_row`, `open_entity`); an undo step is a closure the entry pushes, and an `Area`
+  entry sees NavState only as a `Host` (`entries/base.py`), the one page to
+  read to write an entry: `feedback` (`refuse`, `report_error` /
+  `clear_error`, `add_activity`, …), read-only `catalog`, `tab`, `register`
+  and `overlay`, where the cursor is (`area`, `row_index`, `inside`), and
+  intents (`push_undo` / `drop_undo`, `start_edit` / `begin_edit`, `set_row`,
+  `open_entity`, `copy`, `show` / `close_overlay`), so NavState alone changes
+  its own state. No module under `entries/` imports `nav.py`
+  (`test_contract.py` checks it, and that NavState implements `Host`). An
+  undo step is a closure the entry pushes, and an `Area`
   says what its rows allow (`editable`, `folds`, `helpers`), so NavState
   holds no kind's areas, state or verbs. [`entries/kinds.py`](../ros_tui/ui/entries/kinds.py) maps
   each kind to its class: `TopicEntry` (Echo / Publish, the echo, the
@@ -240,8 +264,9 @@ together.
 That clears the bridge's running flag (so `submit()` refuses new work) and
 wakes the executor. The ROS thread leaves its spin loop and tears down: queued
 commands are cancelled, and parked and in-flight requests fail with "ROS
-bridge shut down". Then every running goal is canceled, as `ros2 action
-send_goal` does on ctrl+c, so nothing keeps acting on the robot after you quit:
+bridge shut down" (a reply that still lands for one of them is ignored). Then
+every running goal is canceled, as `ros2 action send_goal` does on ctrl+c, so
+nothing keeps acting on the robot after you quit:
 the thread spins for at most `SHUTDOWN_CANCEL_TIMEOUT_S` (1 s) until each
 server answered the cancel (a goal still waiting for acceptance is canceled
 when it is accepted). Then every timer (including periodic publishers),
