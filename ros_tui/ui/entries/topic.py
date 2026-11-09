@@ -45,10 +45,9 @@ from typing import Any
 from ros_tui.constants import PUBLISH_DEFAULT_RATE_HZ, PUBLISH_RATE_MAX_HZ, PUBLISH_RATE_MIN_HZ
 from ros_tui.ros.echo import EchoBuffer
 from ros_tui.ros.message_yaml import message_to_plain
-from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Running, Tab, UndoEntry, Verb
+from ros_tui.ui.entries.base import IN, Area, Commit, Context, Editing, Host, Running, Tab, UndoEntry, Verb
 from ros_tui.ui.entries.message import EDITOR, MessageEntry, Received
 from ros_tui.ui.fields import Row, flat_rows
-from ros_tui.ui.nav import AREA, EDIT, IN, NavState
 from ros_tui.ui.register import Register
 
 ECHO = 'out'  # The area id of LATEST MESSAGE.
@@ -117,19 +116,19 @@ class TopicEntry(MessageEntry):
         self.seen: tuple = ()  # What the toolbar last showed (echo counts, repeat sent), so a tick redraws only on a change.
 
     # ---------- opening ----------
-    def on_open(self, nav: NavState) -> None:
+    def on_open(self, nav: Host) -> None:
         """Load the message type (MessageEntry). The mode it first opens in (Echo when someone
         publishes) comes from the ☰ list's counts."""
         if not self.mode:
             self.mode = 'echo' if self.publishers(nav) > 0 else 'publish'
         super().on_open(nav)
 
-    def counts(self, nav: NavState) -> tuple[int, int] | None:
+    def counts(self, nav: Host) -> tuple[int, int] | None:
         """(publishers, subscribers) as the graph last counted them; None when the graph lost the topic."""
         item = nav.catalog.item(self.tab)
         return (item.publishers, item.subscribers) if item else None
 
-    def publishers(self, nav: NavState) -> int:
+    def publishers(self, nav: Host) -> int:
         counts = self.counts(nav)
         return counts[0] if counts else 0
 
@@ -168,14 +167,14 @@ class TopicEntry(MessageEntry):
             return None, ''
         before = self.chosen_rate
 
-        def revert(nav: NavState) -> str:
+        def revert(nav: Host) -> str:
             activity = self._apply_rate(before)
             if activity:
                 nav.feedback.add_activity(self.tab, activity, 'g')
             return f'repeat rate on {self.tab.name} back to {rate_text(self.rate())} Hz'
         return UndoEntry(self.tab, revert), self._apply_rate(rate)
 
-    def _edit_rate(self, nav: NavState, how: str) -> None:
+    def _edit_rate(self, nav: Host, how: str) -> None:
         """R: type a new rate in place of the shown one (from Echo, switch to Publish first, so esc
         goes back to the area pick)."""
         back = None
@@ -186,7 +185,7 @@ class TopicEntry(MessageEntry):
                                note='(type a number, enter keeps it)', crumb=('repeat rate',), back=back))
         nav.feedback.log_line(how, 'editing the repeat rate: type a number, enter keeps it')
 
-    def _command_rate(self, nav: NavState, how: str, text: str) -> None:
+    def _command_rate(self, nav: Host, how: str, text: str) -> None:
         """:rate 5"""
         tab = self.tab
         try:
@@ -217,7 +216,7 @@ class TopicEntry(MessageEntry):
         return Commit(True, text + (' (u undoes)' if undo else ''), undo, (activity, 'g') if activity else ())
 
     # ---------- rows ----------
-    def echo_rows(self, nav: NavState) -> list[Row]:
+    def echo_rows(self, nav: Host) -> list[Row]:
         """LATEST MESSAGE: one row per field, with the values it shows: the newest message, or the
         one it froze on (None before the first message)."""
         if self.editor is None:
@@ -225,7 +224,7 @@ class TopicEntry(MessageEntry):
         received = self.received(nav)
         return flat_rows(self.editor.fields, received.display if received else None)
 
-    def received(self, nav: NavState) -> Received | None:
+    def received(self, nav: Host) -> Received | None:
         """The message LATEST MESSAGE shows: the one it froze on while frozen, else the newest."""
         return self.shown if self.frozen(nav) else self.latest
 
@@ -234,7 +233,7 @@ class TopicEntry(MessageEntry):
             return len(flat_rows(self.editor.fields, None)) if self.editor else 0
         return super().row_count(area)
 
-    def activate_row(self, nav: NavState, area: Area, row: int, how: str) -> bool:
+    def activate_row(self, nav: Host, area: Area, row: int, how: str) -> bool:
         """enter on an echoed field hides or shows it."""
         if area.id != ECHO:
             return super().activate_row(nav, area, row, how)
@@ -247,11 +246,9 @@ class TopicEntry(MessageEntry):
         return True
 
     # ---------- echo: live and frozen ----------
-    def frozen(self, nav: NavState) -> bool:
+    def frozen(self, nav: Host) -> bool:
         """An echo is frozen while the cursor is inside its LATEST MESSAGE."""
-        area = nav.area()
-        inside = nav.layer in (AREA, EDIT) and area is not None and area.id == ECHO
-        return inside and nav.tab == self.tab and self.mode == 'echo' and self.echo is not None
+        return nav.inside(ECHO) and nav.tab == self.tab and self.mode == 'echo' and self.echo is not None
 
     def leave_area(self, area: Area) -> str | None:
         if area.id == ECHO and self.echo is not None:
@@ -261,7 +258,7 @@ class TopicEntry(MessageEntry):
     def esc_label(self, area: Area) -> str | None:
         return 'go live' if area.id == ECHO and self.echo is not None else None
 
-    def tick(self, nav: NavState) -> bool:
+    def tick(self, nav: Host) -> bool:
         """Drain a running echo: keep the newest message, count, rate, drops; a
         frozen echo only counts what arrived. True when the active tab shows something new: its
         echo's count or rate, or its repeat's sent count. An echo or repeat in another tab changes
@@ -285,7 +282,7 @@ class TopicEntry(MessageEntry):
         self.seen = seen
         return changed
 
-    def _toggle_echo(self, nav: NavState, how: str) -> None:
+    def _toggle_echo(self, nav: Host, how: str) -> None:
         """space in Echo: start the echo, or stop it."""
         tab = self.tab
         if self.echo is not None:
@@ -301,12 +298,12 @@ class TopicEntry(MessageEntry):
         nav.feedback.add_activity(tab, '◉ echo started', 'c')
         nav.feedback.log_line(how, 'started echo')
 
-    def _stop_echo(self, nav: NavState) -> None:
+    def _stop_echo(self, nav: Host) -> None:
         self._bridge.unsubscribe(self.tab.name)
         self.echo, self.latest, self.shown, self.new_since = None, None, None, 0
         nav.feedback.add_activity(self.tab, '■ echo stopped', 'dim')
 
-    def _yank_echo(self, nav: NavState, how: str) -> None:
+    def _yank_echo(self, nav: Host, how: str) -> None:
         """y in Echo: copy the message LATEST MESSAGE shows (the frozen one while frozen), exactly."""
         tab, received = self.tab, self.received(nav)
         if self.echo is None:
@@ -319,13 +316,13 @@ class TopicEntry(MessageEntry):
         if problem:
             nav.feedback.refuse(how, problem, 'nothing to copy yet')
             return
-        nav.register = Register.of(self.type, self.ROLE, tab.name, message_to_plain(received.message))
+        nav.copy(Register.of(self.type, self.ROLE, tab.name, message_to_plain(received.message)))
         which = 'frozen' if self.frozen(nav) else 'latest'
         nav.feedback.show_toast(f'copied the {which} {nav.register.label} from {tab.name}', 'info')
         nav.feedback.log_line(how, f'copied the {which} message — p pastes it into an editor of the same type')
 
     # ---------- publish ----------
-    def _publish(self, nav: NavState, how: str) -> None:
+    def _publish(self, nav: Host, how: str) -> None:
         """space in Publish: check the message, then publish it once."""
         ready = self._send(nav, how, '✓ published', 'g', f'published once on {self.tab.name}')
         if ready is None:
@@ -334,7 +331,7 @@ class TopicEntry(MessageEntry):
         future = self._bridge.publish_once(self.tab.name, self.type, message, time_setters)
         future.add_done_callback(lambda done: self._failed(nav, done, 'publish'))
 
-    def _start_repeat(self, nav: NavState, how: str) -> None:
+    def _start_repeat(self, nav: Host, how: str) -> None:
         """r: publish the message at the rate until s stops it."""
         if self.repeat is not None:
             nav.feedback.show_toast(f'already repeating at {rate_text(self.repeat.rate)} Hz — s stops it', 'info')
@@ -351,7 +348,7 @@ class TopicEntry(MessageEntry):
         nav.feedback.add_activity(self.tab, f'↻ repeating at {rate_text(rate)} Hz', 'g')
         nav.feedback.log_line(how, f'repeating at {rate_text(rate)} Hz')
 
-    def _stop(self, nav: NavState, how: str) -> None:
+    def _stop(self, nav: Host, how: str) -> None:
         """s: stop the repeat. It never sends."""
         if self.repeat is None:
             nav.feedback.log_line(how, 'nothing running here')
@@ -359,13 +356,13 @@ class TopicEntry(MessageEntry):
         self._stop_repeat(nav)
         nav.feedback.log_line(how, 'stopped repeating')
 
-    def _stop_repeat(self, nav: NavState) -> None:
+    def _stop_repeat(self, nav: Host) -> None:
         self._bridge.stop_periodic_publish(self.tab.name)
         sent = self.repeat.sent(self._bridge.now())
         self.repeat = None
         nav.feedback.add_activity(self.tab, f'■ repeat stopped after {sent} sent', 'dim')
 
-    def on_close(self, nav: NavState) -> list[str]:
+    def on_close(self, nav: Host) -> list[str]:
         """Closing the tab stops its echo and its repeat: nothing would be left to stop them from."""
         stopped = []
         if self.echo is not None:
@@ -376,7 +373,7 @@ class TopicEntry(MessageEntry):
             stopped.append('repeat stopped')
         return stopped
 
-    def _failed(self, nav: NavState, future: Any, what: str, running: str = '') -> None:
+    def _failed(self, nav: Host, future: Any, what: str, running: str = '') -> None:
         """On the bridge's thread: a subscribe or publish that failed says so (and forgets the
         `running` echo or repeat it started)."""
         error = None if future.cancelled() else future.exception()
@@ -421,10 +418,10 @@ class TopicEntry(MessageEntry):
         return verbs
 
     @staticmethod
-    def _history_is_for_publish(nav: NavState, how: str, _: Any) -> None:
+    def _history_is_for_publish(nav: Host, how: str, _: Any) -> None:
         nav.feedback.log_line(how, 'the history is for Publish — e switches to it')
 
-    def _paste_in_echo(self, nav: NavState, how: str, _: Any) -> None:
+    def _paste_in_echo(self, nav: Host, how: str, _: Any) -> None:
         if nav.register is None:
             self._paste(nav, how)  # It says nothing is copied yet.
         else:

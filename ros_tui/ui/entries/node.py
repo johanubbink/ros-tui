@@ -26,9 +26,8 @@ touches the model. Until an answer is in, the area says "loading…".
 
 from typing import Any, NamedTuple
 
-from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Entry, Tab, UndoEntry, Verb
+from ros_tui.ui.entries.base import Area, Commit, Context, Editing, Entry, Host, Tab, UndoEntry, Verb
 from ros_tui.ui.fields import BOOL_TYPE, flow_yaml, parse_list, parse_scalar
-from ros_tui.ui.nav import NavState
 
 PARAM = 'par'  # The area id of PARAMETERS; its undo steps are tagged with the parameter's name.
 
@@ -111,7 +110,7 @@ class NodeEntry(Entry):
         return next((param for param in self.params or () if param.name == name), None)
 
     # ---------- loading ----------
-    def on_open(self, nav: NavState) -> None:
+    def on_open(self, nav: Host) -> None:
         """Ask for the node's interfaces and parameters each time its tab is opened or gone to.
         What is shown stays until the answer replaces it; changes not set yet are kept."""
         name = self.tab.name
@@ -137,7 +136,7 @@ class NodeEntry(Entry):
             return len(self.interfaces())
         return len(self.params or ()) if area.id == PARAM else 0
 
-    def activate_row(self, nav: NavState, area: Area, row: int, how: str) -> bool:
+    def activate_row(self, nav: Host, area: Area, row: int, how: str) -> bool:
         """enter on an interface opens it in a tab."""
         rows = self.interfaces() if area.id == 'ifs' else []
         if not 0 <= row < len(rows):
@@ -186,15 +185,15 @@ class NodeEntry(Entry):
         return {'primary': lambda nav, how, _: self._set_changed(nav, how), 'yank': self._yank, 'paste': self._paste}
 
     @staticmethod
-    def _yank(nav: NavState, how: str, _: Any) -> None:
+    def _yank(nav: Host, how: str, _: Any) -> None:
         nav.feedback.refuse(how, 'nothing to copy on a node', 'nothing to copy here')
 
     @staticmethod
-    def _paste(nav: NavState, how: str, _: Any) -> None:
+    def _paste(nav: Host, how: str, _: Any) -> None:
         nav.feedback.refuse(how, 'nothing copied yet (y copies)' if nav.register is None
                             else 'nothing to paste into on a node', 'no editor here')
 
-    def _set_changed(self, nav: NavState, how: str) -> None:
+    def _set_changed(self, nav: Host, how: str) -> None:
         """space / ^s: set every changed parameter on the node, one set_node_parameter call each.
         A change clears when its set succeeds; a failed one stays changed."""
         changes = self.changes
@@ -208,7 +207,7 @@ class NodeEntry(Entry):
                 lambda error, name=name, value=value: self._post(lambda: self._set_done(nav, name, value, error)))
         nav.feedback.log_line(how, f'set {count} parameter{"s" if count > 1 else ""} on {self.tab.name}')
 
-    def _set_done(self, nav: NavState, name: str, value: Any, error: str | None) -> None:
+    def _set_done(self, nav: Host, name: str, value: Any, error: str | None) -> None:
         tab = self.tab
         if error:
             nav.feedback.add_activity(tab, f'✗ set {name}: {error}', 'r')
