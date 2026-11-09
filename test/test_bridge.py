@@ -215,6 +215,19 @@ def test_periodic_publish_rate_then_stop(bridge, fixture_servers):
     assert len(fixture_servers.inbox_messages) == settled_count
 
 
+def wait_until_quiet(messages, quiet_s, timeout):
+    """True once no message has arrived in ``messages`` for ``quiet_s`` seconds."""
+    deadline = time.monotonic() + timeout
+    count, since = len(messages), time.monotonic()
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        if len(messages) != count:
+            count, since = len(messages), time.monotonic()
+        elif time.monotonic() - since >= quiet_s:
+            return True
+    return False
+
+
 def test_bridge_shutdown_stops_periodic_publish(fixture_servers, ros_domain):
     own_bridge = RosBridge(node_name='ros_tui_shutdown_test')
     own_bridge.start()
@@ -224,9 +237,12 @@ def test_bridge_shutdown_stops_periodic_publish(fixture_servers, ros_domain):
     ).result(timeout=2.0)
     assert wait_for(lambda: fixture_servers.inbox_messages, timeout=5.0)
     own_bridge.shutdown()
+    # Messages sent just before shutdown may still be on their way: wait until none has arrived for
+    # 0.25 s (never true while it still publishes at 20 Hz), then nothing more may come.
+    assert wait_until_quiet(fixture_servers.inbox_messages, quiet_s=0.25, timeout=3.0)
     settled_count = len(fixture_servers.inbox_messages)
     time.sleep(0.4)
-    assert len(fixture_servers.inbox_messages) <= settled_count + 1
+    assert len(fixture_servers.inbox_messages) == settled_count
 
 
 def test_bridge_shutdown_cancels_a_running_goal(fixture_servers, ros_domain):
